@@ -149,7 +149,7 @@ jobs:
             if ($unregister.ExitCode -ne 0) { Write-Warning "Runner-only COM deregistration failed: $($unregister.ExitCode)" }
           }
 
-- name: Build experimental replacement x64 MSI
+      - name: Build experimental replacement x64 MSI
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
