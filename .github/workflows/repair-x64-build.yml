@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - repair/heic-frame-encode-interface
+      - investigate/rotated-exif-orientation
   workflow_dispatch:
 
 permissions:
