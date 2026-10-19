@@ -132,8 +132,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $dll = (Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $testExe = (Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
-          & "$env:WINDIR\System32\regsvr32.exe" /s $dll
-          if ($LASTEXITCODE -ne 0) { throw "Runner-only COM registration failed: $LASTEXITCODE" }
+          $register = Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s', ('"{0}"' -f $dll)) -Wait -PassThru
+          if ($register.ExitCode -ne 0) { throw "Runner-only COM registration failed: $($register.ExitCode)" }
           try {
             Push-Location -LiteralPath 'wictest'
             try {
@@ -145,7 +145,7 @@ jobs:
             }
           }
           finally {
-            & "$env:WINDIR\System32\regsvr32.exe" /u /s $dll
-            if ($LASTEXITCODE -ne 0) { Write-Warning 'Runner-only COM deregistration failed' }
+            $unregister = Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u', '/s', ('"{0}"' -f $dll)) -Wait -PassThru
+            if ($unregister.ExitCode -ne 0) { Write-Warning "Runner-only COM deregistration failed: $($unregister.ExitCode)" }
           }
 
