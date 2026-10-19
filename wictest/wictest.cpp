@@ -162,7 +162,32 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile)
 		throw std::exception("Failed to Commit encoder");
 	}
 
-	printf("File converted successfully\n");
+	// The original smoke test stopped at encoder Commit. Reopen the result
+	// through Windows WIC so that empty or unreadable HEIC files fail the job.
+	pEncoder.Release();
+	pStream.Release();
+	CComPtr<IWICBitmapDecoder> pVerificationDecoder;
+	hr = pFactory->CreateDecoderFromFilename(destFile.c_str(), NULL,
+		GENERIC_READ, WICDecodeMetadataCacheOnDemand, &pVerificationDecoder);
+	if (FAILED(hr)) {
+		printf("Readback decoder failed: 0x%08X\n", (unsigned int)hr);
+		throw std::exception("Failed to reopen encoded HEIC");
+	}
+	UINT verificationFrames = 0;
+	hr = pVerificationDecoder->GetFrameCount(&verificationFrames);
+	if (FAILED(hr) || verificationFrames != nFrame) {
+		throw std::exception("HEIC readback frame count mismatch");
+	}
+	for (UINT frameIndex = 0; frameIndex < verificationFrames; ++frameIndex) {
+		CComPtr<IWICBitmapFrameDecode> decoded;
+		hr = pVerificationDecoder->GetFrame(frameIndex, &decoded);
+		if (FAILED(hr)) throw std::exception("HEIC readback frame failed");
+		UINT w = 0, h = 0;
+		hr = decoded->GetSize(&w, &h);
+		if (FAILED(hr) || w == 0 || h == 0)
+			throw std::exception("HEIC readback dimensions invalid");
+	}
+	printf("File converted and WIC readback verified\n");
 }
 
 int main()
