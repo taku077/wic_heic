@@ -35,7 +35,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::QueryInterface(REFIID riid, vo
 	*ppvObject = nullptr;
 	if (IsEqualGUID(riid, IID_IUnknown)) {
 		*ppvObject = static_cast<IUnknown*>(this);
-	} else if (IsEqualGUID(riid, IID_IWICBitmapFrameDecode)) {
+	} else if (IsEqualGUID(riid, IID_IWICBitmapFrameEncode)) {
 		*ppvObject = static_cast<IWICBitmapFrameEncode*>(this);
 	} else {
 		hr = E_NOINTERFACE;
