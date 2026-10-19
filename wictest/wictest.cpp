@@ -2,11 +2,48 @@
 //
 
 #include "stdafx.h"
+#include "../wic_heic/ExifOrientationFix.h"
 #include <vector>
 #include <utility>
 #include "..\wic_heic\wic_heic.h"
 
 #pragma comment (lib, "windowscodecs.lib")
+
+
+// Deterministic unit tests for the metadata rewrite, no real images required.
+void CheckExifOrientationNormalization()
+{
+    auto makeExif = [](bool le, uint16_t orientation) {
+        std::vector<uint8_t> bytes(4,0);  // libheif Exif item's offset field
+        const uint8_t leBase[] = {'I','I',42,0,8,0,0,0,1,0,0x12,1,3,0,1,0,0,0,0,0,0,0,0,0,0,0,0};
+        const uint8_t beBase[] = {'M','M',0,42,0,0,0,8,0,1,1,0x12,0,3,0,0,0,1,0,0,0,0,0,0,0,0};
+        const uint8_t* source=le?leBase:beBase;
+        bytes.insert(bytes.end(), source, source+26);
+        if (le) { bytes[22]=uint8_t(orientation); bytes[23]=0; }
+        else { bytes[22]=0; bytes[23]=uint8_t(orientation); }
+        return bytes;
+    };
+    for (bool le : {true,false}) {
+        for (uint16_t value : {uint16_t(6), uint16_t(8)}) {
+            auto data=makeExif(le,value);
+            auto original=data;
+            if (WicHeicOrientation::NormalizeExifForRotatedPixels(data,false) || data!=original)
+                throw std::exception("EXIF regression: unrotated metadata changed");
+            if (!WicHeicOrientation::NormalizeExifForRotatedPixels(data,true))
+                throw std::exception("EXIF regression: rotated case not normalized");
+            if (WicHeicOrientation::Get16(data,22,le)!=1)
+                throw std::exception("EXIF regression: orientation not set to 1");
+            for (size_t i=0;i<data.size();++i) {
+                if (i!=22 && i!=23 && data[i]!=original[i])
+                    throw std::exception("EXIF regression: unrelated metadata was altered");
+            }
+        }
+        auto normal=makeExif(le,1);
+        if (WicHeicOrientation::NormalizeExifForRotatedPixels(normal,true))
+            throw std::exception("EXIF regression: Orientation=1 must be preserved");
+    }
+    printf("EXIF orientation normalization unit tests PASSED\n");
+}
 
 void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bool rotate90 = false)
 {
@@ -215,6 +252,7 @@ int main()
 
 	try
 	{
+		CheckExifOrientationNormalization();
 		ConvertToHeic(L"samples\\01.png", L"samples\\out-01.heic");
 		ConvertToHeic(L"samples\\02.png", L"samples\\out-02.heic");
 		ConvertToHeic(L"samples\\03.heic", L"samples\\out-03.heic");

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "wic_heic.h"
 #include "HeicMetadataBlockReader.h"
+#include "ExifOrientationFix.h"
 
 
 class CEnumUnknown : public IEnumUnknown
@@ -237,6 +238,15 @@ HRESULT STDMETHODCALLTYPE CHeicMetadataBlockReader::GetReaderByIndex(UINT nIndex
 	if (type == "Exif") {
 		payloadOffset = 4;
 		metadataType = GUID_MetadataFormatApp1;
+		// Only for an odd-quarter-turn HEIF display transform already applied
+		// by libheif. Unrotated HEIC metadata must remain unchanged.
+		const int rawW = m_Handle.get_ispe_width();
+		const int rawH = m_Handle.get_ispe_height();
+		const bool swapped = rawW > 0 && rawH > 0 && rawW != rawH &&
+			m_Handle.get_width() == rawH && m_Handle.get_height() == rawW;
+		if (WicHeicOrientation::NormalizeExifForRotatedPixels(buffer, swapped)) {
+			DbgLog("WIC exposed EXIF Orientation=1 for already rotated HEIF pixels");
+		}
 	}
 
 	IStream* pStream = SHCreateMemStream(buffer.data() + payloadOffset, static_cast<UINT>(buffer.size() - payloadOffset));
