@@ -4,9 +4,8 @@
 #include "HeicBitmapEncoder.h"
 
 
-CHeicBitmapFrameEncode::CHeicBitmapFrameEncode(CHeicBitmapEncoder* pEncoder)
+CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	: m_Count(1)
-	, m_pEncoder(pEncoder)
 	, m_Width(0)
 	, m_Height(0)
 	, m_Chroma(heif_chroma_undefined)
@@ -15,13 +14,13 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode(CHeicBitmapEncoder* pEncoder)
 	, m_PixelFormat(GUID_WICPixelFormat24bppRGB)
 	, m_BitDepthPerChannel(8)
 {
-	if (m_pEncoder) m_pEncoder->AddRef();
+	// The encoder owns each frame; never AddRef the parent here.
 }
 
 
 CHeicBitmapFrameEncode::~CHeicBitmapFrameEncode()
 {
-	if (m_pEncoder) m_pEncoder->Release();
+	// No parent reference to release (prevents a COM reference cycle).
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::QueryInterface(REFIID riid, void **ppvObject)

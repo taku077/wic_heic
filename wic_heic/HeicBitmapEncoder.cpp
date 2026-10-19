@@ -136,7 +136,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 			return E_POINTER;
 		}
 
-		CHeicBitmapFrameEncode* pFrame = new CHeicBitmapFrameEncode(this);
+		CHeicBitmapFrameEncode* pFrame = new CHeicBitmapFrameEncode();
 		*ppIFrameEncode = pFrame;
 
 		pFrame->AddRef();
