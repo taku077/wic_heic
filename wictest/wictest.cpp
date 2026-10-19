@@ -2,11 +2,13 @@
 //
 
 #include "stdafx.h"
+#include <vector>
+#include <utility>
 #include "..\wic_heic\wic_heic.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
-void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile)
+void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bool rotate90 = false)
 {
 	CComPtr<IWICImagingFactory> pFactory;
 	CComPtr<IWICBitmapDecoder> pDecoder;
@@ -80,6 +82,7 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile)
 	}
 
 	printf("Total Frames: %d\n", nFrame);
+	std::vector<std::pair<UINT, UINT>> expectedDimensions;
 
 	for (UINT i = 0; i < nFrame; i++)
 	{
@@ -115,6 +118,20 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile)
 			throw std::exception("Failed to GetPixelFormat");
 		}
 
+		IWICBitmapSource* sourceToEncode = static_cast<IWICBitmapSource*>(pFrameDecode.p);
+		CComPtr<IWICBitmapFlipRotator> rotatedSource;
+		if (rotate90) {
+			hr = pFactory->CreateBitmapFlipRotator(&rotatedSource);
+			if (FAILED(hr)) throw std::exception("Failed to create WIC flip rotator");
+			hr = rotatedSource->Initialize(sourceToEncode, WICBitmapTransformRotate90);
+			if (FAILED(hr)) throw std::exception("Failed to rotate WIC bitmap source");
+			sourceToEncode = static_cast<IWICBitmapSource*>(rotatedSource.p);
+			UINT previousWidth = width;
+			width = height;
+			height = previousWidth;
+		}
+		expectedDimensions.push_back(std::make_pair(width, height));
+
 		hr = pEncoder->CreateNewFrame(&pFrameEncode, nullptr);
 		if (FAILED(hr)) {
 			throw std::exception("Failed to CreateNewFrame");
@@ -146,7 +163,7 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile)
 			throw std::exception("Failed to SetPixelFormat");
 		}
 
-		hr = pFrameEncode->WriteSource(static_cast<IWICBitmapSource*>(pFrameDecode), NULL);
+		hr = pFrameEncode->WriteSource(sourceToEncode, NULL);
 		if (FAILED(hr)) {
 			throw std::exception("Failed to WriteSource");
 		}
@@ -184,7 +201,8 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile)
 		if (FAILED(hr)) throw std::exception("HEIC readback frame failed");
 		UINT w = 0, h = 0;
 		hr = decoded->GetSize(&w, &h);
-		if (FAILED(hr) || w == 0 || h == 0)
+		if (FAILED(hr) || w == 0 || h == 0 ||
+			w != expectedDimensions[frameIndex].first || h != expectedDimensions[frameIndex].second)
 			throw std::exception("HEIC readback dimensions invalid");
 	}
 	printf("File converted and WIC readback verified\n");
@@ -205,6 +223,8 @@ int main()
 		ConvertToHeic(L"samples\\06.heic", L"samples\\out-06.heic");
 		ConvertToHeic(L"samples\\07.heic", L"samples\\out-07.heic");
 		ConvertToHeic(L"samples\\08.gif", L"samples\\out-08.heic");
+		// 90-degree rotation of an existing HEIC, analogous to Photos rotate-save.
+		ConvertToHeic(L"samples\\03.heic", L"samples\\rotated-03.heic", true);
 	}
 	catch (const std::exception& ex)
 	{
