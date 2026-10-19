@@ -120,6 +120,12 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile)
 			throw std::exception("Failed to CreateNewFrame");
 		}
 
+		// Exercise the exact COM interface previously returning E_NOINTERFACE.
+		CComQIPtr<IWICBitmapFrameEncode> verifiedFrame(pFrameEncode);
+		if (!verifiedFrame) {
+			throw std::exception("Failed IWICBitmapFrameEncode QueryInterface");
+		}
+
 		hr = pFrameEncode->Initialize(nullptr);
 		if (FAILED(hr)) {
 			throw std::exception("Failed to frame encode");
