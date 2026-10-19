@@ -78,7 +78,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $dll = Get-ChildItem -LiteralPath '(Build)' -Filter 'wic_heic.dll' -Recurse -File | Where-Object { $_.FullName -match 'x64' -and $_.FullName -match 'Release' } | Select-Object -First 1
+          $dll = Get-ChildItem -LiteralPath 'wic_heic/(Build)' -Filter 'wic_heic.dll' -Recurse -File | Where-Object { $_.FullName -match 'x64' -and $_.FullName -match 'Release' } | Select-Object -First 1
           if (-not $dll) { throw 'No x64 Release wic_heic.dll was produced' }
           $hash = Get-FileHash -LiteralPath $dll.FullName -Algorithm SHA256
           "Build artifact: $($dll.FullName)" | Set-Content -Path 'SHA256.txt'
@@ -91,7 +91,7 @@ jobs:
         with:
           name: HEIC-encoder-repair-x64-UNTESTED
           path: |
-            (Build)/x64/Release/wic_heic.dll
+            wic_heic/(Build)/x64/Release/wic_heic.dll
             SHA256.txt
           if-no-files-found: error
           retention-days: 7
