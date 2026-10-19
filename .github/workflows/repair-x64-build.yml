@@ -169,7 +169,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $msi = (Resolve-Path -LiteralPath 'WicHeic-Repair-EXPERIMENTAL-x64.msi').Path
           $testExe = (Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
-          $dll = (Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $dll = (Resolve-Path -LiteralPath '(Build)/x64/Release/wic_heic.dll').Path
           $installLog = Join-Path $env:RUNNER_TEMP 'wic-heic-install.log'
           $uninstallLog = Join-Path $env:RUNNER_TEMP 'wic-heic-uninstall.log'
           $installed = $false
@@ -184,6 +184,7 @@ jobs:
             }
             $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
             $expected = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+            Write-Host "MSI DLL SHA256: $actual; x64 solution DLL SHA256: $expected"
             if ($actual -ne $expected) {
               throw "MSI installed DLL does not match tested x64 DLL: $path"
             }
