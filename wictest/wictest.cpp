@@ -45,6 +45,67 @@ void CheckExifOrientationNormalization()
     printf("EXIF orientation normalization unit tests PASSED\n");
 }
 
+
+// Regression fixture is synthetic (generated from repository sample 03.heic).
+// HEIF irot=3 + EXIF Orientation=6, matching the user's FAIL metadata signature.
+// It must decode to 1080x1920 *without* exposing a second rotation to WIC.
+void CheckRotatedExifFixture()
+{
+    CComPtr<IWICImagingFactory> factory;
+    CComPtr<IWICBitmapDecoder> decoder;
+    CComPtr<IWICBitmapFrameDecode> frame;
+    CComPtr<IWICMetadataQueryReader> metadata;
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, NULL,
+        CLSCTX_INPROC_SERVER, IID_IWICImagingFactory, (void**)&factory);
+    if (FAILED(hr)) throw std::exception("fixture: WIC imaging factory unavailable");
+
+    hr = factory->CreateDecoderFromFilename(L"samples\\fixture-irot3-exif6.heic",
+        NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+    if (FAILED(hr)) {
+        printf("fixture: CreateDecoderFromFilename HRESULT=0x%08X\n", (unsigned)hr);
+        throw std::exception("fixture: HEIC could not be decoded");
+    }
+    hr = decoder->GetFrame(0,&frame);
+    if (FAILED(hr)) throw std::exception("fixture: missing frame");
+    UINT width=0,height=0;
+    hr=frame->GetSize(&width,&height);
+    printf("fixture: WIC size = %ux%u\n", width, height);
+    if (FAILED(hr) || width!=1080 || height!=1920)
+        throw std::exception("fixture: irot=3 dimensions were not applied");
+
+    hr=frame->GetMetadataQueryReader(&metadata);
+    if (FAILED(hr)) {
+        printf("fixture: GetMetadataQueryReader HRESULT=0x%08X\n", (unsigned)hr);
+        throw std::exception("fixture: metadata reader unavailable");
+    }
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    hr=metadata->GetMetadataByName(L"/app1/ifd/{ushort=274}",&value);
+    if (FAILED(hr)) {
+        printf("fixture: Orientation query HRESULT=0x%08X\n", (unsigned)hr);
+        PropVariantClear(&value);
+        throw std::exception("fixture: EXIF Orientation not returned");
+    }
+    const unsigned orientation=(value.vt==VT_UI2)?value.uiVal:
+         (value.vt==VT_UI4)?value.ulVal:9999;
+    printf("fixture: EXIF Orientation returned by WIC = %u (type %u)\n",
+        orientation,(unsigned)value.vt);
+    PropVariantClear(&value);
+    if (orientation!=1) throw std::exception("fixture: duplicate rotation still exposed");
+
+    CComPtr<IWICBitmapSource> pixels;
+    hr=frame->QueryInterface(IID_IWICBitmapSource,(void**)&pixels);
+    if (FAILED(hr)) throw std::exception("fixture: IWICBitmapSource QI failed");
+    std::vector<BYTE> firstRow(width*3);
+    WICRect region={0,0,static_cast<INT>(width),1};
+    hr=pixels->CopyPixels(&region,width*3,static_cast<UINT>(firstRow.size()),firstRow.data());
+    if (FAILED(hr)) {
+        printf("fixture: CopyPixels HRESULT=0x%08X\n",(unsigned)hr);
+        throw std::exception("fixture: transformed pixels could not be read");
+    }
+    printf("fixture: ROTATED_HEIC_METADATA_AND_PIXELS_PASSED\n");
+}
+
 void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bool rotate90 = false)
 {
 	CComPtr<IWICImagingFactory> pFactory;
@@ -253,6 +314,7 @@ int main()
 	try
 	{
 		CheckExifOrientationNormalization();
+		CheckRotatedExifFixture();
 		ConvertToHeic(L"samples\\01.png", L"samples\\out-01.heic");
 		ConvertToHeic(L"samples\\02.png", L"samples\\out-02.heic");
 		ConvertToHeic(L"samples\\03.heic", L"samples\\out-03.heic");
