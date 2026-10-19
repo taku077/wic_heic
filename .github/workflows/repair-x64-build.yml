@@ -1,0 +1,97 @@
+name: HEIC encoder repair - x64 build (experimental)
+
+on:
+  push:
+    branches:
+      - repair/heic-frame-encode-interface
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-x64:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - name: Check out pinned submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Confirm source patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Get-Content 'wic_heic/HeicBitmapFrameEncode.cpp' -Raw
+          if (-not $source.Contains('IsEqualGUID(riid, IID_IWICBitmapFrameEncode)')) {
+            throw 'Expected frame encoder QueryInterface fix is missing'
+          }
+          if ($source.Contains('IsEqualGUID(riid, IID_IWICBitmapFrameDecode)')) {
+            throw 'Incorrect decoder IID remains in frame encoder'
+          }
+          Write-Host 'Frame encoder IID source check passed'
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Check CMake and NASM
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --version
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $env:PATH = "C:\Program Files\NASM;$env:PATH"
+          }
+          nasm -v
+          if ($LASTEXITCODE -ne 0) { throw 'NASM not available' }
+
+      - name: Restore project dependencies
+        shell: pwsh
+        run: |
+          msbuild wic_heic.sln /t:Restore /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { throw 'NuGet restore failed' }
+
+      - name: Build native codec dependencies (x64 only)
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($part in @('libde265','kvazaar','libheif')) {
+            cmd /c "call build-$part.bat x64"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to build dependency: $part" }
+          }
+          if (-not (Test-Path '_out/x64/include')) { throw 'Missing x64 dependency include directory' }
+          if (-not (Test-Path '_out/x64/lib')) { throw 'Missing x64 dependency lib directory' }
+
+      - name: Build WIC HEIC DLL (Release x64)
+        shell: pwsh
+        run: |
+          msbuild wic_heic/wic_heic.vcxproj /m /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { throw 'Native DLL build failed' }
+
+      - name: Inspect compiled DLL and record SHA256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = Get-ChildItem -LiteralPath '(Build)' -Filter 'wic_heic.dll' -Recurse -File | Where-Object { $_.FullName -match 'x64' -and $_.FullName -match 'Release' } | Select-Object -First 1
+          if (-not $dll) { throw 'No x64 Release wic_heic.dll was produced' }
+          $hash = Get-FileHash -LiteralPath $dll.FullName -Algorithm SHA256
+          "Build artifact: $($dll.FullName)" | Set-Content -Path 'SHA256.txt'
+          "SHA256: $($hash.Hash)" | Add-Content -Path 'SHA256.txt'
+          "Commit: $env:GITHUB_SHA" | Add-Content -Path 'SHA256.txt'
+          Get-Content SHA256.txt
+
+      - name: Upload experimental DLL for inspection (NOT FOR INSTALLATION)
+        uses: actions/upload-artifact@v4
+        with:
+          name: HEIC-encoder-repair-x64-UNTESTED
+          path: |
+            (Build)/x64/Release/wic_heic.dll
+            SHA256.txt
+          if-no-files-found: error
+          retention-days: 7
