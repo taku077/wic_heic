@@ -22,8 +22,15 @@ inline uint32_t Get32(const std::vector<uint8_t>& b, size_t p, bool le) {
 // Modify only Orientation=6 or 8, SHORT/count=1, in IFD0; preserve all other data.
 // This does NOT flatten pixels or affect the HEIC file or its embedded metadata.
 inline bool NormalizeExifForRotatedPixels(std::vector<uint8_t>& b, bool dimensionsSwapped) {
-    const size_t base = 4;
-    if (!dimensionsSwapped || b.size() < base + 8) return false;
+    // HEIF Exif begins with an unsigned big-endian TIFF offset. The offset
+    // is relative to the bytes following the four-byte field: usually 0
+    // for raw TIFF, or 6 for the "Exif\\0\\0" APP1 signature.
+    if (!dimensionsSwapped || b.size() < 12) return false;
+    const uint32_t tiffOffset = (uint32_t(b[0]) << 24) |
+        (uint32_t(b[1]) << 16) | (uint32_t(b[2]) << 8) | b[3];
+    if (tiffOffset > b.size() - 4) return false;
+    const size_t base = 4 + size_t(tiffOffset);
+    if (b.size() - base < 8) return false;
     bool le;
     if (b[base]=='I' && b[base+1]=='I') le=true;
     else if (b[base]=='M' && b[base+1]=='M') le=false;
