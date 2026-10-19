@@ -149,3 +149,66 @@ jobs:
             if ($unregister.ExitCode -ne 0) { Write-Warning "Runner-only COM deregistration failed: $($unregister.ExitCode)" }
           }
 
+- name: Build experimental replacement x64 MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          msbuild wic_heic.sln /m /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { throw "x64 installer build failed: $LASTEXITCODE" }
+          $msi = Get-ChildItem -LiteralPath '(Build)' -Filter 'WicHeic.msi' -Recurse -File |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]' } |
+            Select-Object -First 1
+          if (-not $msi) { throw 'x64 WicHeic.msi not found' }
+          Copy-Item -LiteralPath $msi.FullName -Destination 'WicHeic-Repair-EXPERIMENTAL-x64.msi'
+          Get-FileHash 'WicHeic-Repair-EXPERIMENTAL-x64.msi' -Algorithm SHA256 |
+            Format-List
+
+      - name: Verify MSI installation and WIC roundtrip on temporary runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Resolve-Path -LiteralPath 'WicHeic-Repair-EXPERIMENTAL-x64.msi').Path
+          $testExe = (Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $dll = (Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $installLog = Join-Path $env:RUNNER_TEMP 'wic-heic-install.log'
+          $uninstallLog = Join-Path $env:RUNNER_TEMP 'wic-heic-uninstall.log'
+          $installed = $false
+          try {
+            $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/i "{0}" /qn /norestart /l*v "{1}"' -f $msi, $installLog) -Wait -PassThru
+            if ($proc.ExitCode -ne 0) { throw "MSI installation failed with exit code $($proc.ExitCode)" }
+            $installed = $true
+            $key = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{0E8AB687-73A5-455B-8C19-B93CA9AC0EEB}\InprocServer32'
+            $path = (Get-Item -LiteralPath $key -ErrorAction Stop).GetValue('')
+            if (-not $path -or -not (Test-Path -LiteralPath $path)) {
+              throw "MSI registered DLL path invalid: $path"
+            }
+            $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            $expected = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+            if ($actual -ne $expected) {
+              throw "MSI installed DLL does not match tested x64 DLL: $path"
+            }
+            Write-Host "Installed MSI registered matching DLL: $path"
+            Remove-Item -Path 'wictest/samples/out-*.heic' -Force -ErrorAction SilentlyContinue
+            Push-Location -LiteralPath 'wictest'
+            try {
+              & $testExe
+              if ($LASTEXITCODE -ne 0) { throw "MSI WIC roundtrip test failed: $LASTEXITCODE" }
+            }
+            finally { Pop-Location }
+            Write-Host 'MSI install + WIC readback test PASSED'
+          }
+          finally {
+            if ($installed) {
+              $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/x "{0}" /qn /norestart /l*v "{1}"' -f $msi, $uninstallLog) -Wait -PassThru
+              if ($proc.ExitCode -ne 0) { throw "MSI uninstall failed: $($proc.ExitCode)" }
+              Write-Host 'MSI uninstall PASSED'
+            }
+          }
+
+      - name: Upload MSI only after isolated installation verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: HEIC-Repair-MSI-x64-EXPERIMENTAL-NOT-PHOTOS-TESTED
+          path: WicHeic-Repair-EXPERIMENTAL-x64.msi
+          if-no-files-found: error
+          retention-days: 7
