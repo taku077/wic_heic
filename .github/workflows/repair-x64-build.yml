@@ -6,6 +6,7 @@ on:
       - repair/heic-frame-encode-interface
       - investigate/rotated-exif-orientation
       - investigate/geometry-jpeg-vs-heic
+      - fix/encoder-geometry-failsafe
   workflow_dispatch:
 
 permissions:
