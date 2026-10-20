@@ -259,6 +259,46 @@ jobs:
           }
           Write-Host 'PASS: pre-existing trace registry settings are not changed'
 
+      - name: Verify strict 2MiB trace cap on native synthetic fixtures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $exe=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($reg.ExitCode -ne 0) { throw 'Trace cap test COM registration failed' }
+          try {
+            Push-Location -LiteralPath 'wictest'
+            try {
+              $cap=Join-Path (Get-Location).Path 'WIC_TraceCap_CI.txt'
+              [IO.File]::WriteAllBytes($cap,(New-Object byte[] ((2*1024*1024)-40)))
+              $env:WIC_HEIC_TRACE_FILE=$cap
+              try {
+                & $exe
+                if($LASTEXITCODE -ne 0) { throw 'Synthetic test failed during trace cap test' }
+              } finally {
+                Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+              }
+              $length=(Get-Item -LiteralPath $cap).Length
+              if($length -gt 2*1024*1024) { throw "Trace exceeded 2MiB ($length bytes)" }
+              Write-Host "TRACE_CAP_PASS length=$length"
+            } finally { Pop-Location }
+          } finally {
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0) { throw 'Trace cap test COM deregistration failed' }
+          }
+
+      - name: Save read-only baseline of WIC registration before isolated MSI test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $snapshot=& ./diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1 | Select-Object -Last 1
+          if(-not (Test-Path -LiteralPath $snapshot)) { throw 'WIC inventory did not create snapshot' }
+          $data=Get-Content -LiteralPath $snapshot -Raw | ConvertFrom-Json
+          if(@($data.Registrations).Count -ne 12) { throw 'Incomplete 32/64-bit COM registration inventory' }
+          "WIC_BASELINE=$snapshot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host 'WIC read-only baseline recorded'
+
       - name: Build experimental replacement x64 MSI
         shell: pwsh
         run: |
@@ -323,3 +363,11 @@ jobs:
           path: WicHeic-Repair-EXPERIMENTAL-x64.msi
           if-no-files-found: error
           retention-days: 7
+
+      - name: Verify isolated MSI uninstall restores WIC registration baseline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $after=& ./diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1 | Select-Object -Last 1
+          & ./diagnostics/photos_trace/WIC_Preflight_Compare.ps1 -Before $env:WIC_BASELINE -After $after
+          if(-not $?) { throw 'Read-only WIC restoration comparison failed' }

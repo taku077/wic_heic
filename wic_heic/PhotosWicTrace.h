@@ -63,12 +63,15 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
     wchar_t path[512]{};
     if(!TracePath(path))return;
     // APPEND only, never truncate or overwrite; do not auto-create folders.
-    HANDLE h=CreateFileW(path,FILE_APPEND_DATA|FILE_READ_ATTRIBUTES,
+    // Obtain a write handle and serialize writers across processes before
+    // checking the cap. Never truncate or overwrite the existing log.
+    HANDLE h=CreateFileW(path,GENERIC_WRITE|FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL,nullptr);
     if(h==INVALID_HANDLE_VALUE)return;
-    LARGE_INTEGER length{};
-    if(!GetFileSizeEx(h,&length) || length.QuadPart >= 2*1024*1024){
+    OVERLAPPED lock{};
+    if(!LockFileEx(h,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,
+                   0,MAXDWORD,MAXDWORD,&lock)){
         CloseHandle(h);
         return;
     }
@@ -81,10 +84,15 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
         static_cast<unsigned>(width),static_cast<unsigned>(height),
         static_cast<unsigned>(transform),static_cast<unsigned>(compression),
         source,static_cast<unsigned>(result));
-    if(n>0 && n<int(sizeof(line))){
+    LARGE_INTEGER length{},zero{};
+    if(n>0 && n<int(sizeof(line)) &&
+       GetFileSizeEx(h,&length) && length.QuadPart>=0 &&
+       static_cast<ULONGLONG>(length.QuadPart)+static_cast<ULONGLONG>(n)<=2ULL*1024*1024 &&
+       SetFilePointerEx(h,zero,nullptr,FILE_END)){
         DWORD written=0;
         WriteFile(h,line,static_cast<DWORD>(n),&written,nullptr);
     }
+    UnlockFileEx(h,0,MAXDWORD,MAXDWORD,&lock);
     CloseHandle(h);
 }
 } // namespace WicHeicDiagnostic
