@@ -36,3 +36,23 @@ https://learn.microsoft.com/windows/win32/api/wincodec/nn-wincodec-iwicfastmetad
 7. No production patch, merge, installer, or claim of Photos parity until actual integrated behavior is proven on the target machine.
 
 Current installed WIC should remain unchanged for diagnosis.
+
+## Follow-up: initial display/Explorer thumbnail appears sideways after user's CW90 test
+
+User reports that an originally portrait HEIC subsequently appears landscape in Explorer thumbnails and immediately upon opening in Photos.
+
+Cross-check of BOTH privately provided 2026-10-20 experiment ZIPs (only properties/hashes reported; NO private image bytes committed):
+- In each experiment `HEIC_REFERENCE_DO_NOT_EDIT.heic` SHA-256 exactly matches the pre-test `OriginalHeicSHA256` in `PREPARED_STATE.json`. The prepared reference copy was NOT changed by the rotation test.
+- The respective `HEIC_ROTATE_IN_PHOTOS.heic` SHA differs from the pre-test working SHA; these edited working files were changed.
+- The source HEIC displays at 3024x4032 and has primary HEIF rotation `irot=3`, plus an embedded thumbnail and Exif metadata.
+- The edited HEIC displays at 4032x3024, has no `irot`, no embedded thumbnail and no Exif metadata. It stores the landscape appearance in its re-encoded pixels. Both independent libheif and ffprobe indicate 4032x3024.
+- Hence a landscape thumbnail/initial display **of the edited working copy** agrees with the saved raster; this alone is NOT evidence of a broken thumbnail or incorrect orientation. JPEG test working copy still stores 3024x4032 and EXIF Orientation=6, likewise requesting landscape presentation without recoding pixels.
+- We CANNOT infer from these ZIPs whether the user's untouched source file elsewhere on their PC, the prepared reference copy shown in Explorer, or a different image unexpectedly changed orientation. That must be established by the exact filename, SHA-256 and location of the affected file.
+- The edited HEIC lost its embedded thumbnail; Explorer may generate one. A cache mismatch is possible in principle but NOT established by these samples.
+
+Additional acceptance criteria:
+1. Distinguish reference/original vs edited working copy in the test UI and logs; never compare an intentionally rotated output to an unrotated display expectation.
+2. Check HEIF item primary orientation, EXIF Orientation, WIC decoded dimensions, embedded thumbnail orientation and Shell thumbnail/cache separately before touching decoder code.
+3. For metadata-only rotation, output should appear landscape after CW90 while original compressed raster and pre-test original remain bit-identical; rendering orientation is changed without recompression.
+4. Four successive clockwise 90-degree edits on copies must restore original upright portrait view, compressed item hashes unchanged, no thumbnail staleness or EXIF double rotation, and no loss of unrelated metadata.
+5. Do not install/release another MSI to 'correct' an edited copy's expected landscape display without a failing invariant.
