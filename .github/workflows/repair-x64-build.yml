@@ -549,3 +549,33 @@ jobs:
           $after=& ./diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1 | Select-Object -Last 1
           & ./diagnostics/photos_trace/WIC_Preflight_Compare.ps1 -Before $env:WIC_BASELINE -After $after
           if(-not $?) { throw 'Read-only WIC restoration comparison failed' }
+
+
+      - name: Assemble synthetic-only one-click Explorer thumbnail test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $package='HEIC_Explorer_OneClick'
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          $source='diagnostics/thumbnail_warmup'
+          foreach($file in @('Explorer_HEIC_Warmup.ps1','Run_Synthetic_Explorer_Test.ps1','Test_Explorer_HEIC_OneClick.cmd','README_ONECLICK_JA.txt')) {
+            Copy-Item -LiteralPath (Join-Path $source $file) -Destination $package
+          }
+          $sample='wictest/samples/fixture-irot3-exif6-noaux.heic'
+          $hash=(Get-FileHash -LiteralPath $sample -Algorithm SHA256).Hash
+          if($hash -ne 'D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95') {
+            throw 'Pinned synthetic HEIC fixture hash mismatch'
+          }
+          Copy-Item -LiteralPath $sample -Destination (Join-Path $package 'fixture-irot3-exif6-noaux.heic')
+          if(@(Get-ChildItem -LiteralPath $package -File).Count -ne 5) {
+            throw 'One-click package is missing required files'
+          }
+          Write-Host "HEIC_Explorer_OneClick synthetic-only package created, SHA256: $hash"
+
+      - name: Upload non-installing Explorer synthetic test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: HEIC-Explorer-OneClick-Synthetic-Win10-UNVERIFIED
+          path: HEIC_Explorer_OneClick/
+          if-no-files-found: error
+          retention-days: 14
