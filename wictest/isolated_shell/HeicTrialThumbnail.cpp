@@ -18,6 +18,8 @@
 #pragma comment(lib,"ole32.lib")
 #pragma comment(lib,"windowscodecs.lib")
 #pragma comment(lib,"gdi32.lib")
+#pragma comment(linker,"/export:DllGetClassObject,PRIVATE")
+#pragma comment(linker,"/export:DllCanUnloadNow,PRIVATE")
 
 using Microsoft::WRL::ComPtr;
 namespace {
@@ -182,8 +184,7 @@ public:
 };
 }
 
-extern "C" __declspec(dllexport) HRESULT STDAPICALLTYPE
-DllGetClassObject(REFCLSID clsid,REFIID iid,LPVOID* output) {
+STDAPI DllGetClassObject(REFCLSID clsid,REFIID iid,LPVOID* output) {
     if(!output)return E_POINTER;
     *output=nullptr;
     if(!IsEqualCLSID(clsid,kTrialClsid))return CLASS_E_CLASSNOTAVAILABLE;
@@ -193,8 +194,7 @@ DllGetClassObject(REFCLSID clsid,REFIID iid,LPVOID* output) {
     factory->Release();
     return hr;
 }
-extern "C" __declspec(dllexport) HRESULT STDAPICALLTYPE
-DllCanUnloadNow() {
+STDAPI DllCanUnloadNow() {
     return g_objects.load()==0 && g_locks.load()==0 ? S_OK : S_FALSE;
 }
 // Deliberately no DllRegisterServer or DllUnregisterServer. The only installer
