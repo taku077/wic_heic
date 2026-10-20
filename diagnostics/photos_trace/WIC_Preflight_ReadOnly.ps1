@@ -36,7 +36,7 @@ foreach($hive in @('ClassesRoot','LocalMachine','CurrentUser')) {
     } finally {$base.Close()}
   }
 }
-$matches=New-Object 'System.Collections.Generic.List[object]'
+$msiMatches=New-Object 'System.Collections.Generic.List[object]'
 foreach($basePath in @(
   'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
   'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
@@ -44,7 +44,7 @@ foreach($basePath in @(
 )) {
   foreach($entry in @(Get-ItemProperty -Path $basePath -ErrorAction SilentlyContinue)) {
     if([string]$entry.DisplayName -match '(?i)^Wic.?Heic(?:\s|$)') {
-      $matches.Add([pscustomobject][ordered]@{
+      $msiMatches.Add([pscustomobject][ordered]@{
         Name=[string]$entry.DisplayName
         Version=[string]$entry.DisplayVersion
         ProductKey=[string]$entry.PSChildName
@@ -70,7 +70,7 @@ $data=[ordered]@{
   }
   Photos=$photos
   Registrations=@($registrations.ToArray())
-  WicHeicMsi=@($matches.ToArray())
+  WicHeicMsi=@($msiMatches.ToArray())
 }
 $path=Join-Path $PSScriptRoot ('WIC_Preflight_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+$PID+'.json')
 $payload=($data|ConvertTo-Json -Depth 6)

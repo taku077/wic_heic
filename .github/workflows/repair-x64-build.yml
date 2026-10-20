@@ -394,6 +394,24 @@ jobs:
             throw 'PS5.1 WIC inventory did not write local snapshots'
           }
           & $compare -Before $before -After $after
+          # Regression: PowerShell's automatic $Matches variable is overwritten by -match.
+          # A synthetic HKCU MSI entry must not corrupt our independent list.
+          $syntheticKey='HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\WicHeicSyntheticPreflightCI'
+          if(Test-Path -LiteralPath $syntheticKey) { throw 'Synthetic CI uninstall key already exists' }
+          try {
+            New-Item -Path $syntheticKey -Force | Out-Null
+            New-ItemProperty -Path $syntheticKey -Name DisplayName -PropertyType String -Value 'WicHeic Synthetic CI' | Out-Null
+            New-ItemProperty -Path $syntheticKey -Name DisplayVersion -PropertyType String -Value '0.0.0-ci' | Out-Null
+            $syntheticSnapshot=& $preflight | Select-Object -Last 1
+            $syntheticData=Get-Content -LiteralPath $syntheticSnapshot -Raw -Encoding UTF8 | ConvertFrom-Json
+            $found=@($syntheticData.WicHeicMsi | Where-Object {
+              $_.ProductKey -eq 'WicHeicSyntheticPreflightCI' -and $_.Name -eq 'WicHeic Synthetic CI'
+            })
+            if($found.Count -ne 1) { throw 'PowerShell 5.1 MSI inventory regression: expected injected entry missing' }
+            Write-Host 'WIC_MSI_MATCHES_REGRESSION_PASS'
+          } finally {
+            Remove-Item -LiteralPath $syntheticKey -Recurse -Force -ErrorAction SilentlyContinue
+          }
           $start=Join-Path $root 'PhotosTrace_Start.ps1'
           $stop=Join-Path $root 'PhotosTrace_Stop.ps1'
           try {
