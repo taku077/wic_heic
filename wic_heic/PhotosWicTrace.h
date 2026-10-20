@@ -63,7 +63,7 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
     wchar_t path[512]{};
     if(!TracePath(path))return;
     // APPEND only, never truncate or overwrite; do not auto-create folders.
-    HANDLE h=CreateFileW(path,FILE_APPEND_DATA,
+    HANDLE h=CreateFileW(path,FILE_APPEND_DATA|FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL,nullptr);
     if(h==INVALID_HANDLE_VALUE)return;
