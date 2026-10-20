@@ -279,7 +279,9 @@ jobs:
           if($reg.ExitCode -ne 0){throw 'WIC HEIC codec not registered for isolated Shell experiment'}
           try {
             & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -RegistrationScope Machine
-            if($LASTEXITCODE -ne 0){throw 'Isolated Shell test failed'}
+            # This is a PowerShell script, not a native EXE. LASTEXITCODE can
+            # remain $null even on success; terminating errors propagate.
+            if(-not $?){throw 'Isolated Shell test failed'}
           } finally {
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
             if($unreg.ExitCode -ne 0){throw 'Isolated Shell trial failed to remove WIC codec registration'}
