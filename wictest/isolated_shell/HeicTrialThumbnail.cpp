@@ -29,9 +29,8 @@ const wchar_t kCounterKey[] =
     L"Software\\WicHeicSyntheticTrial\\{94DA5CB1-F0E4-42C2-B5D8-B1F3CE6D782B}";
 std::atomic<long> g_locks{0},g_objects{0};
 
-void CountSuccessfulExtraction() noexcept {
-    // Diagnostic is explicitly enabled only when the test harness created
-    // its ephemeral HKCU marker. Absent marker => absolutely no writes.
+void CountTestMarker(const wchar_t* name) noexcept {
+    // Only an ephemeral harness-created HKCU marker enables writes.
     HKEY key=nullptr;
     if(RegOpenKeyExW(HKEY_CURRENT_USER,kCounterKey,0,
                      KEY_QUERY_VALUE|KEY_SET_VALUE,&key)!=ERROR_SUCCESS)return;
@@ -41,11 +40,11 @@ void CountSuccessfulExtraction() noexcept {
     if(status==ERROR_SUCCESS && type==REG_DWORD && enabled==1) {
         DWORD count=0;
         type=0;bytes=sizeof(count);
-        if(RegQueryValueExW(key,L"Calls",nullptr,&type,
+        if(RegQueryValueExW(key,name,nullptr,&type,
             reinterpret_cast<BYTE*>(&count),&bytes)!=ERROR_SUCCESS)count=0;
         if(count<10000) {
             ++count;
-            RegSetValueExW(key,L"Calls",0,REG_DWORD,
+            RegSetValueExW(key,name,0,REG_DWORD,
                            reinterpret_cast<const BYTE*>(&count),sizeof(count));
         }
     }
@@ -83,6 +82,7 @@ public:
         *output=nullptr;*alpha=WTSAT_UNKNOWN;
         if(!stream_)return E_UNEXPECTED;
         if(cx==0 || cx>1024)return E_INVALIDARG;
+        CountTestMarker(L"Attempts");
         ComPtr<IWICImagingFactory> factory;
         HRESULT hr=CoCreateInstance(CLSID_WICImagingFactory,nullptr,
             CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory));
@@ -144,7 +144,7 @@ public:
             IsEqualGUID(sourceFormat,GUID_WICPixelFormat64bppRGBA);
         *alpha=hasAlpha?WTSAT_ARGB:WTSAT_RGB;
         *output=dib;
-        CountSuccessfulExtraction();
+        CountTestMarker(L"Calls");
         return S_OK;
     }
 };

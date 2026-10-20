@@ -20,6 +20,7 @@ $subkeys=@(
  'Software\Classes\CLSID\'+$providerId,
  'Software\Classes\'+$progid,
  'Software\Classes\'+$extension,
+ 'Software\Classes\SystemFileAssociations\'+$extension,
  'Software\WicHeicSyntheticTrial\'+$providerId
 )
 $registry=[Microsoft.Win32.Registry]::CurrentUser
@@ -145,9 +146,19 @@ try {
  $key.SetValue('PerceivedType','image',[Microsoft.Win32.RegistryValueKind]::String)
  $key.Close()
  $registered+=('Software\Classes\'+$extension)
+ # Apply both the extension and SystemFileAssociations Shell handler paths;
+ # these are unique .wictrial entries, never the actual HEIC association.
+ $key=Open-NewRegistryKey ('Software\Classes\'+$extension+'\ShellEx\'+$handlerId)
+ $key.SetValue('',$providerId,[Microsoft.Win32.RegistryValueKind]::String)
+ $key.Close()
+ $key=Open-NewRegistryKey ('Software\Classes\SystemFileAssociations\'+$extension+'\ShellEx\'+$handlerId)
+ $key.SetValue('',$providerId,[Microsoft.Win32.RegistryValueKind]::String)
+ $key.Close()
+ $registered+=('Software\Classes\SystemFileAssociations\'+$extension)
  $key=Open-NewRegistryKey ('Software\WicHeicSyntheticTrial\'+$providerId)
  $key.SetValue('Enable',1,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.SetValue('Calls',0,[Microsoft.Win32.RegistryValueKind]::DWord)
+ $key.SetValue('Attempts',0,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.Close()
  $registered+=('Software\WicHeicSyntheticTrial\'+$providerId)
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
@@ -160,6 +171,9 @@ try {
  $timer=[Diagnostics.Stopwatch]::StartNew()
  $first=[TrialShell.Shell]::GetSyntheticThumbnail($file,$false)
  $timer.Stop()
+ $snapKey=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
+ try { $attempts=[int]$snapKey.GetValue('Attempts',0) } finally { $snapKey.Close() }
+ Write-Host ('SHELL_TRIAL_HANDLER_ENTRY_ATTEMPTS='+$attempts)
  if($first.HResult -lt 0 -or -not $first.HasBitmap) {
    throw ('Shell thumbnail extraction failed for synthetic association: 0x'+$first.HResult.ToString('X8'))
  }
@@ -181,6 +195,7 @@ try {
  # the actual WIC codec registration is managed by the separate CI step.
  foreach($subkey in @(
      'Software\WicHeicSyntheticTrial\'+$providerId,
+     'Software\Classes\SystemFileAssociations\'+$extension,
      'Software\Classes\'+$extension,
      'Software\Classes\'+$progid,
      'Software\Classes\CLSID\'+$providerId
