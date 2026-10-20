@@ -31,8 +31,9 @@ inline void Run() {
     Check(enc->Initialize(stream,WICBitmapEncoderNoCache),"Init encoder");
     if(enc->SetThumbnail(source)!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
         throw std::runtime_error("guard: top-level thumbnail unexpectedly accepted");
-    if(enc->SetColorContexts(0,nullptr)!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
-        throw std::runtime_error("guard: top-level color contexts unexpectedly accepted");
+    // An empty color-context list means no ICC, and is valid.
+    if(enc->SetColorContexts(0,nullptr)!=S_OK)
+        throw std::runtime_error("guard: empty color-context list rejected");
     CComPtr<IWICMetadataQueryWriter> unavailableWriter;
     if(enc->GetMetadataQueryWriter(&unavailableWriter)!=WINCODEC_ERR_UNSUPPORTEDOPERATION || unavailableWriter)
         throw std::runtime_error("guard: top-level metadata writer unexpectedly available");
