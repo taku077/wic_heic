@@ -184,6 +184,32 @@ jobs:
             if ($unregister.ExitCode -ne 0) { Write-Warning "Runner-only COM deregistration failed: $($unregister.ExitCode)" }
           }
 
+      - name: Verify privacy-limited Photos trace enable and clean shutdown
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Resolve-Path -LiteralPath 'diagnostics/photos_trace').Path
+          try {
+            & (Join-Path $root 'PhotosTrace_Start.ps1')
+            $prop = Get-ItemProperty -Path 'HKCU:\Software\WicHeic' -ErrorAction Stop
+            if (-not $prop.TraceFile -or -not (Test-Path -LiteralPath $prop.TraceFile)) {
+              throw 'Trace start failed to register local output'
+            }
+            if (-not $prop.TraceUntilFileTime) { throw '20-minute automatic expiration absent' }
+            $path = $prop.TraceFile
+          }
+          finally {
+            & (Join-Path $root 'PhotosTrace_Stop.ps1')
+          }
+          $remaining = Get-ItemProperty -Path 'HKCU:\Software\WicHeic' -Name TraceFile -ErrorAction SilentlyContinue
+          if ($remaining -and $remaining.TraceFile) {
+            throw 'Trace setting not cleaned up by Stop'
+          }
+          if (-not (Test-Path -LiteralPath $path)) {
+            throw 'Trace evidence log was unexpectedly deleted'
+          }
+          Write-Host 'Privacy-limited WIC Photos trace start/stop passed'
+
       - name: Build experimental replacement x64 MSI
         shell: pwsh
         run: |
