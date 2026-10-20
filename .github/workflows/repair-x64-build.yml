@@ -8,6 +8,7 @@ on:
       - investigate/geometry-jpeg-vs-heic
       - feature/lossless-heic-rotation
       - feature/wic-heif-encoder-options
+      - feature/lossless-wic-native
       - fix/encoder-geometry-failsafe
   workflow_dispatch:
 
