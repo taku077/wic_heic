@@ -341,8 +341,21 @@ void CHeicBitmapFrameDecode::DecodeImage()
 		throw std::exception("Bad image handle");
 	}
 
-	// Set both to undefined to use original one
-	m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
+	// Try two codec worker threads for large primary images. This is bounded
+	// for low-powered PCs: embedded small thumbnails stay single-threaded.
+	// Use the C API because pinned heif_cxx.h ignores DecodingOptions.
+	heif_decoding_options* opts=heif_decoding_options_alloc();
+	if (!opts) throw std::bad_alloc();
+	const uint64_t pixels=uint64_t(m_Handle.get_width())*
+		                  uint64_t(m_Handle.get_height());
+	if (pixels >= 1000000ull) opts->num_codec_threads=2;
+	heif_image* decoded=nullptr;
+	const heif_error decodeError=heif_decode_image(
+		m_Handle.get_raw_image_handle(),&decoded,
+		heif_colorspace_RGB,m_chroma,opts);
+	heif_decoding_options_free(opts);
+	if (decodeError.code!=heif_error_Ok) throw heif::Error(decodeError);
+	m_Image=heif::Image(decoded);
 	m_PlaneInterleaved = m_Image.get_plane2(heif_channel_interleaved, &m_Stride);
 
 	DbgLog("Decode: (chroma=%d, bpp=%d, stride=%d)",
