@@ -44,5 +44,12 @@ with tempfile.TemporaryDirectory() as tmp:
         pass
     else:
         raise AssertionError("Output overwrite was accepted")
+# A temporary synthetic output is consumed by the native Windows WIC
+# regression harness in the same CI job. This file is never committed.
+fixtureOutput=Path("wictest/samples/fixture-lossless-cw90.heic")
+assert not fixtureOutput.exists(), "Never overwrite existing fixture"
+rotated,_=transform(before)
+write_new(fixtureOutput,rotated)
+print("LOSSLESS_HEIC_OUTPUT_READY_FOR_WIC="+str(fixtureOutput))
 print("LOSSLESS_HEIC_FOUR_ROTATION_TEST_PASSED",steps)
 print("LOSSLESS_HEIC_SOURCE_UNCHANGED SHA256="+h)
