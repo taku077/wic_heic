@@ -172,7 +172,7 @@ def transform(original):
     mods={pos:(angle-1)%4}
     ids=exif_ids(original,one(child,'iinf'))
     assoc=exif_links(original,one(child,'iref'),primary)
-    if has_linked_visual(b, iref, primary):
+    if has_linked_visual(original, iref, primary):
         reject("Linked thumbnail/HDR rotation requires coherent auxiliary-image transform")
     exifs=[i for i in ids if i in assoc]
     if len(exifs)>1:reject("Multiple Exif items attached to primary")
