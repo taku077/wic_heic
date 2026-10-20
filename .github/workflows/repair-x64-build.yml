@@ -278,7 +278,7 @@ jobs:
           $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s', ('"{0}"' -f $codec)) -Wait -PassThru
           if($reg.ExitCode -ne 0){throw 'WIC HEIC codec not registered for isolated Shell experiment'}
           try {
-            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture
+            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -RegistrationScope Machine
             if($LASTEXITCODE -ne 0){throw 'Isolated Shell test failed'}
           } finally {
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
