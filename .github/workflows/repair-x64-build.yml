@@ -7,6 +7,7 @@ on:
       - investigate/rotated-exif-orientation
       - investigate/geometry-jpeg-vs-heic
       - feature/lossless-heic-rotation
+      - feature/wic-heif-encoder-options
       - fix/encoder-geometry-failsafe
   workflow_dispatch:
 
