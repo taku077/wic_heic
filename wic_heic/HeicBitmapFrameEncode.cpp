@@ -11,6 +11,8 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	, m_Chroma(heif_chroma_undefined)
 	, m_Colorspace(heif_colorspace_RGB)
 	, m_Created(false)
+	, m_HasPixels(false)
+	, m_WrittenLines(0)
 	, m_PixelFormat(GUID_WICPixelFormat24bppRGB)
 	, m_BitDepthPerChannel(8)
 {
@@ -69,6 +71,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Initialize(__RPC__in_opt IProp
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetSize(UINT uiWidth, UINT uiHeight)
 {
+	if (m_Created || m_HasPixels) return WINCODEC_ERR_WRONGSTATE;
+	if (!uiWidth || !uiHeight || uiWidth > 20000 || uiHeight > 20000)
+		return E_INVALIDARG;
 	m_Width = uiWidth;
 	m_Height = uiHeight;
 	return S_OK;
@@ -84,6 +89,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 	if (!pPixelFormat) {
 		return E_INVALIDARG;
 	}
+	if (m_Created || m_HasPixels) return WINCODEC_ERR_WRONGSTATE;
 
 	if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat24bppRGB)) {
 		m_PixelFormat = *pPixelFormat;
@@ -133,6 +139,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 		m_BitDepthPerChannel = 8;
 	}
 
+	// Report the actual accepted pixel format back to the caller.
+	// Otherwise Photos may write BGR bytes into an RGB frame or vice versa.
+	*pPixelFormat = m_PixelFormat;
 	return S_OK;
 }
 
@@ -167,102 +176,112 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetThumbnail(__RPC__in_opt IWI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UINT cbStride, UINT cbBufferSize, __RPC__in_ecount_full(cbBufferSize) BYTE *pbPixels)
 {
-	try
-	{
-		// Untested
-		// Conversion
+	if (!pbPixels) return E_POINTER;
+	if (!m_Width || !m_Height || !lineCount || m_HasPixels) return WINCODEC_ERR_WRONGSTATE;
+	if (lineCount > m_Height - m_WrittenLines) return E_INVALIDARG;
 
-		int stride;
+	// Only the explicitly supported 8-bit interleaved formats may be written
+	// through this path; never silently truncate 10/12/16-bit samples.
+	UINT bytesPerPixel = 0;
+	if (IsEqualGUID(m_PixelFormat, GUID_WICPixelFormat24bppRGB)) bytesPerPixel = 3;
+	else if (IsEqualGUID(m_PixelFormat, GUID_WICPixelFormat32bppRGBA)) bytesPerPixel = 4;
+	else return WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT;
 
+	const uint64_t rowBytes = uint64_t(m_Width) * bytesPerPixel;
+	const uint64_t need = (uint64_t(lineCount) - 1) * cbStride + rowBytes;
+	if (rowBytes > cbStride || need > cbBufferSize) return E_INVALIDARG;
+
+	try {
 		CreateFrame();
-
-		uint8_t* plane = m_Frame.get_plane(heif_channel_interleaved, &stride);
-		if (!plane) {
-			return E_OUTOFMEMORY;
-		}
-
-		UINT copyStride = (UINT)stride > cbStride ? cbStride : (UINT)stride;
-
-		UINT copied = 0;
-		for (UINT y = 0; y < lineCount; y++) {
-			memcpy_s(plane, stride, pbPixels, copyStride);
-
-			plane += stride;
+		int planeStride = 0;
+		uint8_t* plane = m_Frame.get_plane(heif_channel_interleaved, &planeStride);
+		if (!plane || planeStride <= 0 || uint64_t(planeStride) < rowBytes)
+			return WINCODEC_ERR_BADIMAGE;
+		plane += size_t(planeStride) * m_WrittenLines;
+		for (UINT y = 0; y < lineCount; ++y) {
+			memcpy_s(plane, size_t(planeStride), pbPixels, size_t(rowBytes));
+			plane += planeStride;
 			pbPixels += cbStride;
 		}
+		m_WrittenLines += lineCount;
+		if (m_WrittenLines == m_Height) m_HasPixels = true;
+		return S_OK;
 	}
-	catch (const heif::Error& ex)
-	{
-		Log("Call to CHeicBitmapFrameEncode::WritePixels failed: %s", ex.get_message().c_str());
-		return E_INVALIDARG;
+	catch (const std::exception& ex) {
+		Log("WritePixels failed: %s", ex.what());
+		return WINCODEC_ERR_BADIMAGE;
 	}
-	catch (const std::exception& ex)
-	{
-		Log("Call to CHeicBitmapFrameEncode::WritePixels failed: %s", ex.what());
-		return E_INVALIDARG;
-	}
-
-	return S_OK;
+	catch (...) { return WINCODEC_ERR_BADIMAGE; }
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
-	try
-	{
-		HRESULT hr;
-		int stride;
-		UINT bufferSize = 0;
-		WICPixelFormatGUID srcFormat;
-		IWICBitmapSource *pConverted = NULL;
+	if (!pIBitmapSource) return E_POINTER;
+	if (!m_Width || !m_Height || m_Created || m_HasPixels || m_WrittenLines)
+		return WINCODEC_ERR_WRONGSTATE;
 
-		if (!pIBitmapSource) {
-			return E_POINTER;
-		}
+	UINT sourceW = 0, sourceH = 0;
+	HRESULT hr = pIBitmapSource->GetSize(&sourceW, &sourceH);
+	if (FAILED(hr)) return hr;
 
+	UINT copyW = sourceW, copyH = sourceH;
+	if (prc) {
+		if (prc->X < 0 || prc->Y < 0 || prc->Width <= 0 || prc->Height <= 0)
+			return E_INVALIDARG;
+		if (uint64_t(prc->X) + UINT(prc->Width) > sourceW ||
+			uint64_t(prc->Y) + UINT(prc->Height) > sourceH)
+			return E_INVALIDARG;
+		copyW = UINT(prc->Width);
+		copyH = UINT(prc->Height);
+	}
+	// Fail rather than stretch, crop unexpectedly, or leave partially filled
+	// planes when Photos passes an inconsistent SetSize/WriteSource pair.
+	if (copyW != m_Width || copyH != m_Height) {
+		Log("WriteSource SIZE_MISMATCH src=%ux%u copy=%ux%u frame=%ux%u",
+			sourceW, sourceH, copyW, copyH, m_Width, m_Height);
+		return E_INVALIDARG;
+	}
+
+	// Avoid allocating output pixels until inputs and dimensions are validated.
+	WICPixelFormatGUID sourceFormat;
+	hr = pIBitmapSource->GetPixelFormat(&sourceFormat);
+	if (FAILED(hr)) return hr;
+
+	CComPtr<IWICBitmapSource> converted;
+	IWICBitmapSource* selected = pIBitmapSource;
+	if (!IsEqualGUID(sourceFormat, m_PixelFormat)) {
+		hr = WICConvertBitmapSource(m_PixelFormat, pIBitmapSource, &converted);
+		if (FAILED(hr)) return hr;
+		selected = converted;
+	}
+
+	try {
 		CreateFrame();
-
-		uint8_t* data = m_Frame.get_plane(heif_channel_interleaved, &stride);
-		if (!data) {
-			return E_OUTOFMEMORY;
-		}
-
-		bufferSize = stride * m_Height;
-
-		hr = pIBitmapSource->GetPixelFormat(&srcFormat);
+		int stride = 0;
+		uint8_t* plane = m_Frame.get_plane(heif_channel_interleaved, &stride);
+		if (!plane || stride <= 0) return WINCODEC_ERR_BADIMAGE;
+		const uint64_t bufferBytes = uint64_t(stride) * m_Height;
+		if (bufferBytes > 0xFFFFFFFFULL) return E_INVALIDARG;
+		// CRITICAL: propagate CopyPixels HRESULT even after format conversion.
+		hr = selected->CopyPixels(prc, UINT(stride), UINT(bufferBytes), plane);
 		if (FAILED(hr)) {
-			throw std::exception("Unable to get source pixel format");
+			Log("WriteSource CopyPixels failed HRESULT=0x%08X", unsigned(hr));
+			return hr;
 		}
-
-		if (IsEqualGUID(srcFormat, m_PixelFormat))
-		{
-			return pIBitmapSource->CopyPixels(prc, stride, bufferSize, data);
-		}
-		else
-		{
-			hr = WICConvertBitmapSource(m_PixelFormat, pIBitmapSource, &pConverted);
-			if (FAILED(hr)) {
-				throw std::exception("Unable to convert source pixel format");
-			}
-
-			pConverted->CopyPixels(prc, stride, bufferSize, data);
-		}
+		m_WrittenLines = m_Height;
+		m_HasPixels = true;
+		return S_OK;
 	}
-	catch (const heif::Error& ex)
-	{
-		Log("Call to CHeicBitmapFrameEncode::WriteSource failed: %s", ex.get_message().c_str());
-		return E_INVALIDARG;
+	catch (const std::exception& ex) {
+		Log("WriteSource failed: %s", ex.what());
+		return WINCODEC_ERR_BADIMAGE;
 	}
-	catch (const std::exception& ex)
-	{
-		Log("Call to CHeicBitmapFrameEncode::WriteSource failed: %s", ex.what());
-		return E_INVALIDARG;
-	}
-
-	return S_OK;
+	catch (...) { return WINCODEC_ERR_BADIMAGE; }
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 {
+	if (!m_HasPixels || m_WrittenLines != m_Height) return WINCODEC_ERR_WRONGSTATE;
 	try
 	{
 		CreateFrame();
@@ -288,6 +307,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::GetMetadataQueryWriter(__RPC__
 void CHeicBitmapFrameEncode::CreateFrame()
 {
 	if (m_Created) return;
+	if (!m_Width || !m_Height || m_Chroma == heif_chroma_undefined)
+		throw std::runtime_error("Frame dimension or pixel format not initialized");
 	m_Frame.create(m_Width, m_Height, m_Colorspace, m_Chroma);
 	m_Frame.add_plane(heif_channel_interleaved, m_Width, m_Height, m_BitDepthPerChannel);
 

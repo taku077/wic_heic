@@ -11,6 +11,8 @@ private:
 	heif_chroma m_Chroma;
 	heif_colorspace m_Colorspace;
 	bool m_Created;
+	bool m_HasPixels;
+	UINT m_WrittenLines;
 	WICPixelFormatGUID m_PixelFormat;
 	int m_BitDepthPerChannel;
 
