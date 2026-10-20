@@ -90,12 +90,22 @@ inline void Run() {
             }
             const auto warmDuration=std::chrono::duration<double,std::milli>(
                 std::chrono::steady_clock::now()-warmStart).count();
+            ShellThumbnailWarmup::Result reused;
+            const auto reuseStart=std::chrono::steady_clock::now();
+            ShellThumbnailWarmup::WarmPaths(paths,1u,reused,nullptr,true);
+            const auto reuseMs=std::chrono::duration<double,std::milli>(
+                std::chrono::steady_clock::now()-reuseStart).count();
             printf("SHELL_PRELOAD_%s files=%d before_cache=%d generated=%u cache_only_hits=%d errors=%u elapsed_ms=%.3f warm_lookup_ms=%.3f\n",
                 mode==0?"SERIAL":"PARALLEL2",perMode,beforeCache,
                 result.generated.load(),verified,result.failed.load(),
                 duration,warmDuration);
+            printf("SHELL_PRELOAD_REVISIT cache_hits=%u regenerated=%u errors=%u elapsed_ms=%.3f\n",
+                reused.cacheHits.load(),reused.generated.load(),
+                reused.failed.load(),reuseMs);
             if(beforeCache!=0 || result.failed.load()!=0 || verified!=perMode ||
-               result.attempted.load()!=perMode)
+               result.attempted.load()!=perMode ||
+               reused.cacheHits.load()!=perMode || reused.generated.load()!=0 ||
+               reused.failed.load()!=0 || reused.attempted.load()!=perMode)
                 throw std::runtime_error("Shell warmup cache safety regression");
 
         }
