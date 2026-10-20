@@ -130,6 +130,6 @@ try {
  if(Test-Path -LiteralPath $stdout){$includes+=$stdout}
  if(Test-Path -LiteralPath $stderr){$includes+=$stderr}
  Compress-Archive -LiteralPath $includes -DestinationPath $zip -CompressionLevel Optimal
- Write-Host ('TEST_REPORT='+$zip)
- Write-Host ('TEST_STATUS='+$(if($rows -match '^TEST_FAILED='){'FAILED'}else{'RECORDED'}))
+ Write-Output ('TEST_REPORT='+$zip)
+ Write-Output ('TEST_STATUS='+$(if($rows -match '^TEST_FAILED='){'FAILED'}else{'RECORDED'}))
 }
