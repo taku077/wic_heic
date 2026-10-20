@@ -157,7 +157,9 @@ namespace WicHeicShellWarm {
     }
 }
 '@
-Add-Type -TypeDefinition $code -Language CSharp -ErrorAction Stop
+if (-not ('WicHeicShellWarm.Native' -as [type])) {
+    Add-Type -TypeDefinition $code -Language CSharp -ErrorAction Stop
+}
 
 if ($Mode -eq 'SelfTest') {
     if (-not [WicHeicShellWarm.Native]::IsHeic('sample.HEIC') -or
