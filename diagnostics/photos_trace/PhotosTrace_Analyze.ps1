@@ -29,7 +29,7 @@ $names=@('DecoderOpen','DecoderGetFrame','DecoderFrameGetSize','DecoderCopyPixel
          'EncoderInitialize','CreateNewFrame','FrameInitializeEnter','FrameInitializeOptions',
          'WriteSourceEnter','WriteSourceLossless','WriteSourceRaster','WriteSourceRejected',
          'WritePixelsEnter','SetColorContexts','SetThumbnail','MetadataWriterUnavailable',
-         'EncoderCommitLossless','EncoderCommitRecompressed')
+         'EncoderCommitLossless','EncoderCommitRecompressed','EncoderCommitRejected')
 $linesOut=New-Object 'System.Collections.Generic.List[string]'
 $linesOut.Add('WIC HEIC / Windows Photos call-path audit (text-only)')
 $linesOut.Add('-----------------------------------------------')

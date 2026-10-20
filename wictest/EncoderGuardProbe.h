@@ -24,11 +24,19 @@ inline void Run() {
     CComPtr<IWICStream> stream;
     CComPtr<IWICBitmapFrameEncode> frame;
     Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,&enc),"Create HEIC encoder");
+    HRESULT badInit=enc->Initialize(nullptr,WICBitmapEncoderNoCache);
+    if(badInit!=E_INVALIDARG)throw std::runtime_error("guard: null stream not rejected");
     Check(fac->CreateStream(&stream),"Create stream");
     Check(stream->InitializeFromFilename(L"samples\\guard-writepixels.heic",GENERIC_WRITE),"Open test output");
     Check(enc->Initialize(stream,WICBitmapEncoderNoCache),"Init encoder");
+    HRESULT doubleInit=enc->Initialize(stream,WICBitmapEncoderNoCache);
+    if(doubleInit!=WINCODEC_ERR_WRONGSTATE)
+        throw std::runtime_error("guard: repeated encoder init accepted");
     Check(enc->CreateNewFrame(&frame,nullptr),"Create frame");
     Check(frame->Initialize(nullptr),"Init frame");
+    HRESULT thumbnailHr=frame->SetThumbnail(source);
+    if(thumbnailHr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("guard: ignored thumbnail reported as saved");
     Check(frame->SetSize(H,W),"Set intentionally wrong size");
     GUID bgr=GUID_WICPixelFormat24bppBGR;
     Check(frame->SetPixelFormat(&bgr),"Set BGR pixel format");
@@ -62,6 +70,42 @@ inline void Run() {
     UINT actualW=0,actualH=0;
     Check(decoded->GetSize(&actualW,&actualH),"readback size");
     if(actualW!=H || actualH!=W) throw std::runtime_error("guard: pixels size incorrect");
+    // Fully prepared raster output must not replace existing stream bytes.
+    CComPtr<IStream> protectedStream;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&protectedStream),"Create sentinel stream");
+    const BYTE marker[]={0x53,0x41,0x46,0x45};
+    ULONG n=0;
+    Check(protectedStream->Write(marker,sizeof(marker),&n),"Write sentinel");
+    if(n!=sizeof(marker))throw std::runtime_error("guard: write sentinel failed");
+    LARGE_INTEGER zero{};
+    Check(protectedStream->Seek(zero,STREAM_SEEK_SET,nullptr),"Rewind sentinel");
+    CComPtr<IWICBitmapEncoder> protectedEnc;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,
+        &protectedEnc),"Create protected encoder");
+    Check(protectedEnc->Initialize(protectedStream,WICBitmapEncoderNoCache),
+        "Initialize protected encoder");
+    CComPtr<IWICBitmapFrameEncode> protectedFrame;
+    Check(protectedEnc->CreateNewFrame(&protectedFrame,nullptr),"Create protected frame");
+    Check(protectedFrame->Initialize(nullptr),"Initialize protected frame");
+    Check(protectedFrame->SetSize(W,H),"Protected dimensions");
+    GUID rgb=GUID_WICPixelFormat24bppRGB;
+    Check(protectedFrame->SetPixelFormat(&rgb),"Protected format");
+    Check(protectedFrame->WriteSource(source,nullptr),"Protected source");
+    Check(protectedFrame->Commit(),"Protected frame commit");
+    HRESULT protectHr=protectedEnc->Commit();
+    if(protectHr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("guard: existing output not rejected");
+    STATSTG stat{};
+    Check(protectedStream->Stat(&stat,STATFLAG_NONAME),"Stat protected stream");
+    if(stat.cbSize.QuadPart!=sizeof(marker))
+        throw std::runtime_error("guard: existing stream length changed");
+    Check(protectedStream->Seek(zero,STREAM_SEEK_SET,nullptr),"Rewind protected stream");
+    BYTE got[sizeof(marker)]{};
+    n=0;
+    Check(protectedStream->Read(got,sizeof(got),&n),"Read protected stream");
+    if(n!=sizeof(marker) || memcmp(got,marker,sizeof(marker))!=0)
+        throw std::runtime_error("guard: existing output bytes changed");
     printf("ENCODER_GEOMETRY_FAILSAFE_TEST_PASSED\n");
+    printf("ENCODER_NONEMPTY_STREAM_AND_THUMBNAIL_FAIL_CLOSED_PASSED\n");
 }
 } // namespace EncoderGuardProbe

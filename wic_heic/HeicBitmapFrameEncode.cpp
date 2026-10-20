@@ -197,22 +197,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPalette(__RPC__in_opt IWICP
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetThumbnail(__RPC__in_opt IWICBitmapSource *pIThumbnail)
 {
-	WicHeicDiagnostic::Emit("SetThumbnail",0,0,m_BitmapTransform,m_HeifCompressionMethod,pIThumbnail?"thumbnail-ignored":"none");
-	try
-	{
-		// TODO
-		return S_OK;
-	}
-	catch (const heif::Error& ex)
-	{
-		Log("Call to CHeicBitmapFrameEncode::SetThumbnail failed: %s", ex.get_message().c_str());
-		return E_INVALIDARG;
-	}
-	catch (const std::exception& ex)
-	{
-		Log("Call to CHeicBitmapFrameEncode::SetThumbnail failed: %s", ex.what());
-		return E_INVALIDARG;
-	}
+	// Never silently accept a supplied embedded thumbnail without storing it.
+	WicHeicDiagnostic::Emit("SetThumbnail",0,0,m_BitmapTransform,m_HeifCompressionMethod,
+		pIThumbnail?"thumbnail-rejected":"none",WINCODEC_ERR_UNSUPPORTEDOPERATION);
+	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UINT cbStride, UINT cbBufferSize, __RPC__in_ecount_full(cbBufferSize) BYTE *pbPixels)

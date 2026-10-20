@@ -16,8 +16,14 @@ CHeifStreamWriter::~CHeifStreamWriter()
 
 heif_error CHeifStreamWriter::write(const void* data, size_t size)
 {
-	HRESULT hr = m_Stream->Write(data, (ULONG)size, nullptr);
-	if (FAILED(hr)) {
+	// Guard ULONG truncation and detect successful but incomplete IStream writes.
+	if (size > static_cast<size_t>(0xFFFFFFFFu)) {
+		return{heif_error_Encoding_error,heif_suberror_Cannot_write_output_data,
+			"Output buffer exceeds IStream limit"};
+	}
+	ULONG written=0;
+	HRESULT hr=m_Stream->Write(data,static_cast<ULONG>(size),&written);
+	if (FAILED(hr) || written!=size) {
 		return{
 			heif_error_Encoding_error,
 			heif_suberror_Cannot_write_output_data,

@@ -67,6 +67,8 @@ ULONG STDMETHODCALLTYPE CHeicBitmapEncoder::Release(void)
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Initialize(__RPC__in_opt IStream *pIStream, WICBitmapEncoderCacheOption cacheOption)
 {
 	WicHeicDiagnostic::Emit("EncoderInitialize");
+	if (!pIStream) return E_INVALIDARG;
+	if (m_Stream) return WINCODEC_ERR_WRONGSTATE;
 	m_Stream = pIStream;
 	m_Stream->AddRef();
 
@@ -185,15 +187,27 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 	WicHeicDiagnostic::Emit("EncoderCommitEnter",0,0,0,0,m_Frames.size()==1?"one-frame":"many-frames");
 	try
 	{
+		// Reject existing output for both lossless and raster encodes.
+		// This does not undo truncation by the caller before Initialize.
+		if (!m_Stream) return WINCODEC_ERR_NOTINITIALIZED;
+		STATSTG stat{};
+		HRESULT hr=m_Stream->Stat(&stat,STATFLAG_NONAME);
+		if (FAILED(hr) || stat.cbSize.QuadPart!=0) {
+			WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,"nonempty-target",WINCODEC_ERR_UNSUPPORTEDOPERATION);
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
+		LARGE_INTEGER zero{};
+		ULARGE_INTEGER pos{};
+		hr=m_Stream->Seek(zero,STREAM_SEEK_CUR,&pos);
+		if (FAILED(hr) || pos.QuadPart!=0) {
+			WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,"nonzero-position",WINCODEC_ERR_UNSUPPORTEDOPERATION);
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
+		if (m_Frames.empty()) return WINCODEC_ERR_WRONGSTATE;
 		// A single-frame direct WIC rotation/copy can now retain the entire
 		// original HEIF file, including metadata, thumbnails and HDR assets.
 		// A pre-existing nonempty target stream is NEVER overwritten here.
 		if(m_Frames.size()==1 && m_Frames[0]->m_LosslessReady) {
-			if(!m_Stream)return WINCODEC_ERR_NOTINITIALIZED;
-			STATSTG stat{};
-			HRESULT hr=m_Stream->Stat(&stat,STATFLAG_NONAME);
-			if(FAILED(hr) || stat.cbSize.QuadPart!=0)
-				return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 			const auto& bytes=m_Frames[0]->m_LosslessBytes;
 			if(bytes.empty()||bytes.size()>0xFFFFFFFFULL)
 				return WINCODEC_ERR_UNSUPPORTEDOPERATION;
