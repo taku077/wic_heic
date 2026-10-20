@@ -25,5 +25,6 @@ public:
 	virtual HRESULT STDMETHODCALLTYPE GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail);
 	virtual HRESULT STDMETHODCALLTYPE GetFrameCount(__RPC__out UINT *pCount);
 	virtual HRESULT STDMETHODCALLTYPE GetFrame(UINT index, __RPC__deref_out_opt IWICBitmapFrameDecode **ppIBitmapFrame);
+	HRESULT CopyOriginalBytes(std::vector<uint8_t>& content);
 };
 

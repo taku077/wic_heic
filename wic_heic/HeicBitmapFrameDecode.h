@@ -1,6 +1,7 @@
 #pragma once
+#include "HeicSourceAccess.h"
 
-class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode
+class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IHeicRawSource
 {
 private:
 	std::atomic<uint32_t> m_Count;
@@ -31,5 +32,6 @@ public:
 	virtual HRESULT STDMETHODCALLTYPE GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail);
 
 	void DecodeImage();
+	HRESULT STDMETHODCALLTYPE ReadFullContent(std::vector<uint8_t>* content) override;
 };
 

@@ -15,5 +15,7 @@ public:
 	int read(void* data, size_t size) override;
 	int seek(int64_t position) override;
 	heif_reader_grow_status wait_for_file_size(int64_t target_size) override;
+	// Bounded, read-only snapshot; restores original IStream seek position.
+	HRESULT CopyOriginalBytes(std::vector<uint8_t>& output);
 };
 

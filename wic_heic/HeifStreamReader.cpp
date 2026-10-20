@@ -82,3 +82,40 @@ heif_reader_grow_status CHeifStreamReader::wait_for_file_size(int64_t target_siz
 
 	return heif_reader_grow_status_size_reached;
 }
+
+
+HRESULT CHeifStreamReader::CopyOriginalBytes(std::vector<uint8_t>& output)
+{
+    output.clear();
+    if (!m_Stream || m_Size==0 || m_Size>128ULL*1024*1024)
+        return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+    LARGE_INTEGER zero{};
+    ULARGE_INTEGER saved{};
+    HRESULT hr=m_Stream->Seek(zero,STREAM_SEEK_CUR,&saved);
+    if(FAILED(hr)) return hr;
+    hr=m_Stream->Seek(zero,STREAM_SEEK_SET,nullptr);
+    if(FAILED(hr)) return hr;
+    try {
+        output.resize(size_t(m_Size));
+    } catch (...) {
+        LARGE_INTEGER back{};back.QuadPart=saved.QuadPart;
+        m_Stream->Seek(back,STREAM_SEEK_SET,nullptr);
+        return E_OUTOFMEMORY;
+    }
+    size_t total=0;
+    while(total<output.size()) {
+        ULONG readCount=0;
+        ULONG request=static_cast<ULONG>(
+            std::min<size_t>(output.size()-total,1024*1024));
+        hr=m_Stream->Read(output.data()+total,request,&readCount);
+        if(FAILED(hr) || readCount==0) break;
+        total+=readCount;
+    }
+    LARGE_INTEGER back{};back.QuadPart=saved.QuadPart;
+    const HRESULT restore=m_Stream->Seek(back,STREAM_SEEK_SET,nullptr);
+    if(FAILED(restore) || total!=output.size()) {
+        output.clear();
+        return WINCODEC_ERR_BADIMAGE;
+    }
+    return S_OK;
+}

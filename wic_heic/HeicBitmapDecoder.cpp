@@ -327,3 +327,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 	}
 	return S_OK;
 }
+
+
+HRESULT CHeicBitmapDecoder::CopyOriginalBytes(std::vector<uint8_t>& content)
+{
+    if(!m_Reader)return WINCODEC_ERR_WRONGSTATE;
+    return m_Reader->CopyOriginalBytes(content);
+}

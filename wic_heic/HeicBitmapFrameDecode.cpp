@@ -97,7 +97,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::QueryInterface(REFIID riid, vo
 
 	*ppvObject = nullptr;
 	if (IsEqualGUID(riid, IID_IUnknown)) {
-		*ppvObject = static_cast<IUnknown*>(this);
+		*ppvObject = static_cast<IUnknown*>(static_cast<IWICBitmapFrameDecode*>(this));
+	} else if (IsEqualGUID(riid, IID_IHeicRawSource)) {
+		*ppvObject = static_cast<IHeicRawSource*>(this);
 	} else if (IsEqualGUID(riid, IID_IWICBitmapSource)) {
 		*ppvObject = static_cast<IWICBitmapSource*>(this);
 	} else if (IsEqualGUID(riid, IID_IWICBitmapFrameDecode)) {
@@ -338,4 +340,13 @@ void CHeicBitmapFrameDecode::DecodeImage()
 	}
 
 	m_Decoded = true;
+}
+
+
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::ReadFullContent(
+    std::vector<uint8_t>* content)
+{
+    if(!content)return E_POINTER;
+    if(!m_pDecoder)return WINCODEC_ERR_WRONGSTATE;
+    return m_pDecoder->CopyOriginalBytes(*content);
 }
