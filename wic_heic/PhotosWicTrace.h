@@ -10,6 +10,7 @@
 #include <string>
 #include <cstdio>
 #include <cwchar>
+#pragma comment(lib, "Advapi32.lib")
 
 namespace WicHeicDiagnostic {
 inline bool EndsInTxt(const wchar_t* s) {
