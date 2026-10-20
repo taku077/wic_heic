@@ -77,6 +77,17 @@ namespace TrialShell {
    public uint CacheFlags;
  }
  public static class Shell {
+  public static int ProbeComActivation(string guid) {
+    object obj=null;
+    try {
+      obj=Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid(guid),true));
+      return 0;
+    } catch(COMException e) {
+      return e.ErrorCode;
+    } finally {
+      if(obj!=null && Marshal.IsComObject(obj))Marshal.ReleaseComObject(obj);
+    }
+  }
   // Keep COM invocation and out-interface marshalling entirely inside C#.
   // PowerShell treats imported interfaces as System.__ComObject and cannot
   // reliably dispatch GetThumbnail or cast to a ComImport interface.
@@ -140,12 +151,17 @@ try {
  $key.Close()
  $registered+=('Software\WicHeicSyntheticTrial\'+$providerId)
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
+ # Verify the COM class can be instantiated directly before asking the
+ # Shell's isolated thumbnail process to activate it.
+ $directHr=[TrialShell.Shell]::ProbeComActivation($providerId)
+ Write-Host ('SHELL_TRIAL_DIRECT_COM_HRESULT=0x'+$directHr.ToString('X8'))
+ if($directHr -ne 0){throw 'Synthetic thumbnail provider class not directly registered'}
  # Exercise the registered handler through actual Windows IThumbnailCache.
  $timer=[Diagnostics.Stopwatch]::StartNew()
  $first=[TrialShell.Shell]::GetSyntheticThumbnail($file,$false)
  $timer.Stop()
  if($first.HResult -lt 0 -or -not $first.HasBitmap) {
-   throw ('Shell thumbnail extraction failed for synthetic association: 0x{0:X8}' -f [uint32]$first.HResult)
+   throw ('Shell thumbnail extraction failed for synthetic association: 0x'+$first.HResult.ToString('X8'))
  }
  $again=[TrialShell.Shell]::GetSyntheticThumbnail($file,$true)
  if($again.HResult -lt 0 -or -not $again.HasBitmap) {
