@@ -82,8 +82,8 @@ inline Stats Measure(IWICImagingFactory* factory, const wchar_t* path, int n) {
         UINT w=0,h=0;
         Check(preview->GetSize(&w,&h),"benchmark dimensions");
         if(!w||!h)throw std::runtime_error("benchmark zero dimensions");
-        const UINT targetW=std::max<UINT>(1,UINT((uint64_t(w)*256) / std::max(w,h)));
-        const UINT targetH=std::max<UINT>(1,UINT((uint64_t(h)*256) / std::max(w,h)));
+        const UINT targetW=((uint64_t(w)*256 / (w>h?w:h))>0 ? UINT(uint64_t(w)*256/(w>h?w:h)) : 1u);
+        const UINT targetH=((uint64_t(h)*256 / (w>h?w:h))>0 ? UINT(uint64_t(h)*256/(w>h?w:h)) : 1u);
         CComPtr<IWICBitmapScaler> scaler;
         Check(factory->CreateBitmapScaler(&scaler),"benchmark scaler");
         Check(scaler->Initialize(preview,targetW,targetH,WICBitmapInterpolationModeFant),"benchmark initialize scale");
