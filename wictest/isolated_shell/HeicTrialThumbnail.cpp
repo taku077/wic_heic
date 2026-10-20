@@ -55,7 +55,7 @@ class Provider final : public IThumbnailProvider, public IInitializeWithStream {
     std::atomic<ULONG> refs_{1};
     ComPtr<IStream> stream_;
 public:
-    Provider() {++g_objects;}
+    Provider() {++g_objects;CountTestMarker(L"Activated");}
     ~Provider() {--g_objects;}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** result) override {
         if(!result)return E_POINTER;

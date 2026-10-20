@@ -58,7 +58,11 @@ using System.Runtime.InteropServices;
 namespace TrialShell {
  [ComImport,Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"),
   InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
- public interface IShellItem {}
+ public interface IShellItem {
+  [PreserveSig]
+  int BindToHandler(IntPtr context,ref Guid handler,ref Guid interfaceId,
+                    out IntPtr instance);
+ }
  [ComImport,Guid("091162A4-BC96-411F-AAE8-C5122CD03363"),
   InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
  public interface ISharedBitmap {}
@@ -92,6 +96,21 @@ namespace TrialShell {
   // Keep COM invocation and out-interface marshalling entirely inside C#.
   // PowerShell treats imported interfaces as System.__ComObject and cannot
   // reliably dispatch GetThumbnail or cast to a ComImport interface.
+  public static int BindThumbnailHandler(string file) {
+    Guid itemIID=new Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE");
+    Guid bindId=new Guid("7B2E650A-8E20-4F4A-B09E-6597AFC72FB0");
+    Guid thumbIID=new Guid("E357FCCD-A995-4576-B01F-234630154E96");
+    IShellItem item=null;
+    IntPtr instance=IntPtr.Zero;
+    try {
+      int hr=SHCreateItemFromParsingName(file,IntPtr.Zero,ref itemIID,out item);
+      if(hr<0)return hr;
+      return item.BindToHandler(IntPtr.Zero,ref bindId,ref thumbIID,out instance);
+    } finally {
+      if(instance!=IntPtr.Zero) Marshal.Release(instance);
+      if(item!=null)Marshal.ReleaseComObject(item);
+    }
+  }
   public static ThumbnailStatus GetSyntheticThumbnail(string file,bool cacheOnly) {
     Guid clsid=new Guid("50EF4544-AC9F-4A8E-B21B-8A26180DB13F");
     Guid iid=new Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE");
@@ -159,6 +178,7 @@ try {
  $key.SetValue('Enable',1,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.SetValue('Calls',0,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.SetValue('Attempts',0,[Microsoft.Win32.RegistryValueKind]::DWord)
+ $key.SetValue('Activated',0,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.Close()
  $registered+=('Software\WicHeicSyntheticTrial\'+$providerId)
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
@@ -172,9 +192,15 @@ try {
  $first=[TrialShell.Shell]::GetSyntheticThumbnail($file,$false)
  $timer.Stop()
  $snapKey=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
- try { $attempts=[int]$snapKey.GetValue('Attempts',0) } finally { $snapKey.Close() }
+ try {
+   $attempts=[int]$snapKey.GetValue('Attempts',0)
+   $activated=[int]$snapKey.GetValue('Activated',0)
+ } finally { $snapKey.Close() }
+ Write-Host ('SHELL_TRIAL_PROVIDER_CONSTRUCTED='+$activated)
  Write-Host ('SHELL_TRIAL_HANDLER_ENTRY_ATTEMPTS='+$attempts)
  if($first.HResult -lt 0 -or -not $first.HasBitmap) {
+   $bound=[TrialShell.Shell]::BindThumbnailHandler($file)
+   Write-Host ('SHELL_TRIAL_BIND_TO_THUMBNAIL_HANDLER_HRESULT=0x'+$bound.ToString('X8'))
    throw ('Shell thumbnail extraction failed for synthetic association: 0x'+$first.HResult.ToString('X8'))
  }
  $again=[TrialShell.Shell]::GetSyntheticThumbnail($file,$true)
