@@ -7,7 +7,8 @@ function Assert-NoReparse([string]$path) {
   $node=Get-Item -LiteralPath $path -ErrorAction Stop
   while($null -ne $node) {
     if(($node.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Reparse point forbidden' }
-    $node=$node.Parent
+    if($node -is [IO.FileInfo]) { $node=$node.Directory }
+    else { $node=$node.Parent }
   }
 }
 Assert-NoReparse $root

@@ -11,7 +11,8 @@ function Assert-NoReparse([string]$path) {
   $node=Get-Item -LiteralPath $path -ErrorAction Stop
   while($null -ne $node) {
     if(($node.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Reparse point forbidden' }
-    $node=$node.Parent
+    if($node -is [IO.FileInfo]) { $node=$node.Directory }
+    else { $node=$node.Parent }
   }
 }
 Assert-NoReparse $session.FullName
@@ -33,10 +34,10 @@ $workingHash=(Get-FileHash -LiteralPath $working.FullName -Algorithm SHA256).Has
 if($fixtureHash -cne $manifest.InitialSha256 -or $referenceHash -cne $manifest.InitialSha256) {
   throw 'SYNTHETIC_REFERENCE_FAILURE: source or reference changed'
 }
-Write-Host 'SYNTHETIC_REFERENCE_PASS: fixture and preserved reference unchanged.'
+Write-Output 'SYNTHETIC_REFERENCE_PASS: fixture and preserved reference unchanged.'
 if($workingHash -ceq $manifest.InitialSha256) {
-  Write-Host 'SYNTHETIC_WORKING_STATUS=UNCHANGED'
+  Write-Output 'SYNTHETIC_WORKING_STATUS=UNCHANGED'
 } else {
-  Write-Host 'SYNTHETIC_WORKING_STATUS=MODIFIED'
+  Write-Output 'SYNTHETIC_WORKING_STATUS=MODIFIED'
 }
 Write-Host 'This does not prove correct rotation or metadata preservation.'
