@@ -16,6 +16,8 @@ private:
 	BYTE m_BitmapTransform;
 	BYTE m_HeifCompressionMethod;
 	bool m_OptionsInitialized;
+	bool m_LosslessReady;
+	std::vector<uint8_t> m_LosslessBytes;
 	WICPixelFormatGUID m_PixelFormat;
 	int m_BitDepthPerChannel;
 

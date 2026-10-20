@@ -2,6 +2,8 @@
 #include "wic_heic.h"
 #include "HeicBitmapFrameEncode.h"
 #include "HeicBitmapEncoder.h"
+#include "HeicSourceAccess.h"
+#include "HeicLosslessNative.h"
 #include <stdexcept>
 
 
@@ -17,6 +19,7 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	, m_BitmapTransform(0)
 	, m_HeifCompressionMethod(0)
 	, m_OptionsInitialized(false)
+	, m_LosslessReady(false)
 	, m_PixelFormat(GUID_WICPixelFormat24bppRGB)
 	, m_BitDepthPerChannel(8)
 {
@@ -252,10 +255,42 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
+		// A decoded RGB bitmap or a WIC flip-rotator has no HEVC bitstream to
+		// preserve. Only source frames from OUR decoder may take this path.
+		if(!pIBitmapSource || prc || m_LosslessReady || m_HasPixels)
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		IHeicRawSource* raw=nullptr;
+		HRESULT hr=pIBitmapSource->QueryInterface(
+			IID_IHeicRawSource,reinterpret_cast<void**>(&raw));
+		if(FAILED(hr)||!raw){
+			DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE source is not an original HEIC frame");
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
+		std::vector<uint8_t> original;
+		hr=raw->ReadFullContent(&original);
+		raw->Release();
+		if(FAILED(hr))return hr;
 		UINT w=0,h=0;
-		if(pIBitmapSource) pIBitmapSource->GetSize(&w,&h);
-		DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE WriteSource transform=%u compression=%u src=%ux%u frame=%ux%u",unsigned(m_BitmapTransform),unsigned(m_HeifCompressionMethod),w,h,m_Width,m_Height);
-		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		hr=pIBitmapSource->GetSize(&w,&h);
+		if(FAILED(hr))return hr;
+		UINT expectedW=(m_BitmapTransform&1)?h:w;
+		UINT expectedH=(m_BitmapTransform&1)?w:h;
+		if((m_Width && m_Width!=expectedW) ||
+		   (m_Height && m_Height!=expectedH))
+			return E_INVALIDARG;
+		try {
+			m_LosslessBytes=HeicLosslessNative::Transform(
+				original,m_BitmapTransform);
+			m_Width=expectedW;m_Height=expectedH;
+			m_LosslessReady=true;
+			DbgLog("HEIC_WIC_LOSSLESS_READY transform=%u dimensions=%ux%u bytecount=%zu",
+				unsigned(m_BitmapTransform),expectedW,expectedH,m_LosslessBytes.size());
+			return S_OK;
+		} catch(const std::exception& ex) {
+			DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE reason=%s",ex.what());
+			m_LosslessBytes.clear();
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
 	}
 	if (!pIBitmapSource) return E_POINTER;
 	if (!m_Width || !m_Height || m_Created || m_HasPixels || m_WrittenLines)
@@ -325,6 +360,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 {
+	if (m_LosslessReady && !m_LosslessBytes.empty()) return S_OK;
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 	if (!m_HasPixels || m_WrittenLines != m_Height) return WINCODEC_ERR_WRONGSTATE;
 	try

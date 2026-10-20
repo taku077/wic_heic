@@ -181,6 +181,28 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 {
 	try
 	{
+		// A single-frame direct WIC rotation/copy can now retain the entire
+		// original HEIF file, including metadata, thumbnails and HDR assets.
+		// A pre-existing nonempty target stream is NEVER overwritten here.
+		if(m_Frames.size()==1 && m_Frames[0]->m_LosslessReady) {
+			if(!m_Stream)return WINCODEC_ERR_NOTINITIALIZED;
+			STATSTG stat{};
+			HRESULT hr=m_Stream->Stat(&stat,STATFLAG_NONAME);
+			if(FAILED(hr) || stat.cbSize.QuadPart!=0)
+				return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+			const auto& bytes=m_Frames[0]->m_LosslessBytes;
+			if(bytes.empty()||bytes.size()>0xFFFFFFFFULL)
+				return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+			ULONG written=0;
+			hr=m_Stream->Write(bytes.data(),static_cast<ULONG>(bytes.size()),&written);
+			if(FAILED(hr)||written!=bytes.size())return STG_E_WRITEFAULT;
+			return S_OK;
+		}
+		for(auto* frame:m_Frames){
+			if(frame->m_LosslessReady || !frame->m_HasPixels ||
+			   frame->m_WrittenLines!=frame->m_Height)
+				return WINCODEC_ERR_WRONGSTATE;
+		}
 		heif::Encoder encoder(heif_compression_HEVC);
 		CHeifStreamWriter writer(m_Stream);
 
