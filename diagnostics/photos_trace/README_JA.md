@@ -46,6 +46,13 @@ Windows GitHub Actionsでは環境変数 \`WIC_HEIC_TRACE_FILE\` を明示的に
 - GitHub Actionsの隔離Windows環境では、診断開始/停止・設定の非破壊性・2MiB上限・MSI導入削除前後のスナップショット比較が成功している。
 - このスナップショットツールは**読取専用**だが、MSI導入・アンインストールを行わない。復元用の旧MSIと手順が実機と一致すると確認できるまでは、ユーザーPCへの実験MSI導入は禁止。
 
+## 人工HEIC作業コピーの保全
+- PhotosSynthetic_Prepare.ps1 は固定された公開人工HEICのGit Blob SHA-1と内容を照合し、一意なPhotosSynthetic_GUIDフォルダにread-only保全コピーと作業コピーを作る。既存の写真を入力として受け取らない。ファイルを上書き・削除しない。
+- Windowsフォトで開くのは work/synthetic-working.heic のみ。保全コピーや実際の写真を開かない。
+- PhotosSynthetic_Verify.ps1 -SessionDirectory (準備時のフォルダ) は参照用ファイルのSHA-256と作業コピーの変更状況を読み取り専用で確認する。変化した事実と編集成功は別であり、画質・EXIF・HDRの保全を証明するものではない。
+- シンボリックリンク・ジャンクションを拒否。作ったファイルを自動削除しない。これらは本番Windows 10フォトで未検証。
+- GitHub Actionsの人工ファイルの検査が成功しても、元のWICへ復元可能なことを確認するまでは実験MSIを導入しない。
+
 ## 未完了
 - Windows 10フォトの実際の呼び出し確認。
 - フォトからの無再圧縮保存に必要な機能の確認と実装。

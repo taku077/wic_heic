@@ -25,6 +25,11 @@ Status 2026-10-20: Experimental Photos call-trace source compiles and CI tests p
 - Windows Server 2022 CI success demonstrates fresh-runner install/uninstall equivalence, not recovery of an existing Windows 10 codec installation. A verified original MSI and disposable Windows 10 rollback test are still required.
 - Trace must retain its 2 MiB cap, explicit opt-in, 20-minute expiry, and non-content event log format.
 
+## Synthetic-file custody (non-user media only)
+- PhotosSynthetic_Prepare.ps1 permits ONLY the pinned public synthetic HEIC blob, never a private photo. It creates unique new work and read-only reference files, without overwriting or deleting existing data.
+- PhotosSynthetic_Verify.ps1 only audits the generated session's known paths and uses SHA-256. It cannot establish image correctness, metadata retention, or Photos call identity.
+- Both scripts reject reparse points, do not install codecs, and do not modify HEIC Manager or registry settings.
+
 ## Procedural guard
 1. Confirm exact WIC snapshot and tested rollback package exist.
 2. Stop Windows Photos/Explorer photo browsing, install the diagnostic WIC only after approval, verify dll hash/registration, then reboot if required.
