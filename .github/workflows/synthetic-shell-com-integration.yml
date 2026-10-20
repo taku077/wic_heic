@@ -1,0 +1,63 @@
+name: HEIC synthetic Shell COM isolation integration
+
+on:
+  push:
+    branches: [diagnostic/photos-wic-calltrace]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-shell-integration:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compute pinned codec signature
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join [Environment]::NewLine
+          $hash=[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore compiled native-codec dependencies
+        uses: actions/cache/restore@v4
+        id: deps
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build pinned dependencies only if cache is absent
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          foreach($name in @('libde265','kvazaar','libheif')) {
+            cmd /c "call build-$name.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Missing native dependency: $name"}
+          }
+      - name: Build native HEIC WIC codec and isolated Shell provider
+        shell: pwsh
+        run: |
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'WIC codec failed to build'}
+          msbuild wictest/isolated_shell/HeicShellTrial.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Shell COM trial failed to build'}
+      - name: Verify actual IThumbnailCache extraction through synthetic .wictrial
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $provider=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/WicHeicIsolatedThumbTrial.dll').Path
+          $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $codec)) -Wait -PassThru
+          if($reg.ExitCode -ne 0){throw 'Codec COM registration refused on isolated runner'}
+          try {
+            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture
+          } finally {
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0){throw 'Runner codec COM registration cleanup failed'}
+          }
