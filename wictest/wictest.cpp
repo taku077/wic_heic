@@ -367,6 +367,7 @@ int main()
 		ThumbnailPerformanceProbe::Run();
 		ThumbnailPerformanceProbe::RunDecodeIsolation();
 		ThumbnailPerformanceProbe::RunOpenPathBenchmark();
+		ThumbnailPerformanceProbe::RunMemoryInputTrial();
 		ShellPreloadProbe::Run();
 	}
 	catch (const std::exception& ex)

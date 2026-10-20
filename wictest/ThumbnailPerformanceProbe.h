@@ -188,6 +188,65 @@ inline void RunOpenPathBenchmark() {
         iterations,Median(automatic),Median(explicitCodec));
     printf("HEIC_WIC_OPEN_PATH_DIAGNOSTIC_ONLY_NOT_EXPLORER_PARITY\n");
 }
+// Investigate the expense of libheif's stream callbacks without modifying
+// default decoder behavior. Both modes decode the same pinned synthetic HEIC
+// and must return identical native-format pixels. We alternate order to
+// reduce cache and warmup bias; this is NOT a user file benchmark.
+inline void RunMemoryInputTrial() {
+    CComPtr<IWICImagingFactory> factory;
+    Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
+        IID_IWICImagingFactory,(void**)&factory),"memorytrial WIC factory");
+    constexpr const wchar_t* file=L"samples\\fixture-irot3-exif6-noaux.heic";
+    constexpr const wchar_t* name=L"WIC_HEIC_BENCH_MEMORY_READ";
+    // Always restore a pre-existing value, including missing/empty.
+    WCHAR previous[64]{};
+    const DWORD prevSize=GetEnvironmentVariableW(name,previous,64);
+    if(prevSize>=64)throw std::runtime_error("memorytrial env oversized");
+    struct Restore {
+        const wchar_t* name;
+        bool existed;
+        std::wstring value;
+        ~Restore() {
+            SetEnvironmentVariableW(name,existed?value.c_str():nullptr);
+        }
+    } restore{name,prevSize!=0,std::wstring(previous)};
+    std::vector<double> streamOpen,memoryOpen,streamFirst,memoryFirst;
+    std::vector<BYTE> baseline;
+    constexpr int loops=10;
+    for(int i=0;i<loops;++i) {
+        for(int mode=0;mode<2;++mode) {
+            const bool memoryMode=((i+mode)%2)==1;
+            if(!SetEnvironmentVariableW(name,memoryMode?L"1":nullptr))
+                throw std::runtime_error("memorytrial env setup");
+            const auto openStart=Clock::now();
+            CComPtr<IWICBitmapDecoder> decoder;
+            Check(factory->CreateDecoderFromFilename(file,nullptr,GENERIC_READ,
+                WICDecodeMetadataCacheOnDemand,&decoder),"memorytrial open");
+            const auto openEnd=Clock::now();
+            CComPtr<IWICBitmapFrameDecode> frame;
+            Check(decoder->GetFrame(0,&frame),"memorytrial frame");
+            GUID format{};Check(frame->GetPixelFormat(&format),"memorytrial pixel format");
+            if(!IsEqualGUID(format,GUID_WICPixelFormat48bppRGB))
+                throw std::runtime_error("memorytrial unexpected synthetic format");
+            UINT w=0,h=0;Check(frame->GetSize(&w,&h),"memorytrial size");
+            if(!w || !h || w>10000)throw std::runtime_error("memorytrial image bounds");
+            const UINT stride=w*6;
+            std::vector<BYTE> row(stride);
+            WICRect rect{0,0,int(w),1};
+            const auto firstStart=Clock::now();
+            Check(frame->CopyPixels(&rect,stride,stride,row.data()),"memorytrial pixel decode");
+            const auto firstEnd=Clock::now();
+            if(!baseline.empty() && row!=baseline)
+                throw std::runtime_error("memorytrial pixel difference between stream and memory");
+            if(baseline.empty())baseline=row;
+            (memoryMode?memoryOpen:streamOpen).push_back(Millis(openStart,openEnd));
+            (memoryMode?memoryFirst:streamFirst).push_back(Millis(firstStart,firstEnd));
+        }
+    }
+    printf("HEIC_INPUT_AB_MEASURED samples_per_mode=%d stream_open_median_ms=%.3f memory_open_median_ms=%.3f stream_first_row_ms=%.3f memory_first_row_ms=%.3f pixels_equal=1\n",
+           loops,Median(streamOpen),Median(memoryOpen),Median(streamFirst),Median(memoryFirst));
+    printf("HEIC_INPUT_MEMORY_EXPERIMENT_OPTIN_ONLY_DEFAULT_STREAM_UNCHANGED\n");
+}
 inline void RunDecodeIsolation() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,

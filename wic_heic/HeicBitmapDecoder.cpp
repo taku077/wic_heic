@@ -101,7 +101,24 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
 		LARGE_INTEGER counterFrequency{},before{},after{};
 		QueryPerformanceFrequency(&counterFrequency);
 		QueryPerformanceCounter(&before);
-		m_Context.read_from_reader(*m_Reader);
+		// Experimental A/B only, OFF unless the process explicitly opts in.
+		// Never buffer arbitrary photographs: hard-cap at 4 MiB, and keep
+		// the ordinary streaming parser as the production default.
+		WCHAR memoryTrial[4]{};
+		const bool optIn=GetEnvironmentVariableW(
+			L"WIC_HEIC_BENCH_MEMORY_READ",memoryTrial,4)==1 &&
+			memoryTrial[0]==L'1' &&
+			m_Reader->FileSize()>0 && m_Reader->FileSize()<=4ull*1024*1024;
+		std::vector<uint8_t> inMemory;
+		if(optIn && SUCCEEDED(m_Reader->CopyOriginalBytes(inMemory))) {
+			// Pinned heif::Context::read_from_memory creates an owned copy,
+			// so this bounded scratch buffer can be released after parsing.
+			m_Context.read_from_memory(inMemory.data(),inMemory.size());
+			WicHeicDiagnostic::Emit("DecoderInputPath",1,0,0,0,"memory_optin");
+		} else {
+			m_Context.read_from_reader(*m_Reader);
+			WicHeicDiagnostic::Emit("DecoderInputPath",0,0,0,0,"stream_default");
+		}
 		QueryPerformanceCounter(&after);
 		// Diagnostic opt-in only. Numeric microseconds, never image contents
 		// or paths. Investigates slow Explorer cold-thumbnail initialization.

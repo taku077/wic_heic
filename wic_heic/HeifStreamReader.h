@@ -12,6 +12,7 @@ public:
 	virtual ~CHeifStreamReader();
 
 	int64_t get_position() const override;
+	uint64_t FileSize() const { return m_Size; }
 	int read(void* data, size_t size) override;
 	int seek(int64_t position) override;
 	heif_reader_grow_status wait_for_file_size(int64_t target_size) override;
