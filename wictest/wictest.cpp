@@ -11,6 +11,7 @@
 #include "ICCProfileProbe.h"
 #include "HighBitDepthProbe.h"
 #include "ThumbnailPerformanceProbe.h"
+#include "DirectThumbnailProviderProbe.h"
 #include "ShellPreloadProbe.h"
 #include "WICLosslessRotationProbe.h"
 #include "WICHeifOptionsProbe.h"
@@ -368,6 +369,7 @@ int main()
 		ThumbnailPerformanceProbe::RunDecodeIsolation();
 		ThumbnailPerformanceProbe::RunOpenPathBenchmark();
 		ThumbnailPerformanceProbe::RunDirectThumbnailAB();
+		DirectThumbnailProviderProbe::Run();
 		ShellPreloadProbe::Run();
 	}
 	catch (const std::exception& ex)
