@@ -230,7 +230,8 @@ jobs:
                 $ps51Run=Start-Process -FilePath $ps51 -ArgumentList $ps51Args -Wait -PassThru -RedirectStandardOutput $ps51Out -RedirectStandardError $ps51Err
                 $ps51Lines=Get-Content -LiteralPath $ps51Out
                 if($ps51Run.ExitCode -ne 0 -or -not ($ps51Lines -match 'TEST_STATUS=RECORDED')) {
-                  throw "Windows PowerShell 5.1 one-click synthetic test failed: $($ps51Lines -join ',')"
+                  $ps51Errors=if(Test-Path -LiteralPath $ps51Err) { Get-Content -LiteralPath $ps51Err -Tail 35 } else { @('stderr missing') }
+                  throw "Windows PowerShell 5.1 one-click synthetic test failed, exit=$($ps51Run.ExitCode): stdout=$($ps51Lines -join ';'); stderr=$($ps51Errors -join ';')"
                 }
                 Write-Host 'EXPLORER_ONECLICK_POWERSHELL_5_1_PASSED'
 
