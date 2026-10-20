@@ -127,16 +127,6 @@ jobs:
           "Commit: $env:GITHUB_SHA" | Add-Content -Path 'SHA256.txt'
           Get-Content SHA256.txt
 
-      - name: Upload experimental DLL for inspection (NOT FOR INSTALLATION)
-        uses: actions/upload-artifact@v4
-        with:
-          name: HEIC-encoder-repair-x64-UNTESTED
-          path: |
-            wic_heic/(Build)/x64/Release/wic_heic.dll
-            SHA256.txt
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Build native WIC conversion smoke test (x64)
         shell: pwsh
         run: |
@@ -425,15 +415,15 @@ jobs:
             Where-Object { $_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]' } |
             Select-Object -First 1
           if (-not $msi) { throw 'x64 WicHeic.msi not found' }
-          Copy-Item -LiteralPath $msi.FullName -Destination 'WicHeic-Repair-EXPERIMENTAL-x64.msi'
-          Get-FileHash 'WicHeic-Repair-EXPERIMENTAL-x64.msi' -Algorithm SHA256 |
+          Copy-Item -LiteralPath $msi.FullName -Destination 'WicHeic-HEIC-x64.msi'
+          Get-FileHash 'WicHeic-HEIC-x64.msi' -Algorithm SHA256 |
             Format-List
 
       - name: Verify MSI installation and WIC roundtrip on temporary runner
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $msi = (Resolve-Path -LiteralPath 'WicHeic-Repair-EXPERIMENTAL-x64.msi').Path
+          $msi = (Resolve-Path -LiteralPath 'WicHeic-HEIC-x64.msi').Path
           $testExe = (Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
           $dll = (Resolve-Path -LiteralPath '(Build)/x64/Release/wic_heic.dll').Path
           $installLog = Join-Path $env:RUNNER_TEMP 'wic-heic-install.log'
@@ -472,41 +462,13 @@ jobs:
             }
           }
 
-      - name: Verify guarded Windows 10 MSI installation preflight
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $kit=Join-Path (Get-Location).Path 'diagnostics/windows_install'
-          Copy-Item -LiteralPath 'WicHeic-Repair-EXPERIMENTAL-x64.msi' -Destination (Join-Path $kit 'WicHeic-Repair-EXPERIMENTAL-x64.msi') -ErrorAction Stop
-          Copy-Item -LiteralPath 'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1' -Destination (Join-Path $kit 'WIC_Preflight_ReadOnly.ps1') -ErrorAction Stop
-          $result=@(& (Join-Path $kit 'Install_Experimental_WIC.ps1') -CheckOnly)
-          if(-not ($result -match 'WIC_SAFE_INSTALL_CHECK_ONLY_PASS')) {
-            throw 'Windows PowerShell 5.1 safe install preflight failed on clean runner'
-          }
-          $pre=Get-ChildItem -LiteralPath $kit -Filter 'WIC_Preflight_*.json' -File
-          if(@($pre).Count -lt 1) { throw 'Pre-install baseline not retained' }
-          Write-Host 'GUARDED_INSTALL_PREFLIGHT_CI_PASS'
-
-      - name: Upload ready-to-extract guarded experimental MSI installation kit
-        uses: actions/upload-artifact@v4
-        with:
-          name: WicHeic-Experimental-x64-Install-Kit-Win10-UNTESTED
-          path: |
-            diagnostics/windows_install/WicHeic-Repair-EXPERIMENTAL-x64.msi
-            diagnostics/windows_install/Install_Experimental_WIC.ps1
-            diagnostics/windows_install/Install_Experimental_WIC.cmd
-            diagnostics/windows_install/WIC_Preflight_ReadOnly.ps1
-            diagnostics/windows_install/README.txt
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Upload MSI only after isolated installation verification
         uses: actions/upload-artifact@v4
         with:
-          name: HEIC-Repair-MSI-x64-EXPERIMENTAL-NOT-PHOTOS-TESTED
-          path: WicHeic-Repair-EXPERIMENTAL-x64.msi
+          name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
+          path: WicHeic-HEIC-x64.msi
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
 
       - name: Verify isolated MSI uninstall restores WIC registration baseline
         shell: pwsh

@@ -1,6 +1,6 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
-	<Package Id="prsyahmi.WicHeic" Name="WicHeic Repair Test" Manufacturer="Community Repair Test (Unofficial)" Version="1.1.17">
-		<MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" />
+	<Package Id="prsyahmi.WicHeic" Name="WicHeic Repair Test" Manufacturer="Community Repair Test (Unofficial)" Version="1.1.18">
+		<MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="!(loc.DowngradeError)" />
 		<Media Id="1" Cabinet="WicHeic.cab" EmbedCab="yes"></Media>
 
 		<ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
