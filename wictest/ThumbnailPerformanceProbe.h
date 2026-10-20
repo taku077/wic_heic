@@ -201,64 +201,82 @@ inline void RunOpenPathBenchmark() {
         iterations,automaticOurDecoder,automaticOtherDecoder,directOurDecoder,directOtherDecoder);
     printf("HEIC_WIC_OPEN_PATH_DIAGNOSTIC_ONLY_NOT_EXPLORER_PARITY\n");
 }
-// Investigate the expense of libheif's stream callbacks without modifying
-// default decoder behavior. Both modes decode the same pinned synthetic HEIC
-// and must return identical native-format pixels. We alternate order to
-// reduce cache and warmup bias; this is NOT a user file benchmark.
-inline void RunMemoryInputTrial() {
+// WIC Shell fast-path feasibility. The same codec must render byte-identical
+// 256px thumbnail pixels whether WIC auto-discovers the codec or receives
+// the HEIC decoder GUID directly. No registry, shell handler or source changes.
+struct RenderAB {
+    double openMs=0, totalMs=0;
+    std::vector<BYTE> pixels;
+};
+inline RenderAB RenderSyntheticThumbnail(IWICImagingFactory* factory,bool direct) {
+    constexpr const wchar_t* file=L"samples\\fixture-irot3-exif6-noaux.heic";
+    RenderAB result;
+    auto start=Clock::now();
+    CComPtr<IWICBitmapDecoder> decoder;
+    if(direct) {
+        CComPtr<IWICStream> stream;
+        Check(factory->CreateStream(&stream),"directthumb create stream");
+        Check(stream->InitializeFromFilename(file,GENERIC_READ),"directthumb initialize stream");
+        Check(factory->CreateDecoder(GUID_ContainerFormatHEIC,
+             &GUID_VendorPrsyahmi,&decoder),"directthumb create codec");
+        Check(decoder->Initialize(stream,WICDecodeMetadataCacheOnDemand),
+             "directthumb decoder init");
+    } else {
+        Check(factory->CreateDecoderFromFilename(file,nullptr,GENERIC_READ,
+             WICDecodeMetadataCacheOnDemand,&decoder),"autothumb create codec");
+    }
+    auto opened=Clock::now();
+    CComPtr<IWICBitmapFrameDecode> frame;
+    Check(decoder->GetFrame(0,&frame),"directthumb frame");
+    UINT w=0,height=0;
+    Check(frame->GetSize(&w,&height),"directthumb size");
+    if(!w||!height||w>10000||height>10000)
+        throw std::runtime_error("directthumb dimensions");
+    const UINT maxSide=(w>height)?w:height;
+    const UINT targetW=UINT((uint64_t(w)*256)/maxSide) ?
+        UINT((uint64_t(w)*256)/maxSide):1;
+    const UINT targetH=UINT((uint64_t(height)*256)/maxSide) ?
+        UINT((uint64_t(height)*256)/maxSide):1;
+    CComPtr<IWICBitmapScaler> scaler;
+    Check(factory->CreateBitmapScaler(&scaler),"directthumb scaler");
+    Check(scaler->Initialize(frame,targetW,targetH,
+          WICBitmapInterpolationModeFant),"directthumb resize");
+    CComPtr<IWICFormatConverter> converter;
+    Check(factory->CreateFormatConverter(&converter),"directthumb converter");
+    Check(converter->Initialize(scaler,GUID_WICPixelFormat24bppBGR,
+          WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),
+          "directthumb format");
+    const UINT stride=targetW*3;
+    result.pixels.resize(size_t(stride)*targetH);
+    Check(converter->CopyPixels(nullptr,stride,UINT(result.pixels.size()),
+          result.pixels.data()),"directthumb copy");
+    auto ended=Clock::now();
+    result.openMs=Millis(start,opened);
+    result.totalMs=Millis(start,ended);
+    return result;
+}
+inline void RunDirectThumbnailAB() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
-        IID_IWICImagingFactory,(void**)&factory),"memorytrial WIC factory");
-    constexpr const wchar_t* file=L"samples\\fixture-irot3-exif6-noaux.heic";
-    constexpr const wchar_t* name=L"WIC_HEIC_BENCH_MEMORY_READ";
-    // Always restore a pre-existing value, including missing/empty.
-    WCHAR previous[64]{};
-    const DWORD prevSize=GetEnvironmentVariableW(name,previous,64);
-    if(prevSize>=64)throw std::runtime_error("memorytrial env oversized");
-    struct Restore {
-        const wchar_t* name;
-        bool existed;
-        std::wstring value;
-        ~Restore() {
-            SetEnvironmentVariableW(name,existed?value.c_str():nullptr);
-        }
-    } restore{name,prevSize!=0,std::wstring(previous)};
-    std::vector<double> streamOpen,memoryOpen,streamFirst,memoryFirst;
-    std::vector<BYTE> baseline;
-    constexpr int loops=10;
-    for(int i=0;i<loops;++i) {
+         IID_IWICImagingFactory,(void**)&factory),"directthumb WIC factory");
+    constexpr int samples=10;
+    std::vector<double> automaticOpen,directOpen,automaticTotal,directTotal;
+    std::vector<BYTE> reference;
+    for(int run=0;run<samples;++run) {
         for(int mode=0;mode<2;++mode) {
-            const bool memoryMode=((i+mode)%2)==1;
-            if(!SetEnvironmentVariableW(name,memoryMode?L"1":nullptr))
-                throw std::runtime_error("memorytrial env setup");
-            const auto openStart=Clock::now();
-            CComPtr<IWICBitmapDecoder> decoder;
-            Check(factory->CreateDecoderFromFilename(file,nullptr,GENERIC_READ,
-                WICDecodeMetadataCacheOnDemand,&decoder),"memorytrial open");
-            const auto openEnd=Clock::now();
-            CComPtr<IWICBitmapFrameDecode> frame;
-            Check(decoder->GetFrame(0,&frame),"memorytrial frame");
-            GUID format{};Check(frame->GetPixelFormat(&format),"memorytrial pixel format");
-            if(!IsEqualGUID(format,GUID_WICPixelFormat48bppRGB))
-                throw std::runtime_error("memorytrial unexpected synthetic format");
-            UINT w=0,h=0;Check(frame->GetSize(&w,&h),"memorytrial size");
-            if(!w || !h || w>10000)throw std::runtime_error("memorytrial image bounds");
-            const UINT stride=w*6;
-            std::vector<BYTE> row(stride);
-            WICRect rect{0,0,int(w),1};
-            const auto firstStart=Clock::now();
-            Check(frame->CopyPixels(&rect,stride,stride,row.data()),"memorytrial pixel decode");
-            const auto firstEnd=Clock::now();
-            if(!baseline.empty() && row!=baseline)
-                throw std::runtime_error("memorytrial pixel difference between stream and memory");
-            if(baseline.empty())baseline=row;
-            (memoryMode?memoryOpen:streamOpen).push_back(Millis(openStart,openEnd));
-            (memoryMode?memoryFirst:streamFirst).push_back(Millis(firstStart,firstEnd));
+            const bool direct=((run+mode)%2)==1;
+            const auto rendered=RenderSyntheticThumbnail(factory,direct);
+            if(reference.empty())reference=rendered.pixels;
+            if(reference!=rendered.pixels)
+                throw std::runtime_error("Direct and automatic WIC thumbnail pixels differ");
+            (direct?directOpen:automaticOpen).push_back(rendered.openMs);
+            (direct?directTotal:automaticTotal).push_back(rendered.totalMs);
         }
     }
-    printf("HEIC_INPUT_AB_MEASURED samples_per_mode=%d stream_open_median_ms=%.3f memory_open_median_ms=%.3f stream_first_row_ms=%.3f memory_first_row_ms=%.3f pixels_equal=1\n",
-           loops,Median(streamOpen),Median(memoryOpen),Median(streamFirst),Median(memoryFirst));
-    printf("HEIC_INPUT_MEMORY_EXPERIMENT_OPTIN_ONLY_DEFAULT_STREAM_UNCHANGED\n");
+    printf("HEIC_DIRECT_THUMB_AB_MEASURED samples=%d auto_open_ms=%.3f direct_open_ms=%.3f auto_total_ms=%.3f direct_total_ms=%.3f pixels_equal=1\n",
+        samples,Median(automaticOpen),Median(directOpen),
+        Median(automaticTotal),Median(directTotal));
+    printf("HEIC_DIRECT_THUMB_SYNTHETIC_ONLY_EXPLORER_NOT_TESTED\n");
 }
 inline void RunDecodeIsolation() {
     CComPtr<IWICImagingFactory> factory;
