@@ -12,7 +12,16 @@ if(-not (Test-Path -LiteralPath $helper -PathType Leaf) -or
    -not (Test-Path -LiteralPath $FixturePath -PathType Leaf)) {
  throw 'Synthetic-only test: fixture or warmup helper missing'
 }
-$sourceHash=(Get-FileHash -LiteralPath $FixturePath -Algorithm SHA256).Hash
+# .NET SHA-256 is available even on Windows PowerShell installations
+# where the Get-FileHash cmdlet is absent from the session.
+function Get-FileSha256 {
+ param([string]$Path)
+ $sha=[System.Security.Cryptography.SHA256]::Create()
+ $stream=[System.IO.File]::OpenRead($Path)
+ try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','') }
+ finally { $stream.Dispose(); $sha.Dispose() }
+}
+$sourceHash=Get-FileSha256 -Path $FixturePath
 if($sourceHash -ne 'D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95') {
  throw 'Artificial fixture SHA256 mismatch: refusing to operate on an unknown image'
 }
@@ -99,10 +108,10 @@ try {
  $copies=@(Get-ChildItem -LiteralPath $folder -File)
  if($copies.Count -ne 10){$ok=$false}
  foreach($f in $copies) {
-   if((Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash -ne $sourceHash){$ok=$false}
+   if((Get-FileSha256 -Path $f.FullName) -ne $sourceHash){$ok=$false}
  }
  $rows.Add('COPIES_HASH_UNCHANGED='+$ok)
- $rows.Add('FIXTURE_HASH_UNCHANGED='+((Get-FileHash -LiteralPath $FixturePath -Algorithm SHA256).Hash -eq $sourceHash))
+ $rows.Add('FIXTURE_HASH_UNCHANGED='+((Get-FileSha256 -Path $FixturePath) -eq $sourceHash))
  if(-not $ok){throw 'Synthetic HEIC file unexpectedly changed'}
  if($Mode -eq 'SelfTest') {$rows.Add('ONECLICK_SELFTEST_PASSED=true')}
 } catch {
