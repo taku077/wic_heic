@@ -3,10 +3,10 @@
 
 #include "stdafx.h"
 #include "../wic_heic/ExifOrientationFix.h"
-#include "GeometryProbe.h"
 #include <vector>
 #include <utility>
 #include "..\wic_heic\wic_heic.h"
+#include "GeometryProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
