@@ -8,6 +8,19 @@
 #include "HeicColorProfileWic.h"
 #include <stdexcept>
 
+// Convert a row of 16-bit WIC channels (0..65535) to HEIF 10-bit sample
+// values (0..1023). Round-to-nearest minimizes quantization error.
+static void Wic16ToHeic10(uint8_t* row, size_t rowBytes)
+{
+	for (size_t i = 0; i < rowBytes; i += 2) {
+		const uint32_t sample = uint32_t(row[i]) | (uint32_t(row[i+1]) << 8);
+		const uint32_t encoded = (sample * 1023u + 32767u) / 65535u;
+		row[i] = BYTE(encoded & 255);
+		row[i+1] = BYTE(encoded >> 8);
+	}
+}
+
+
 
 CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	: m_Count(1)
@@ -150,26 +163,19 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 		m_Chroma = heif_chroma_interleaved_RGBA;
 		m_BitDepthPerChannel = 8;
 	}
-	// All below is not tested - not supported
-	else if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat48bppBGR)) {
-		m_PixelFormat = GUID_WICPixelFormat32bppRGBA1010102;
-		m_Chroma = heif_chroma_interleaved_RRGGBB_BE;
-		m_BitDepthPerChannel = 16;
-	}
-	else if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat48bppRGB)) {
-		m_PixelFormat = GUID_WICPixelFormat32bppRGBA1010102;
+	// WIC 48/64-bit channels use 16-bit integers; the HEIF encoder
+	// preserves 10-bit output precision by scaling at the pixel boundary.
+	else if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat48bppRGB) ||
+	         IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat48bppBGR)) {
+		m_PixelFormat = GUID_WICPixelFormat48bppRGB;
 		m_Chroma = heif_chroma_interleaved_RRGGBB_LE;
-		m_BitDepthPerChannel = 16;
+		m_BitDepthPerChannel = 10;
 	}
-	else if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat64bppBGRA)) {
-		m_PixelFormat = GUID_WICPixelFormat32bppRGBA1010102;
-		m_Chroma = heif_chroma_interleaved_RRGGBBAA_BE;
-		m_BitDepthPerChannel = 16;
-	}
-	else if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat64bppRGBA)) {
-		m_PixelFormat = GUID_WICPixelFormat32bppRGBA1010102;
-		m_Chroma = heif_chroma_interleaved_RRGGBBAA_LE; // !
-		m_BitDepthPerChannel = 16;
+	else if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat64bppRGBA) ||
+	         IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat64bppBGRA)) {
+		m_PixelFormat = GUID_WICPixelFormat64bppRGBA;
+		m_Chroma = heif_chroma_interleaved_RRGGBBAA_LE;
+		m_BitDepthPerChannel = 10;
 	}
 	else {
 		*pPixelFormat = GUID_WICPixelFormat24bppRGB;
@@ -228,6 +234,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 	UINT bytesPerPixel = 0;
 	if (IsEqualGUID(m_PixelFormat, GUID_WICPixelFormat24bppRGB)) bytesPerPixel = 3;
 	else if (IsEqualGUID(m_PixelFormat, GUID_WICPixelFormat32bppRGBA)) bytesPerPixel = 4;
+	else if (IsEqualGUID(m_PixelFormat, GUID_WICPixelFormat48bppRGB)) bytesPerPixel = 6;
+	else if (IsEqualGUID(m_PixelFormat, GUID_WICPixelFormat64bppRGBA)) bytesPerPixel = 8;
 	else return WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT;
 
 	const uint64_t rowBytes = uint64_t(m_Width) * bytesPerPixel;
@@ -243,6 +251,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 		plane += size_t(planeStride) * m_WrittenLines;
 		for (UINT y = 0; y < lineCount; ++y) {
 			memcpy_s(plane, size_t(planeStride), pbPixels, size_t(rowBytes));
+			if (m_BitDepthPerChannel == 10) Wic16ToHeic10(plane, size_t(rowBytes));
 			plane += planeStride;
 			pbPixels += cbStride;
 		}
@@ -357,6 +366,12 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 			WicHeicDiagnostic::Emit("WriteSourceCopyFailed",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raster",hr);
 			Log("WriteSource CopyPixels failed HRESULT=0x%08X", unsigned(hr));
 			return hr;
+		}
+		if (m_BitDepthPerChannel == 10) {
+			const size_t rowBytes = size_t(m_Width) *
+				(IsEqualGUID(m_PixelFormat, GUID_WICPixelFormat48bppRGB) ? 6u : 8u);
+			for (UINT y=0; y<m_Height; ++y)
+				Wic16ToHeic10(plane + size_t(stride)*y, rowBytes);
 		}
 		m_WrittenLines = m_Height;
 		m_HasPixels = true;

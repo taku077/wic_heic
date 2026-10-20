@@ -1,0 +1,55 @@
+#pragma once
+// JPEG-equivalence regression for a pinned synthetic 10-bit HEIC fixture.
+// Never use user-supplied real photos or output files.
+namespace HighBitDepthProbe {
+inline void Check(HRESULT hr, const char* where) {
+    if (FAILED(hr)) { printf("HIGHBIT_ERROR %s 0x%08X\n",where,(unsigned)hr); throw std::runtime_error(where); }
+}
+inline void Run() {
+    CComPtr<IWICImagingFactory> fac;
+    Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
+       IID_IWICImagingFactory,(void**)&fac),"factory");
+    CComPtr<IWICBitmapDecoder> input;
+    Check(fac->CreateDecoderFromFilename(L"samples\\fixture-irot3-exif6-noaux.heic",
+         nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&input),"10bit synthetic decoder");
+    CComPtr<IWICBitmapFrameDecode> decoded;
+    Check(input->GetFrame(0,&decoded),"10bit fixture frame");
+    GUID fmt{};Check(decoded->GetPixelFormat(&fmt),"source pixel format");
+    if(!IsEqualGUID(fmt,GUID_WICPixelFormat48bppRGB))
+        throw std::runtime_error("10-bit HEIC advertised as a lower-bit-depth WIC format");
+    UINT w=0,h=0;
+    Check(decoded->GetSize(&w,&h),"10bit dimensions");
+    if(w==0 || h==0 || uint64_t(w)*h>20000000ull)
+        throw std::runtime_error("unexpected synthetic fixture dimensions");
+    WICRect line{0,0,static_cast<INT>(w),1};
+    std::vector<BYTE> bytes(size_t(w)*6);
+    Check(decoded->CopyPixels(&line,w*6,UINT(bytes.size()),bytes.data()),"10bit WIC 48bpp pixels");
+    // Roundtrip through our WIC encoder without degrading back to 8-bit.
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,&encoder),"encoder");
+    CComPtr<IWICStream> stream;Check(fac->CreateStream(&stream),"stream");
+    Check(stream->InitializeFromFilename(L"samples\\highbit-roundtrip.heic",GENERIC_WRITE),"output");
+    Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),"init encoder");
+    CComPtr<IWICBitmapFrameEncode> output;
+    Check(encoder->CreateNewFrame(&output,nullptr),"new frame");
+    Check(output->Initialize(nullptr),"init frame");
+    Check(output->SetSize(w,h),"set size");
+    GUID outFmt=GUID_WICPixelFormat48bppRGB;
+    Check(output->SetPixelFormat(&outFmt),"set high-bit format");
+    if(!IsEqualGUID(outFmt,GUID_WICPixelFormat48bppRGB))
+        throw std::runtime_error("48-bit WIC format downgraded during HEIC encode");
+    Check(output->WriteSource(decoded,nullptr),"write 10-bit source");
+    Check(output->Commit(),"commit frame");
+    Check(encoder->Commit(),"commit HEIC");
+    output.Release();encoder.Release();stream.Release();
+    CComPtr<IWICBitmapDecoder> verify;
+    Check(fac->CreateDecoderFromFilename(L"samples\\highbit-roundtrip.heic",nullptr,
+          GENERIC_READ,WICDecodeMetadataCacheOnDemand,&verify),"roundtrip readback");
+    CComPtr<IWICBitmapFrameDecode> frame;
+    Check(verify->GetFrame(0,&frame),"roundtrip frame");
+    GUID got{}; Check(frame->GetPixelFormat(&got),"output pixel format");
+    if(!IsEqualGUID(got,GUID_WICPixelFormat48bppRGB))
+        throw std::runtime_error("10-bit HEIC output was downgraded to 8-bit");
+    printf("HEIC_WIC_10BIT_FORMAT_ROUNDTRIP_PASSED %ux%u\n",w,h);
+}
+}

@@ -9,6 +9,7 @@
 #include "GeometryProbe.h"
 #include "EncoderGuardProbe.h"
 #include "ICCProfileProbe.h"
+#include "HighBitDepthProbe.h"
 #include "WICLosslessRotationProbe.h"
 #include "WICHeifOptionsProbe.h"
 #include "NativeLosslessProbe.h"
@@ -105,9 +106,15 @@ void CheckRotatedExifFixture()
     CComPtr<IWICBitmapSource> pixels;
     hr=frame->QueryInterface(IID_IWICBitmapSource,(void**)&pixels);
     if (FAILED(hr)) throw std::exception("fixture: IWICBitmapSource QI failed");
-    std::vector<BYTE> firstRow(width*3);
+    WICPixelFormatGUID fmt{};
+    hr=frame->GetPixelFormat(&fmt);
+    if(FAILED(hr))throw std::exception("fixture: pixel format unavailable");
+    const UINT byteCount = IsEqualGUID(fmt,GUID_WICPixelFormat48bppRGB)?6u:
+                           IsEqualGUID(fmt,GUID_WICPixelFormat64bppRGBA)?8u:
+                           IsEqualGUID(fmt,GUID_WICPixelFormat32bppRGBA)?4u:3u;
+    std::vector<BYTE> firstRow(size_t(width)*byteCount);
     WICRect region={0,0,static_cast<INT>(width),1};
-    hr=pixels->CopyPixels(&region,width*3,static_cast<UINT>(firstRow.size()),firstRow.data());
+    hr=pixels->CopyPixels(&region,UINT(firstRow.size()),static_cast<UINT>(firstRow.size()),firstRow.data());
     if (FAILED(hr)) {
         printf("fixture: CopyPixels HRESULT=0x%08X\n",(unsigned)hr);
         throw std::exception("fixture: transformed pixels could not be read");
@@ -327,6 +334,7 @@ int main()
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		ICCProfileProbe::Run();
+		HighBitDepthProbe::Run();
 		WICLosslessRotationProbe::Run();
 		WICHeifOptionsProbe::Run();
 		NativeLosslessProbe::Run();

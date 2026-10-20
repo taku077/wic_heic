@@ -11,6 +11,7 @@ CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif
 	, m_pDecoder(decoder)
 	, m_Handle(handle)
 	, m_Bpp(0)
+	, m_SourceBits(8)
 	, m_PlaneInterleaved(nullptr)
 	, m_Stride(0)
 	, m_Decoded(false)
@@ -26,51 +27,26 @@ CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif
 		bpc = handle.get_luma_bits_per_pixel();
 	}
 
-	m_chroma = heif_chroma_interleaved_RGB;
-	m_PixelFormat = GUID_WICPixelFormat24bppRGB;
-	m_Bpp = 24;
-
-	if (bpc == 8 && !m_Handle.has_alpha_channel())
-	{
-		m_PixelFormat = GUID_WICPixelFormat24bppRGB;
-		m_chroma = heif_chroma_interleaved_RGB;
-		m_Bpp = 24;
+	// A 10/12/16-bit HEIC must not be advertised as 8-bit RGB.
+	// WIC 48/64bpp formats store little-endian 16-bit channels. The HEIF
+	// decoder produces native 10/12-bit samples; CopyPixels scales those
+	// samples to WIC's full 16-bit range without dropping source precision.
+	const bool alpha = m_Handle.has_alpha_channel();
+	const bool highBit = (bpc == 10 || bpc == 12 || bpc == 16);
+	m_SourceBits = highBit ? bpc : 8;
+	if (highBit) {
+		m_chroma = alpha ? heif_chroma_interleaved_RRGGBBAA_LE :
+		                  heif_chroma_interleaved_RRGGBB_LE;
+		m_PixelFormat = alpha ? GUID_WICPixelFormat64bppRGBA :
+		                        GUID_WICPixelFormat48bppRGB;
+		m_Bpp = alpha ? 64 : 48;
+	} else {
+		m_chroma = alpha ? heif_chroma_interleaved_RGBA :
+		                  heif_chroma_interleaved_RGB;
+		m_PixelFormat = alpha ? GUID_WICPixelFormat32bppRGBA :
+		                        GUID_WICPixelFormat24bppRGB;
+		m_Bpp = alpha ? 32 : 24;
 	}
-	else if (bpc == 8 && m_Handle.has_alpha_channel())
-	{
-		m_PixelFormat = GUID_WICPixelFormat32bppRGBA;
-		m_chroma = heif_chroma_interleaved_RGBA;
-		m_Bpp = 32;
-	}
-	else if (bpc == 10 && !m_Handle.has_alpha_channel())
-	{
-		m_PixelFormat = GUID_WICPixelFormat48bppRGB;
-		m_chroma = heif_chroma_interleaved_RRGGBB_BE;
-		m_Bpp = 32;
-	}
-	else if (bpc == 10 && m_Handle.has_alpha_channel())
-	{
-		m_PixelFormat = GUID_WICPixelFormat64bppRGBA;
-		m_chroma = heif_chroma_interleaved_RRGGBBAA_BE;
-		m_Bpp = 64;
-	}
-	else if (bpc == 12 && !m_Handle.has_alpha_channel())
-	{
-		m_PixelFormat = GUID_WICPixelFormat48bppRGB;
-		m_chroma = heif_chroma_interleaved_RRGGBB_BE;
-		m_Bpp = 48;
-	}
-	else if (bpc == 12 && m_Handle.has_alpha_channel())
-	{
-		m_PixelFormat = GUID_WICPixelFormat64bppRGBA;
-		m_chroma = heif_chroma_interleaved_RRGGBBAA_BE;
-		m_Bpp = 64;
-	}
-
-	// No HDR support for now
-	m_chroma = heif_chroma_interleaved_RGB;
-	m_PixelFormat = GUID_WICPixelFormat24bppRGB;
-	m_Bpp = 24;
 
 	DbgLog("CHeicBitmapFrameDecode: (chroma=%d, bpp=%d, bpc=%d, w=%d, h=%d)",
 		m_chroma, m_Bpp, bpc, handle.get_width(), handle.get_height());
@@ -217,23 +193,35 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 		rc.X, rc.Y, rc.Width, rc.Height,
 		cbStride, m_Stride, m_Bpp);
 
-	int bytesPerPixel = m_Bpp / 8;
-	UINT requiredSize = rc.Height * cbStride;
-	if (cbBufferSize < requiredSize) {
+	if (rc.X < 0 || rc.Y < 0 || rc.Width <= 0 || rc.Height <= 0 ||
+		uint64_t(rc.X) + UINT(rc.Width) > UINT(m_Handle.get_width()) ||
+		uint64_t(rc.Y) + UINT(rc.Height) > UINT(m_Handle.get_height()))
 		return E_INVALIDARG;
-	}
-
-	int offsetX = rc.X * bytesPerPixel;
-	int rowBytes = rc.Width * bytesPerPixel;
-
-	uint8_t* plane = m_PlaneInterleaved;
-	plane += (m_Stride * rc.Y) + offsetX;
-
+	const UINT bytesPerPixel = UINT(m_Bpp / 8);
+	const uint64_t rowBytes = uint64_t(UINT(rc.Width)) * bytesPerPixel;
+	const uint64_t inputOffset = uint64_t(UINT(rc.X)) * bytesPerPixel;
+	const uint64_t outputBytes = (uint64_t(UINT(rc.Height)) - 1) * cbStride + rowBytes;
+	if (rowBytes > cbStride || outputBytes > cbBufferSize ||
+		inputOffset + rowBytes > m_Stride) return E_INVALIDARG;
+	const uint8_t* plane = m_PlaneInterleaved +
+		(size_t(m_Stride) * size_t(rc.Y)) + size_t(inputOffset);
 	uint8_t* out = pbBuffer;
-
-	for (int height = 0; height < rc.Height; height++)
-	{
-		memcpy_s(out, cbBufferSize - (height * cbStride), plane, rowBytes);
+	const uint32_t sourceMax = (1u << m_SourceBits) - 1u;
+	for (int row = 0; row < rc.Height; ++row) {
+		if (m_SourceBits <= 8) {
+			memcpy(out, plane, size_t(rowBytes));
+		} else {
+			// Convert HEIF N-bit integer samples into WIC 16-bit full range.
+			// Input and output are little-endian packed unsigned channels.
+			for (size_t i = 0; i < size_t(rowBytes); i += 2) {
+				const uint32_t sample = uint32_t(plane[i]) |
+				                        (uint32_t(plane[i + 1]) << 8);
+				if (sample > sourceMax) return WINCODEC_ERR_BADIMAGE;
+				const uint32_t normalized = (sample * 65535u + sourceMax/2) / sourceMax;
+				out[i] = BYTE(normalized & 255);
+				out[i + 1] = BYTE(normalized >> 8);
+			}
+		}
 		out += cbStride;
 		plane += m_Stride;
 	}

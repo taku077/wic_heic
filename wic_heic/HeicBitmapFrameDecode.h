@@ -11,6 +11,7 @@ private:
 	heif_chroma m_chroma;
 	WICPixelFormatGUID m_PixelFormat;
 	int m_Bpp;
+	int m_SourceBits;
 	size_t m_Stride;
 	uint8_t* m_PlaneInterleaved;
 	bool m_Decoded;
