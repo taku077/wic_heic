@@ -8,7 +8,8 @@ Never modifies .heic, .heif, real-photo files or their associations.
 [CmdletBinding()]
 param(
  [Parameter(Mandatory=$true)][string]$TrialDllPath,
- [Parameter(Mandatory=$true)][string]$FixturePath
+ [Parameter(Mandatory=$true)][string]$FixturePath,
+ [ValidateSet('User','Machine')][string]$RegistrationScope='User'
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2
@@ -24,8 +25,21 @@ $subkeys=@(
  'Software\WicHeicSyntheticTrial\'+$providerId
 )
 $registry=[Microsoft.Win32.Registry]::CurrentUser
+if($RegistrationScope -eq 'Machine' -and ($env:GITHUB_ACTIONS -ne 'true' -or -not $env:RUNNER_TEMP)) {
+ throw 'Machine registration is allowed ONLY on the disposable GitHub Actions runner'
+}
+$classRegistry=if($RegistrationScope -eq 'Machine') {
+ [Microsoft.Win32.Registry]::LocalMachine
+} else { $registry }
+function Get-ScopeRoot([string]$subkey) {
+ if($subkey.StartsWith('Software\Classes\',[StringComparison]::OrdinalIgnoreCase)) {
+   return $classRegistry
+ }
+ return $registry
+}
 function Open-NewRegistryKey([string]$subkey) {
- $key=$registry.CreateSubKey($subkey)
+ $root=Get-ScopeRoot $subkey
+ $key=$root.CreateSubKey($subkey)
  if($null -eq $key){throw ('Cannot create isolated registry key: '+$subkey)}
  return $key
 }
@@ -37,7 +51,8 @@ $dll=(Resolve-Path -LiteralPath $TrialDllPath).Path
 $hash=Sha256 $src
 # Only touch an extension and CLSID whose complete registrations did not exist.
 foreach($subkey in $subkeys) {
- $key=$registry.OpenSubKey($subkey)
+ $root=Get-ScopeRoot $subkey
+ $key=$root.OpenSubKey($subkey)
  if($key) { $key.Close();throw ('Refusing existing registry key: '+$subkey) }
 }
 foreach($check in @('CLSID\'+$providerId,$extension,$progid)) {
@@ -181,6 +196,7 @@ try {
  $key.SetValue('Activated',0,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.Close()
  $registered+=('Software\WicHeicSyntheticTrial\'+$providerId)
+ Write-Host ('SHELL_TRIAL_CLASS_REGISTRATION_SCOPE='+$RegistrationScope)
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
  # Verify the COM class can be instantiated directly before asking the
  # Shell's isolated thumbnail process to activate it.
@@ -227,7 +243,8 @@ try {
      'Software\Classes\CLSID\'+$providerId
  )) {
    if($registered -contains $subkey) {
-     $registry.DeleteSubKeyTree($subkey,$false)
+     $root=Get-ScopeRoot $subkey
+     $root.DeleteSubKeyTree($subkey,$false)
    }
  }
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
@@ -235,7 +252,8 @@ try {
     Remove-Item -LiteralPath $work -Recurse -Force
  }
  foreach($subkey in $subkeys) {
-   $check=$registry.OpenSubKey($subkey)
+   $root=Get-ScopeRoot $subkey
+   $check=$root.OpenSubKey($subkey)
    if($check){$check.Close();throw ('Registry rollback was not complete: '+$subkey)}
  }
  if((Sha256 $src) -ne $hash){throw 'Original synthetic fixture was modified'}
