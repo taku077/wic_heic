@@ -18,6 +18,13 @@ Status 2026-10-20: Experimental Photos call-trace source compiles and CI tests p
 - The trace mechanism may not have access to a packaged Photos process or its file-system sandbox. Verify with an explicit probe before concluding that Photos did not use this WIC component.
 - No background monitoring, persistent hooks or startup tasks. No operations on IMG_4074.
 
+## GitHub Actions evidence and read-only preflight (2026-10-20)
+- Run `WIC_Preflight_ReadOnly.ps1` BEFORE any approved experiment and preserve its JSON locally.
+- After restoration, run it again and compare using `WIC_Preflight_Compare.ps1 -Before <baseline.json> -After <restored.json>`. Treat any difference as a failed rollback.
+- The read-only preflight collects only Windows/Photos version, WicHeic COM registration, codec DLL SHA-256, and WicHeic MSI details. It does NOT inspect user photos or HEIC Manager internals.
+- Windows Server 2022 CI success demonstrates fresh-runner install/uninstall equivalence, not recovery of an existing Windows 10 codec installation. A verified original MSI and disposable Windows 10 rollback test are still required.
+- Trace must retain its 2 MiB cap, explicit opt-in, 20-minute expiry, and non-content event log format.
+
 ## Procedural guard
 1. Confirm exact WIC snapshot and tested rollback package exist.
 2. Stop Windows Photos/Explorer photo browsing, install the diagnostic WIC only after approval, verify dll hash/registration, then reboot if required.

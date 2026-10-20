@@ -115,6 +115,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::GetEncoderInfo(__RPC__deref_out_op
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
+	WicHeicDiagnostic::Emit("EncoderSetColorContexts",cCount,0,0,0,"metadata-rejected",WINCODEC_ERR_UNSUPPORTEDOPERATION);
 	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }
 
@@ -125,11 +126,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetPalette(__RPC__in_opt IWICPalet
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetThumbnail(__RPC__in_opt IWICBitmapSource *pIThumbnail)
 {
+	WicHeicDiagnostic::Emit("EncoderSetThumbnail",0,0,0,0,pIThumbnail?"thumbnail-rejected":"none",WINCODEC_ERR_UNSUPPORTEDOPERATION);
 	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetPreview(__RPC__in_opt IWICBitmapSource *pIPreview)
 {
+	WicHeicDiagnostic::Emit("EncoderSetPreview",0,0,0,0,pIPreview?"preview-rejected":"none",WINCODEC_ERR_UNSUPPORTEDOPERATION);
 	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }
 
@@ -257,5 +260,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::GetMetadataQueryWriter(__RPC__deref_out_opt IWICMetadataQueryWriter **ppIMetadataQueryWriter)
 {
+	if (ppIMetadataQueryWriter) *ppIMetadataQueryWriter=nullptr;
+	WicHeicDiagnostic::Emit("EncoderMetadataWriterUnavailable",0,0,0,0,"metadata-rejected",WINCODEC_ERR_UNSUPPORTEDOPERATION);
 	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }

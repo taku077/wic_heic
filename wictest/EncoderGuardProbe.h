@@ -29,6 +29,13 @@ inline void Run() {
     Check(fac->CreateStream(&stream),"Create stream");
     Check(stream->InitializeFromFilename(L"samples\\guard-writepixels.heic",GENERIC_WRITE),"Open test output");
     Check(enc->Initialize(stream,WICBitmapEncoderNoCache),"Init encoder");
+    if(enc->SetThumbnail(source)!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("guard: top-level thumbnail unexpectedly accepted");
+    if(enc->SetColorContexts(0,nullptr)!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("guard: top-level color contexts unexpectedly accepted");
+    CComPtr<IWICMetadataQueryWriter> unavailableWriter;
+    if(enc->GetMetadataQueryWriter(&unavailableWriter)!=WINCODEC_ERR_UNSUPPORTEDOPERATION || unavailableWriter)
+        throw std::runtime_error("guard: top-level metadata writer unexpectedly available");
     HRESULT doubleInit=enc->Initialize(stream,WICBitmapEncoderNoCache);
     if(doubleInit!=WINCODEC_ERR_WRONGSTATE)
         throw std::runtime_error("guard: repeated encoder init accepted");

@@ -167,7 +167,7 @@ jobs:
               }
               if (-not (Test-Path -LiteralPath $trace)) { throw 'WIC opt-in trace was not produced' }
               $events = Get-Content -LiteralPath $trace
-              foreach ($required in @('FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed')) {
+              foreach ($required in @('FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed','EncoderSetThumbnail','EncoderSetColorContexts','EncoderMetadataWriterUnavailable')) {
                 if (-not ($events | Where-Object { $_ -like "*event=$required *" })) { throw "Missing expected diagnostic event: $required" }
               }
               if ($events -match '(?i)\\samples\\|[A-Z]:\\|\.heic|\.jpg|\.png|GPS|EXIF|maker.?note') {
