@@ -259,6 +259,32 @@ jobs:
             if ($unregister.ExitCode -ne 0) { Write-Warning "Runner-only COM deregistration failed: $($unregister.ExitCode)" }
           }
 
+      # Separate experimental COM DLL. It has NO DllRegisterServer and is
+      # never included in MSI or associated with real .heic/.heif photos.
+      - name: Build isolated Shell thumbnail provider x64 trial DLL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeicShellTrial.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Synthetic Shell handler COM DLL build failed'}
+
+      - name: Verify synthetic-only Shell COM registration and rollback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $provider=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/WicHeicIsolatedThumbTrial.dll').Path
+          $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s', ('"{0}"' -f $codec)) -Wait -PassThru
+          if($reg.ExitCode -ne 0){throw 'WIC HEIC codec not registered for isolated Shell experiment'}
+          try {
+            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture
+            if($LASTEXITCODE -ne 0){throw 'Isolated Shell test failed'}
+          } finally {
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0){throw 'Isolated Shell trial failed to remove WIC codec registration'}
+          }
+
       - name: Confirm HKCU trace reaches real WIC codec without environment override
         shell: pwsh
         run: |
