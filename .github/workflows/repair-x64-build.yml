@@ -177,6 +177,12 @@ jobs:
               $warmup=(Resolve-Path -LiteralPath '../diagnostics/thumbnail_warmup/Explorer_HEIC_Warmup.ps1').Path
               $self=@(& $warmup -Mode SelfTest)
               if(-not ($self -match 'WARMUP_SELFTEST_PASSED')) { throw 'HEIC shell warmup self-test failed' }
+              # In a CI service session there is no interactive Explorer window.
+              # Verify the watch loop starts and automatically stops without UI.
+              $watch=@(& $warmup -Mode Watch -DurationSeconds 5 -MaxFiles 1)
+              if(-not ($watch -match 'WARMUP_WATCH_COMPLETED')) {
+                throw "HEIC warmup watch auto-exit failed: $($watch -join ',')"
+              }
               $warmFolder=Join-Path $env:RUNNER_TEMP ('wic_thumb_warm_'+$PID+'_'+[guid]::NewGuid().ToString('N'))
               New-Item -ItemType Directory -Path $warmFolder | Out-Null
               try {
