@@ -377,6 +377,44 @@ jobs:
           }
           Write-Host 'SYNTHETIC_CUSTODY_CI_PASS'
 
+      - name: Validate user-compatible Windows PowerShell 5.1 tools
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5) { throw 'This test must use Windows PowerShell 5.1' }
+          $root=(Resolve-Path -LiteralPath 'diagnostics/photos_trace').Path
+          $prepare=Join-Path $root 'PhotosSynthetic_Prepare.ps1'
+          $verify=Join-Path $root 'PhotosSynthetic_Verify.ps1'
+          $preflight=Join-Path $root 'WIC_Preflight_ReadOnly.ps1'
+          $compare=Join-Path $root 'WIC_Preflight_Compare.ps1'
+          $folder=& $prepare | Select-Object -Last 1
+          if(-not (Test-Path -LiteralPath $folder)) { throw 'PS5.1 synthetic preparation failed' }
+          $result=@(& $verify -SessionDirectory $folder)
+          if(-not ($result -match 'SYNTHETIC_REFERENCE_PASS') -or
+             -not ($result -match 'SYNTHETIC_WORKING_STATUS=UNCHANGED')) {
+            throw 'PS5.1 synthetic verification failed'
+          }
+          $outside=Join-Path $root 'README_JA.md'
+          $blocked=$false
+          try { & $verify -SessionDirectory $outside | Out-Null } catch { $blocked=$true }
+          if(-not $blocked) { throw 'PS5.1 verifier accepted an unrelated input path' }
+          $before=& $preflight | Select-Object -Last 1
+          $after=& $preflight | Select-Object -Last 1
+          if(-not (Test-Path -LiteralPath $before) -or -not (Test-Path -LiteralPath $after)) {
+            throw 'PS5.1 WIC inventory did not write local snapshots'
+          }
+          & $compare -Before $before -After $after
+          $start=Join-Path $root 'PhotosTrace_Start.ps1'
+          $stop=Join-Path $root 'PhotosTrace_Stop.ps1'
+          try {
+            & $start
+            $props=Get-ItemProperty -Path 'HKCU:\Software\WicHeic' -ErrorAction Stop
+            if(-not $props.TraceFile -or -not (Test-Path -LiteralPath $props.TraceFile)) {
+              throw 'PS5.1 trace registry opt-in failed'
+            }
+          } finally { & $stop }
+          Write-Host 'WINDOWS_POWERSHELL_5_1_TOOLCHAIN_PASSED'
+
       - name: Build experimental replacement x64 MSI
         shell: pwsh
         run: |
