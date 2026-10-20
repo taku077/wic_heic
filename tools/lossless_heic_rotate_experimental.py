@@ -75,6 +75,22 @@ def exif_links(b,iref,primary):
         for j in range(count):
             if uint(b,p+j*n,n)==primary:found.add(identity)
     return found
+def has_linked_visual(b, iref, primary):
+    version = uint(b, iref[3], 1)
+    if version not in (0, 1): reject("Unsupported iref")
+    n = 2 if version == 0 else 4
+    for e in boxes(b, iref[3]+4, iref[2]):
+        if e[0] not in ("thmb", "auxl"):
+            continue
+        p = e[3]
+        source = uint(b, p, n); p += n
+        count = uint(b, p, 2); p += 2
+        if p+n*count != e[2]: reject("Invalid thumbnail/auxiliary reference")
+        targets = [uint(b,p+j*n,n) for j in range(count)]
+        if source == primary or primary in targets:
+            return True
+    return False
+
 def exif_extent(b,iloc,exifid,idat):
     p=iloc[3];ver=uint(b,p,1)
     if ver not in (0,1,2):reject("Unsupported iloc")
@@ -156,6 +172,8 @@ def transform(original):
     mods={pos:(angle-1)%4}
     ids=exif_ids(original,one(child,'iinf'))
     assoc=exif_links(original,one(child,'iref'),primary)
+    if has_linked_visual(b, iref, primary):
+        reject("Linked thumbnail/HDR rotation requires coherent auxiliary-image transform")
     exifs=[i for i in ids if i in assoc]
     if len(exifs)>1:reject("Multiple Exif items attached to primary")
     previous=None
