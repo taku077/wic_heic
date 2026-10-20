@@ -76,9 +76,12 @@ namespace WicHeicShellWarm {
                 if(canonical.StartsWith(@"\\", StringComparison.Ordinal) ||
                    !Path.IsPathRooted(canonical)) return false;
                 DirectoryInfo directory=new DirectoryInfo(canonical);
-                if(!directory.Exists ||
-                   (directory.Attributes & FileAttributes.ReparsePoint)!=0)
-                    return false;
+                if(!directory.Exists) return false;
+                // Check every path ancestor: a descendant of a junction is not
+                // safe even when the final directory itself is not a link.
+                for(DirectoryInfo current=directory;current!=null;current=current.Parent)
+                    if((current.Attributes & FileAttributes.ReparsePoint)!=0)
+                        return false;
                 string root=Path.GetPathRoot(canonical);
                 DriveInfo drive=new DriveInfo(root);
                 return drive.DriveType!=DriveType.Network;
@@ -89,14 +92,16 @@ namespace WicHeicShellWarm {
             return ext.Equals(".heic",StringComparison.OrdinalIgnoreCase) ||
                    ext.Equals(".heif",StringComparison.OrdinalIgnoreCase);
         }
-        public static WarmResult RunFolder(string path,int maxFiles,DateTime deadlineUtc) {
+        public static WarmResult RunFolder(string path,int maxFiles,DateTime deadlineUtc,IntPtr expectedWindow) {
             WarmResult result=new WarmResult();
             if(!IsSafeFolder(path)) return result;
             maxFiles=Math.Max(1,Math.Min(30,maxFiles));
             // Avoid recursive scanning and linked files; no user file is mutated.
             List<string> files=new List<string>();
             try {
+                int scanned=0;
                 foreach(string entry in Directory.EnumerateFiles(path)) {
+                    if(++scanned>500 || DateTime.UtcNow>=deadlineUtc) break;
                     if(!IsHeic(entry)) continue;
                     if((File.GetAttributes(entry)&FileAttributes.ReparsePoint)!=0)
                         continue;
@@ -112,7 +117,9 @@ namespace WicHeicShellWarm {
                 obj=Activator.CreateInstance(type);
                 IThumbnailCache cache=(IThumbnailCache)obj;
                 foreach(string filename in files) {
-                    if(DateTime.UtcNow>=deadlineUtc) break;
+                    if(DateTime.UtcNow>=deadlineUtc ||
+                       (expectedWindow!=IntPtr.Zero &&
+                        GetForegroundWindow()!=expectedWindow)) break;
                     result.Attempted++;
                     IShellItem item=null;
                     ISharedBitmap bitmap=null;
@@ -167,7 +174,7 @@ if ($Mode -eq 'Folder') {
     if (-not [WicHeicShellWarm.Native]::IsSafeFolder($Folder)) {
         throw 'WARMUP_INVALID_FOLDER'
     }
-    $result = [WicHeicShellWarm.Native]::RunFolder($Folder, $MaxFiles, $limit)
+    $result = [WicHeicShellWarm.Native]::RunFolder($Folder, $MaxFiles, $limit, [IntPtr]::Zero)
     "WARMUP_FOLDER_RESULT attempted=$($result.Attempted) cached=$($result.Cached) generated=$($result.Generated) failed=$($result.Failed)"
     if ($result.Failed -gt 0) { throw 'WARMUP_FOLDER_FAILED' }
     return
@@ -221,7 +228,8 @@ while ([DateTime]::UtcNow -lt $limit) {
     $folder = Get-ForegroundExplorerFolder
     if ($folder -and $seen.Add($folder)) {
         $visits++
-        $result = [WicHeicShellWarm.Native]::RunFolder($folder, $MaxFiles, $limit)
+        $foreground = [WicHeicShellWarm.Native]::GetForegroundWindow()
+        $result = [WicHeicShellWarm.Native]::RunFolder($folder, $MaxFiles, $limit, $foreground)
         $generated += $result.Generated
         $cached += $result.Cached
         $errors += $result.Failed
