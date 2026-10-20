@@ -72,6 +72,12 @@ namespace TrialShell {
    out uint cacheFlags,out ThumbId id);
  }
  public static class Shell {
+  // QueryInterface must be performed in strongly typed C# rather than
+  // PowerShell's direct System.__ComObject -> interface conversion.
+  public static IThumbnailCache OpenThumbnailCache() {
+    Guid clsid=new Guid("50EF4544-AC9F-4A8E-B21B-8A26180DB13F");
+    return (IThumbnailCache)Activator.CreateInstance(Type.GetTypeFromCLSID(clsid,true));
+  }
   [DllImport("shell32.dll",CharSet=CharSet.Unicode)]
   public static extern int SHCreateItemFromParsingName(
     string path,IntPtr bind,ref Guid iid,
@@ -112,16 +118,15 @@ try {
  $registered+=('Software\WicHeicSyntheticTrial\'+$providerId)
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
  # Force unprivileged Shell interfaces to discover the ephemeral extension.
- $cl=[Guid]::Parse('50EF4544-AC9F-4A8E-B21B-8A26180DB13F')
  $iid=[Guid]::Parse('43826D1E-E718-42EE-BC55-A1E261C37BFE')
- $factory=[Activator]::CreateInstance([Type]::GetTypeFromCLSID($cl,$true))
+ $factory=[TrialShell.Shell]::OpenThumbnailCache()
  $item=$null
  $bitmap=$null
  try {
    $hr=[TrialShell.Shell]::SHCreateItemFromParsingName($file,[IntPtr]::Zero,
                                                         [ref]$iid,[ref]$item)
    if($hr -lt 0 -or $null -eq $item){throw ('Shell item failed: 0x{0:X8}' -f [uint32]$hr)}
-   $cache=[TrialShell.IThumbnailCache]$factory
+   $cache=$factory
    $flags=[uint32]0
    $id=New-Object TrialShell.ThumbId
    $timer=[Diagnostics.Stopwatch]::StartNew()
