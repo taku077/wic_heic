@@ -3,6 +3,7 @@
 
 #include "stdafx.h"
 #include "../wic_heic/ExifOrientationFix.h"
+#include "GeometryProbe.h"
 #include <vector>
 #include <utility>
 #include "..\wic_heic\wic_heic.h"
@@ -317,6 +318,7 @@ int main()
 	{
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
+		GeometryProbe::Run();
 		ConvertToHeic(L"samples\\01.png", L"samples\\out-01.heic");
 		ConvertToHeic(L"samples\\02.png", L"samples\\out-02.heic");
 		ConvertToHeic(L"samples\\03.heic", L"samples\\out-03.heic");
