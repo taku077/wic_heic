@@ -346,7 +346,7 @@ int main()
 		EncoderGuardProbe::Run();
 		ICCProfileProbe::Run();
 		HighBitDepthProbe::Run();
-		ThumbnailPerformanceProbe::Run();
+
 		WICLosslessRotationProbe::Run();
 		WICHeifOptionsProbe::Run();
 		NativeLosslessProbe::Run();
@@ -361,6 +361,9 @@ int main()
 		ConvertToHeic(L"samples\\08.gif", L"samples\\out-08.heic");
 		// 90-degree rotation of an existing HEIC, analogous to Photos rotate-save.
 		ConvertToHeic(L"samples\\03.heic", L"samples\\rotated-03.heic", true);
+		// Measure performance after the bounded diagnostic feature tests: do not consume
+		// the 2 MiB WIC trace budget before checking lossless rotation events.
+		ThumbnailPerformanceProbe::Run();
 	}
 	catch (const std::exception& ex)
 	{
