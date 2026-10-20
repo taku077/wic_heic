@@ -199,6 +199,9 @@ inline void RunOpenPathBenchmark() {
         iterations,Median(automatic),Median(explicitCodec));
     printf("HEIC_WIC_OPEN_CODEC_IDENTITY samples=%d automatic_our_decoder=%d automatic_other_decoder=%d direct_our_decoder=%d direct_other_decoder=%d\n",
         iterations,automaticOurDecoder,automaticOtherDecoder,directOurDecoder,directOtherDecoder);
+    if(automaticOurDecoder!=iterations || directOurDecoder!=iterations ||
+       automaticOtherDecoder!=0 || directOtherDecoder!=0)
+        throw std::runtime_error("WIC opened a different HEIC decoder; timing comparison invalid");
     printf("HEIC_WIC_OPEN_PATH_DIAGNOSTIC_ONLY_NOT_EXPLORER_PARITY\n");
 }
 // WIC Shell fast-path feasibility. The same codec must render byte-identical
