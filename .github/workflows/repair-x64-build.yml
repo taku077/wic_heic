@@ -5,6 +5,7 @@ on:
     branches:
       - repair/heic-frame-encode-interface
       - investigate/rotated-exif-orientation
+      - investigate/geometry-jpeg-vs-heic
   workflow_dispatch:
 
 permissions:
