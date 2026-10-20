@@ -5,7 +5,7 @@ class CHeicBitmapEncoder : public IWICBitmapEncoder
 private:
 	std::atomic<uint32_t> m_Count;
 	heif::Context m_Context;
-	std::vector<CHeicBitmapFrameEncode*> m_Frames;
+	std::vector<CHeicBitmapFrameEncode*> m_Frames;	std::vector<uint8_t> m_IccProfile;
 	IStream* m_Stream;
 
 public:

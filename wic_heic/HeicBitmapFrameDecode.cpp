@@ -261,9 +261,30 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetColorContexts(UINT cCount, __RPC__inout_ecount_full_opt(cCount) IWICColorContext **ppIColorContexts, __RPC__out UINT *pcActualCount)
 {
-	DbgLog("%s", __FUNCTION__);
-
-	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	if (!pcActualCount) return E_POINTER;
+	*pcActualCount = 0;
+	if (cCount && !ppIColorContexts) return E_POINTER;
+	if (cCount) ppIColorContexts[0] = nullptr;
+	const heif_image_handle* handle = m_Handle.get_raw_image_handle();
+	if (!handle) return WINCODEC_ERR_BADIMAGE;
+	const size_t profileSize = heif_image_handle_get_raw_color_profile_size(handle);
+	if (!profileSize) return S_OK;
+	if (profileSize > 16u*1024u*1024u) return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	*pcActualCount = 1;
+	if (!cCount) return S_OK;
+	std::vector<uint8_t> bytes(profileSize);
+	const heif_error err = heif_image_handle_get_raw_color_profile(handle, bytes.data());
+	if (err.code != heif_error_Ok) return WINCODEC_ERR_BADIMAGE;
+	IWICImagingFactory* factory = nullptr;
+	IWICColorContext* color = nullptr;
+	HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(&factory));
+	if (SUCCEEDED(hr)) hr = factory->CreateColorContext(&color);
+	if (SUCCEEDED(hr)) hr = color->InitializeFromMemory(bytes.data(), UINT(bytes.size()));
+	if (SUCCEEDED(hr)) ppIColorContexts[0] = color;
+	else if (color) color->Release();
+	if (factory) factory->Release();
+	return hr;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail)

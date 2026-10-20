@@ -8,6 +8,7 @@
 #include "..\wic_heic\wic_heic.h"
 #include "GeometryProbe.h"
 #include "EncoderGuardProbe.h"
+#include "ICCProfileProbe.h"
 #include "WICLosslessRotationProbe.h"
 #include "WICHeifOptionsProbe.h"
 #include "NativeLosslessProbe.h"
@@ -325,6 +326,7 @@ int main()
 		CheckRotatedExifFixture();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
+		ICCProfileProbe::Run();
 		WICLosslessRotationProbe::Run();
 		WICHeifOptionsProbe::Run();
 		NativeLosslessProbe::Run();

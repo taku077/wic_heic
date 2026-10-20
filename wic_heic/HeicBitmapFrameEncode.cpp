@@ -5,6 +5,7 @@
 #include "HeicSourceAccess.h"
 #include "HeicLosslessNative.h"
 #include "PhotosWicTrace.h"
+#include "HeicColorProfileWic.h"
 #include <stdexcept>
 
 
@@ -186,8 +187,16 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
-	WicHeicDiagnostic::Emit("SetColorContexts",cCount,0,m_BitmapTransform,m_HeifCompressionMethod,"metadata-rejected",E_NOTIMPL);
-	return E_NOTIMPL;
+	if (m_Created || m_HasPixels) return WINCODEC_ERR_WRONGSTATE;
+	std::vector<uint8_t> profile;
+	HRESULT hr = HeicColorProfileWic::ReadArray(cCount, ppIColorContext, &profile);
+	if (FAILED(hr)) {
+		WicHeicDiagnostic::Emit("SetColorContexts",cCount,0,m_BitmapTransform,m_HeifCompressionMethod,"icc-rejected",hr);
+		return hr;
+	}
+	m_IccProfile = std::move(profile);
+	WicHeicDiagnostic::Emit("SetColorContexts",cCount,0,m_BitmapTransform,m_HeifCompressionMethod,"icc-accepted");
+	return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPalette(__RPC__in_opt IWICPalette *pIPalette)
@@ -397,6 +406,8 @@ void CHeicBitmapFrameEncode::CreateFrame()
 		throw std::runtime_error("Frame dimension or pixel format not initialized");
 	m_Frame.create(m_Width, m_Height, m_Colorspace, m_Chroma);
 	m_Frame.add_plane(heif_channel_interleaved, m_Width, m_Height, m_BitDepthPerChannel);
+	if (!m_IccProfile.empty())
+		m_Frame.set_raw_color_profile(heif_color_profile_type_prof, m_IccProfile);
 
 	m_Created = true;
 }

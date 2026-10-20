@@ -18,6 +18,7 @@ private:
 	bool m_OptionsInitialized;
 	bool m_LosslessReady;
 	std::vector<uint8_t> m_LosslessBytes;
+	std::vector<uint8_t> m_IccProfile;
 	WICPixelFormatGUID m_PixelFormat;
 	int m_BitDepthPerChannel;
 

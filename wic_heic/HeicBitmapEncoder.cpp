@@ -5,6 +5,7 @@
 #include "HeicFrameOptions.h"
 #include "HeifStreamWriter.h"
 #include "PhotosWicTrace.h"
+#include "HeicColorProfileWic.h"
 
 
 CHeicBitmapEncoder::CHeicBitmapEncoder()
@@ -115,8 +116,20 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::GetEncoderInfo(__RPC__deref_out_op
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
-	WicHeicDiagnostic::Emit("EncoderSetColorContexts",cCount,0,0,0,"metadata-rejected",WINCODEC_ERR_UNSUPPORTEDOPERATION);
-	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	std::vector<uint8_t> profile;
+	HRESULT hr = HeicColorProfileWic::ReadArray(cCount, ppIColorContext, &profile);
+	if (FAILED(hr)) {
+		WicHeicDiagnostic::Emit("EncoderSetColorContexts",cCount,0,0,0,"icc-rejected",hr);
+		return hr;
+	}
+	// If any frame already has pixels, changing the color space would mislabel it.
+	for (auto* frame : m_Frames) {
+		if (frame->m_Created || frame->m_HasPixels) return WINCODEC_ERR_WRONGSTATE;
+	}
+	m_IccProfile = std::move(profile);
+	for (auto* frame : m_Frames) frame->m_IccProfile = m_IccProfile;
+	WicHeicDiagnostic::Emit("EncoderSetColorContexts",cCount,0,0,0,"icc-accepted");
+	return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetPalette(__RPC__in_opt IWICPalette *pIPalette)
@@ -156,6 +169,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 			return E_OUTOFMEMORY;
 		}
 		try {
+			pFrame->m_IccProfile = m_IccProfile;
 			m_Frames.push_back(pFrame); // encoder keeps initial reference
 		} catch (...) {
 			pFrame->Release();
