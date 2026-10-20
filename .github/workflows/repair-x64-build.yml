@@ -203,6 +203,25 @@ jobs:
                   throw 'HEIC shell warmer changed its original fixture'
                 }
                 Write-Host 'EXPLORER_WARMUP_SYNTHETIC_CACHE_REVISIT_PASSED'
+                # One-click package must be runnable on plain Windows PowerShell
+                # 5.1 without user file access, Explorer UI or installations.
+                $oneClick=(Resolve-Path -LiteralPath '../diagnostics/thumbnail_warmup/Run_Synthetic_Explorer_Test.ps1').Path
+                $oneReport=@(& $oneClick -Mode SelfTest -FixturePath $source)
+                if(-not ($oneReport -match '^TEST_REPORT=') -or
+                   -not ($oneReport -match 'TEST_STATUS=RECORDED')) {
+                  throw "One-click synthetic self-test failed: $($oneReport -join ',')"
+                }
+                $oneZip=($oneReport | Where-Object { $_ -like 'TEST_REPORT=*' } | Select-Object -First 1).Substring(12)
+                if(-not (Test-Path -LiteralPath $oneZip)) {throw 'One-click ZIP result missing'}
+                $oneFolder=[IO.Path]::ChangeExtension($oneZip,$null)
+                $oneSummary=Get-Content -LiteralPath (Join-Path $oneFolder 'summary.txt')
+                if(-not ($oneSummary -match 'CACHE_GENERATE_AND_REVISIT=PASS') -or
+                   -not ($oneSummary -match 'COPIES_HASH_UNCHANGED=True') -or
+                   ($oneSummary -match '^TEST_FAILED=')) {
+                  throw "One-click synthetic summary incomplete: $($oneSummary -join ',')"
+                }
+                Write-Host 'EXPLORER_ONECLICK_SYNTHETIC_SELFTEST_PASSED'
+
               } finally {
                 Remove-Item -LiteralPath $warmFolder -Recurse -Force -ErrorAction SilentlyContinue
               }
