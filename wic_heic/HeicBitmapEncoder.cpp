@@ -4,6 +4,7 @@
 #include "HeicBitmapEncoder.h"
 #include "HeicFrameOptions.h"
 #include "HeifStreamWriter.h"
+#include "PhotosWicTrace.h"
 
 
 CHeicBitmapEncoder::CHeicBitmapEncoder()
@@ -65,6 +66,7 @@ ULONG STDMETHODCALLTYPE CHeicBitmapEncoder::Release(void)
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Initialize(__RPC__in_opt IStream *pIStream, WICBitmapEncoderCacheOption cacheOption)
 {
+	WicHeicDiagnostic::Emit("EncoderInitialize");
 	m_Stream = pIStream;
 	m_Stream->AddRef();
 
@@ -134,6 +136,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 	try
 	{
 		if (!ppIFrameEncode) return E_POINTER;
+		WicHeicDiagnostic::Emit("CreateNewFrame",0,0,0,0,ppIEncoderOptions?"bag-requested":"no-bag");
 		*ppIFrameEncode=nullptr;
 		if (ppIEncoderOptions) *ppIEncoderOptions=nullptr;
 
@@ -179,6 +182,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 {
+	WicHeicDiagnostic::Emit("EncoderCommitEnter",0,0,0,0,m_Frames.size()==1?"one-frame":"many-frames");
 	try
 	{
 		// A single-frame direct WIC rotation/copy can now retain the entire
@@ -196,6 +200,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			ULONG written=0;
 			hr=m_Stream->Write(bytes.data(),static_cast<ULONG>(bytes.size()),&written);
 			if(FAILED(hr)||written!=bytes.size())return STG_E_WRITEFAULT;
+			WicHeicDiagnostic::Emit("EncoderCommitLossless",m_Frames[0]->m_Width,m_Frames[0]->m_Height,m_Frames[0]->m_BitmapTransform,m_Frames[0]->m_HeifCompressionMethod,"heif-copied");
 			return S_OK;
 		}
 		for(auto* frame:m_Frames){
@@ -215,6 +220,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 		}
 
 		m_Context.write(writer);
+		WicHeicDiagnostic::Emit("EncoderCommitRecompressed",0,0,0,0,"hevc-encoded");
 	}
 	catch (const heif::Error& ex)
 	{
