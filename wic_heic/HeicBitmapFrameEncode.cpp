@@ -4,6 +4,7 @@
 #include "HeicBitmapEncoder.h"
 #include "HeicSourceAccess.h"
 #include "HeicLosslessNative.h"
+#include "PhotosWicTrace.h"
 #include <stdexcept>
 
 
@@ -73,6 +74,7 @@ ULONG STDMETHODCALLTYPE CHeicBitmapFrameEncode::Release(void)
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Initialize(__RPC__in_opt IPropertyBag2 *pIEncoderOptions)
 {
+	WicHeicDiagnostic::Emit("FrameInitializeEnter",0,0,0,0,pIEncoderOptions?"options":"no-options");
 	if (m_OptionsInitialized) return WINCODEC_ERR_WRONGSTATE;
 	BYTE transform=0, compression=0;
 	if (pIEncoderOptions) {
@@ -99,6 +101,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Initialize(__RPC__in_opt IProp
 	m_BitmapTransform=transform;
 	m_HeifCompressionMethod=compression;
 	m_OptionsInitialized=true;
+	WicHeicDiagnostic::Emit("FrameInitializeOptions",0,0,transform,compression,pIEncoderOptions?"options":"default");
 	DbgLog("HEIC_WIC_OPTIONS transform=%u compression=%u", unsigned(transform),unsigned(compression));
 	return S_OK;
 }
@@ -110,6 +113,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetSize(UINT uiWidth, UINT uiH
 		return E_INVALIDARG;
 	m_Width = uiWidth;
 	m_Height = uiHeight;
+	WicHeicDiagnostic::Emit("SetSize",uiWidth,uiHeight,m_BitmapTransform,m_HeifCompressionMethod);
 	return S_OK;
 }
 
@@ -176,11 +180,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 	// Report the actual accepted pixel format back to the caller.
 	// Otherwise Photos may write BGR bytes into an RGB frame or vice versa.
 	*pPixelFormat = m_PixelFormat;
+	WicHeicDiagnostic::Emit("SetPixelFormat",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod);
 	return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
+	WicHeicDiagnostic::Emit("SetColorContexts",cCount,0,m_BitmapTransform,m_HeifCompressionMethod,"metadata-rejected",E_NOTIMPL);
 	return E_NOTIMPL;
 }
 
@@ -191,6 +197,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPalette(__RPC__in_opt IWICP
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetThumbnail(__RPC__in_opt IWICBitmapSource *pIThumbnail)
 {
+	WicHeicDiagnostic::Emit("SetThumbnail",0,0,m_BitmapTransform,m_HeifCompressionMethod,pIThumbnail?"thumbnail-ignored":"none");
 	try
 	{
 		// TODO
@@ -210,6 +217,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetThumbnail(__RPC__in_opt IWI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UINT cbStride, UINT cbBufferSize, __RPC__in_ecount_full(cbBufferSize) BYTE *pbPixels)
 {
+	WicHeicDiagnostic::Emit("WritePixelsEnter",m_Width,lineCount,m_BitmapTransform,m_HeifCompressionMethod,"raster");
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
 		DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE WritePixels transform=%u compression=%u",unsigned(m_BitmapTransform),unsigned(m_HeifCompressionMethod));
 		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
@@ -254,6 +262,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
+	WicHeicDiagnostic::Emit("WriteSourceEnter",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,prc?"cropped":"full");
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
 		// A decoded RGB bitmap or a WIC flip-rotator has no HEVC bitstream to
 		// preserve. Only source frames from OUR decoder may take this path.
@@ -263,6 +272,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		HRESULT hr=pIBitmapSource->QueryInterface(
 			IID_IHeicRawSource,reinterpret_cast<void**>(&raw));
 		if(FAILED(hr)||!raw){
+			WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raster-only",WINCODEC_ERR_UNSUPPORTEDOPERATION);
 			DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE source is not an original HEIC frame");
 			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 		}
@@ -283,10 +293,12 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 				original,m_BitmapTransform);
 			m_Width=expectedW;m_Height=expectedH;
 			m_LosslessReady=true;
+			WicHeicDiagnostic::Emit("WriteSourceLossless",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raw-heif");
 			DbgLog("HEIC_WIC_LOSSLESS_READY transform=%u dimensions=%ux%u bytecount=%zu",
 				unsigned(m_BitmapTransform),expectedW,expectedH,m_LosslessBytes.size());
 			return S_OK;
 		} catch(const std::exception& ex) {
+			WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"unsupported-heif",WINCODEC_ERR_UNSUPPORTEDOPERATION);
 			DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE reason=%s",ex.what());
 			m_LosslessBytes.clear();
 			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
@@ -313,6 +325,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// Fail rather than stretch, crop unexpectedly, or leave partially filled
 	// planes when Photos passes an inconsistent SetSize/WriteSource pair.
 	if (copyW != m_Width || copyH != m_Height) {
+		WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"dimension-mismatch",E_INVALIDARG);
 		Log("WriteSource SIZE_MISMATCH src=%ux%u copy=%ux%u frame=%ux%u",
 			sourceW, sourceH, copyW, copyH, m_Width, m_Height);
 		return E_INVALIDARG;
@@ -344,11 +357,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		// CRITICAL: propagate CopyPixels HRESULT even after format conversion.
 		hr = selected->CopyPixels(prc, UINT(stride), UINT(bufferBytes), plane);
 		if (FAILED(hr)) {
+			WicHeicDiagnostic::Emit("WriteSourceCopyFailed",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raster",hr);
 			Log("WriteSource CopyPixels failed HRESULT=0x%08X", unsigned(hr));
 			return hr;
 		}
 		m_WrittenLines = m_Height;
 		m_HasPixels = true;
+		WicHeicDiagnostic::Emit("WriteSourceRaster",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raster");
 		return S_OK;
 	}
 	catch (const std::exception& ex) {
@@ -360,6 +375,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 {
+	WicHeicDiagnostic::Emit("FrameCommit",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,m_LosslessReady?"lossless":"raster");
 	if (m_LosslessReady && !m_LosslessBytes.empty()) return S_OK;
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 	if (!m_HasPixels || m_WrittenLines != m_Height) return WINCODEC_ERR_WRONGSTATE;
@@ -382,6 +398,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::GetMetadataQueryWriter(__RPC__deref_out_opt IWICMetadataQueryWriter **ppIMetadataQueryWriter)
 {
+	WicHeicDiagnostic::Emit("MetadataWriterUnavailable",0,0,m_BitmapTransform,m_HeifCompressionMethod,"metadata-rejected",E_NOTIMPL);
 	return E_NOTIMPL;
 }
 
