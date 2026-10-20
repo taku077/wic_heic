@@ -218,6 +218,47 @@ jobs:
           }
           Write-Host 'Privacy-limited WIC Photos trace start/stop passed'
 
+      - name: Reject foreign or partially configured trace registry values
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $key = 'HKCU:\Software\WicHeic'
+          $root = (Resolve-Path -LiteralPath 'diagnostics/photos_trace').Path
+          $start = Join-Path $root 'PhotosTrace_Start.ps1'
+          $state = Join-Path $root 'WIC_Photos_Trace_ACTIVE.txt'
+          if (Test-Path -LiteralPath $state) { throw 'Unexpected active trace state in CI' }
+          $existing = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+          if ($existing -and ((@($existing.PSObject.Properties.Name) -contains 'TraceFile') -or
+                             (@($existing.PSObject.Properties.Name) -contains 'TraceUntilFileTime'))) {
+            throw 'Unexpected existing trace values in fresh runner'
+          }
+          # Previously the start script overwrote this deadline, then deleted it on failure.
+          New-ItemProperty -Path $key -Name TraceUntilFileTime -PropertyType QWord -Value ([long]123456789) | Out-Null
+          try {
+            $blocked = $false
+            try { & $start | Out-Null } catch { $blocked = $true }
+            if (-not $blocked) { throw 'Start accepted an existing deadline' }
+            $still = Get-ItemProperty -Path $key
+            if ([long]$still.TraceUntilFileTime -ne 123456789) { throw 'Pre-existing deadline was changed' }
+            if (Test-Path -LiteralPath $state) { throw 'Rejected trace created state file' }
+          } finally {
+            Remove-ItemProperty -Path $key -Name TraceUntilFileTime -ErrorAction Stop
+          }
+          New-ItemProperty -Path $key -Name TraceFile -PropertyType String -Value '' | Out-Null
+          try {
+            $blocked = $false
+            try { & $start | Out-Null } catch { $blocked = $true }
+            if (-not $blocked) { throw 'Start accepted an existing empty TraceFile' }
+            $still = Get-ItemProperty -Path $key
+            if (-not (@($still.PSObject.Properties.Name) -contains 'TraceFile')) {
+              throw 'Pre-existing TraceFile value was removed'
+            }
+            if (Test-Path -LiteralPath $state) { throw 'Rejected trace created state file' }
+          } finally {
+            Remove-ItemProperty -Path $key -Name TraceFile -ErrorAction Stop
+          }
+          Write-Host 'PASS: pre-existing trace registry settings are not changed'
+
       - name: Build experimental replacement x64 MSI
         shell: pwsh
         run: |
