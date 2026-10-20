@@ -2,6 +2,7 @@
 #include "wic_heic.h"
 #include "HeicBitmapFrameEncode.h"
 #include "HeicBitmapEncoder.h"
+#include "HeicFrameOptions.h"
 #include "HeifStreamWriter.h"
 
 
@@ -132,15 +133,30 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 {
 	try
 	{
-		if (!ppIFrameEncode) {
-			return E_POINTER;
+		if (!ppIFrameEncode) return E_POINTER;
+		*ppIFrameEncode=nullptr;
+		if (ppIEncoderOptions) *ppIEncoderOptions=nullptr;
+
+		CHeicFrameOptions* opts=nullptr;
+		if (ppIEncoderOptions) {
+			opts=new(std::nothrow) CHeicFrameOptions();
+			if(!opts)return E_OUTOFMEMORY;
 		}
-
-		CHeicBitmapFrameEncode* pFrame = new CHeicBitmapFrameEncode();
-		*ppIFrameEncode = pFrame;
-
-		pFrame->AddRef();
-		m_Frames.push_back(pFrame);
+		CHeicBitmapFrameEncode* pFrame=new(std::nothrow) CHeicBitmapFrameEncode();
+		if(!pFrame) {
+			if(opts)opts->Release();
+			return E_OUTOFMEMORY;
+		}
+		try {
+			m_Frames.push_back(pFrame); // encoder keeps initial reference
+		} catch (...) {
+			pFrame->Release();
+			if(opts)opts->Release();
+			throw;
+		}
+		pFrame->AddRef(); // caller reference
+		*ppIFrameEncode=pFrame;
+		if(ppIEncoderOptions) *ppIEncoderOptions=opts;
 	}
 	catch (const heif::Error& ex)
 	{

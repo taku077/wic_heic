@@ -14,6 +14,9 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	, m_Created(false)
 	, m_HasPixels(false)
 	, m_WrittenLines(0)
+	, m_BitmapTransform(0)
+	, m_HeifCompressionMethod(0)
+	, m_OptionsInitialized(false)
 	, m_PixelFormat(GUID_WICPixelFormat24bppRGB)
 	, m_BitDepthPerChannel(8)
 {
@@ -67,6 +70,33 @@ ULONG STDMETHODCALLTYPE CHeicBitmapFrameEncode::Release(void)
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Initialize(__RPC__in_opt IPropertyBag2 *pIEncoderOptions)
 {
+	if (m_OptionsInitialized) return WINCODEC_ERR_WRONGSTATE;
+	BYTE transform=0, compression=0;
+	if (pIEncoderOptions) {
+		PROPBAG2 props[2]{};
+		props[0].pstrName=const_cast<LPOLESTR>(L"BitmapTransform");
+		props[1].pstrName=const_cast<LPOLESTR>(L"HeifCompressionMethod");
+		VARIANT values[2]{};
+		HRESULT errors[2]{};
+		HRESULT hr=pIEncoderOptions->Read(2,props,nullptr,values,errors);
+		if (FAILED(hr)) return hr;
+		for (int i=0;i<2;i++) {
+			if (SUCCEEDED(errors[i]) && values[i].vt==VT_UI1) {
+				if (i==0) transform=values[i].bVal;
+				else compression=values[i].bVal;
+			} else if (SUCCEEDED(errors[i]) && values[i].vt!=VT_EMPTY) {
+				for(auto& v:values) VariantClear(&v);
+				return DISP_E_TYPEMISMATCH;
+			}
+		}
+		for(auto& v:values) VariantClear(&v);
+	}
+	if (transform>3 || compression>2)
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	m_BitmapTransform=transform;
+	m_HeifCompressionMethod=compression;
+	m_OptionsInitialized=true;
+	DbgLog("HEIC_WIC_OPTIONS transform=%u compression=%u", unsigned(transform),unsigned(compression));
 	return S_OK;
 }
 
@@ -177,6 +207,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetThumbnail(__RPC__in_opt IWI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UINT cbStride, UINT cbBufferSize, __RPC__in_ecount_full(cbBufferSize) BYTE *pbPixels)
 {
+	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
+		DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE WritePixels transform=%u compression=%u",unsigned(m_BitmapTransform),unsigned(m_HeifCompressionMethod));
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	}
 	if (!pbPixels) return E_POINTER;
 	if (!m_Width || !m_Height || !lineCount || m_HasPixels) return WINCODEC_ERR_WRONGSTATE;
 	if (lineCount > m_Height - m_WrittenLines) return E_INVALIDARG;
@@ -217,6 +251,12 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
+	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
+		UINT w=0,h=0;
+		if(pIBitmapSource) pIBitmapSource->GetSize(&w,&h);
+		DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE WriteSource transform=%u compression=%u src=%ux%u frame=%ux%u",unsigned(m_BitmapTransform),unsigned(m_HeifCompressionMethod),w,h,m_Width,m_Height);
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	}
 	if (!pIBitmapSource) return E_POINTER;
 	if (!m_Width || !m_Height || m_Created || m_HasPixels || m_WrittenLines)
 		return WINCODEC_ERR_WRONGSTATE;
@@ -285,6 +325,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 {
+	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 	if (!m_HasPixels || m_WrittenLines != m_Height) return WINCODEC_ERR_WRONGSTATE;
 	try
 	{

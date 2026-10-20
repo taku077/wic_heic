@@ -13,6 +13,9 @@ private:
 	bool m_Created;
 	bool m_HasPixels;
 	UINT m_WrittenLines;
+	BYTE m_BitmapTransform;
+	BYTE m_HeifCompressionMethod;
+	bool m_OptionsInitialized;
 	WICPixelFormatGUID m_PixelFormat;
 	int m_BitDepthPerChannel;
 
