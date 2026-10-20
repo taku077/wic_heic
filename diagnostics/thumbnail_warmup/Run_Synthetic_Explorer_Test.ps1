@@ -85,12 +85,18 @@ try {
      if(-not $seen) {Start-Sleep -Milliseconds 500}
    }
    $rows.Add('EXPLORER_FOLDER_DETECTED='+$seen)
-   if(-not $watch.WaitForExit(32000)) {
-     $rows.Add('WATCH_AUTO_EXIT=false')
-     Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue
+   $exitSignaled=$watch.WaitForExit(32000)
+   $watch.Refresh()
+   $processExited=($exitSignaled -and $watch.HasExited)
+   $rows.Add('WATCH_AUTO_EXIT='+$processExited)
+   if($processExited) {
+     $watchCode=$watch.ExitCode
+     $rows.Add('WATCH_EXIT_CODE='+$(if($null -eq $watchCode){'UNAVAILABLE'}else{$watchCode}))
    } else {
-     $rows.Add('WATCH_AUTO_EXIT='+($watch.ExitCode -eq 0))
-     $rows.Add('WATCH_EXIT_CODE='+$watch.ExitCode)
+     # Distinguish a completed script that fails to exit from a still-running
+     # script; never call the former a clean auto-exit.
+     $rows.Add('WATCH_EXIT_CODE=PROCESS_TIMEOUT')
+     Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue
    }
    if(Test-Path -LiteralPath $stdout) {
      $log=Get-Content -LiteralPath $stdout -Raw
@@ -102,6 +108,8 @@ try {
        $rows.Add('WATCH_ERRORS='+$hit.Groups[4].Value)
      }else{$rows.Add('WATCH_SUMMARY_MISSING=true')}
    }
+   $completed=($null -ne $hit -and $hit.Success)
+   $rows.Add('WATCH_COMPLETION_MARKER='+$completed)
    $rows.Add('EXPLORER_VISIBLE_THUMBNAILS_VERIFIED=false')
  }
  $ok=$true

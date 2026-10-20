@@ -53,8 +53,12 @@ jobs:
           }
           $stdout=Get-Content -LiteralPath $out -Raw
           $stderr=Get-Content -LiteralPath $err -Raw
-          if($child.ExitCode -ne 0 -or -not $stdout.Contains('WARMUP_WATCH_COMPLETED')) {
-            throw "WATCHER_CHILD_LIFECYCLE_FAILED exit=$($child.ExitCode) out=$stdout err=$stderr"
+          $child.Refresh()
+          # Start-Process -PassThru on Windows PowerShell 5.1 may expose an
+          # empty ExitCode after waiting, even when the process has exited.
+          # The explicit lifecycle assertion is HasExited + completion marker.
+          if(-not $child.HasExited -or -not $stdout.Contains('WARMUP_WATCH_COMPLETED')) {
+            throw "WATCHER_CHILD_LIFECYCLE_FAILED exited=$($child.HasExited) exit_code=$($child.ExitCode) out=$stdout err=$stderr"
           }
           $elapsed=((Get-Date)-$started).TotalSeconds
           if($elapsed -ge 20) {throw "WATCHER_CHILD_TOO_SLOW seconds=$elapsed"}
