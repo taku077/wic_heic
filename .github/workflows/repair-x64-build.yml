@@ -10,6 +10,7 @@ on:
       - feature/wic-heif-encoder-options
       - feature/lossless-wic-native
       - feature/wic-lossless-source-transfer
+      - diagnostic/photos-wic-calltrace
       - fix/encoder-geometry-failsafe
   workflow_dispatch:
 
@@ -153,8 +154,26 @@ jobs:
           try {
             Push-Location -LiteralPath 'wictest'
             try {
-              & $testExe
-              if ($LASTEXITCODE -ne 0) { throw "Native WIC sample conversion test failed: $LASTEXITCODE" }
+              # Explicit opt-in, local test log only. The DLL never reads image
+              # content into the trace or logs private names/paths.
+              $trace = Join-Path (Get-Location).Path 'WIC_PhotosTrace_CI.txt'
+              $env:WIC_HEIC_TRACE_FILE = $trace
+              try {
+                & $testExe
+                if ($LASTEXITCODE -ne 0) { throw "Native WIC sample conversion test failed: $LASTEXITCODE" }
+              }
+              finally {
+                Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+              }
+              if (-not (Test-Path -LiteralPath $trace)) { throw 'WIC opt-in trace was not produced' }
+              $events = Get-Content -LiteralPath $trace
+              foreach ($required in @('FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed')) {
+                if (-not ($events | Where-Object { $_ -like "*event=$required *" })) { throw "Missing expected diagnostic event: $required" }
+              }
+              if ($events -match '(?i)\\samples\\|[A-Z]:\\|\.heic|\.jpg|\.png|GPS|EXIF|maker.?note') {
+                throw 'Sensitive file-identifying content leaked into WIC trace'
+              }
+              Write-Host "WIC opt-in trace passed; event lines=$($events.Count); no paths or image metadata"
             }
             finally {
               Pop-Location
