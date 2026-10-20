@@ -114,6 +114,28 @@ inline bool HasCdsc(const Bytes& b,const Box& iref,uint32_t exifId,uint32_t prim
     }
     return false;
 }
+// A preserved but unrotated thumbnail or HDR auxiliary picture could render
+// in a different orientation than the transformed primary image. Fail closed
+// until all related image properties can be changed coherently.
+inline bool HasUnadjustedLinkedVisualImage(
+    const Bytes& b,const Box& iref,uint32_t primary)
+{
+    const uint32_t version=uint32_t(Read(b,iref.data,1));
+    if(version>1)Bad("Unsupported iref version");
+    const size_t width=version?4:2;
+    for(const auto& e:Children(b,iref.data+4,iref.end)){
+        if(e.type!="thmb" && e.type!="auxl")continue;
+        size_t p=e.data;
+        uint32_t from=uint32_t(Read(b,p,width));p+=width;
+        uint32_t count=uint32_t(Read(b,p,2));p+=2;
+        if(p+uint64_t(count)*width!=e.end)Bad("Invalid thumbnail/auxiliary references");
+        if(from==primary)return true;
+        for(uint32_t i=0;i<count;i++)
+            if(Read(b,p+i*width,width)==primary)return true;
+    }
+    return false;
+}
+
 inline std::pair<size_t,size_t> ExifRange(const Bytes& b,const Box& iloc,const Box* idat,uint32_t wanted) {
     size_t p=iloc.data;
     uint32_t version=uint32_t(Read(b,p,1));
@@ -224,6 +246,8 @@ inline Bytes Transform(const Bytes& original,uint8_t transform) {
     out[irot.data]=uint8_t((old+4-transform)%4);
     std::vector<Patch> exifPatches;
     Box iinf=One(m,"iinf"),iref=One(m,"iref"),iloc=One(m,"iloc");
+    if(HasUnadjustedLinkedVisualImage(original,iref,primary))
+        Bad("Thumbnail/HDR auxiliary image rotation not yet supported");
     const auto exifs=ExifIDs(original,iinf);
     uint32_t exifId=0;
     for(uint32_t id:exifs)if(HasCdsc(original,iref,id,primary)){
