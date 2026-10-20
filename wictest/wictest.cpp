@@ -365,6 +365,7 @@ int main()
 		// Measure performance after the bounded diagnostic feature tests: do not consume
 		// the 2 MiB WIC trace budget before checking lossless rotation events.
 		ThumbnailPerformanceProbe::Run();
+		ThumbnailPerformanceProbe::RunDecodeIsolation();
 		ShellPreloadProbe::Run();
 	}
 	catch (const std::exception& ex)

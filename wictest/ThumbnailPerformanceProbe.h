@@ -103,6 +103,61 @@ inline Stats Measure(IWICImagingFactory* factory, const wchar_t* path, int n) {
     }
     return result;
 }
+// Isolate the first HEVC decode from WIC scaler/format-converter cost.
+// Reuse an individual frame only for the second CopyPixels, so the second
+// read must not trigger a second HEVC decode. The actual WIC pixel format
+// is respected; synthetic input only and no output images are written.
+struct CopyPixelsTimes {
+    std::vector<double> first, second;
+};
+inline CopyPixelsTimes MeasurePrimaryDecode(IWICImagingFactory* factory,
+                                             const wchar_t* path, int n) {
+    CopyPixelsTimes result;
+    for(int run=0;run<n;++run) {
+        CComPtr<IWICBitmapDecoder> decoder;
+        Check(factory->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand,&decoder),"copyperf open");
+        CComPtr<IWICBitmapFrameDecode> frame;
+        Check(decoder->GetFrame(0,&frame),"copyperf frame");
+        UINT width=0,height=0;
+        GUID pixelFormat{};
+        Check(frame->GetSize(&width,&height),"copyperf size");
+        Check(frame->GetPixelFormat(&pixelFormat),"copyperf format");
+        if(!width || !height)throw std::runtime_error("copyperf empty image");
+        const UINT bytesPerPixel=
+            IsEqualGUID(pixelFormat,GUID_WICPixelFormat48bppRGB)?6u:
+            IsEqualGUID(pixelFormat,GUID_WICPixelFormat64bppRGBA)?8u:
+            IsEqualGUID(pixelFormat,GUID_WICPixelFormat24bppRGB)?3u:
+            IsEqualGUID(pixelFormat,GUID_WICPixelFormat32bppRGBA)?4u:0u;
+        if(!bytesPerPixel)throw std::runtime_error("copyperf unexpected native WIC format");
+        const uint64_t stride64=uint64_t(width)*bytesPerPixel;
+        if(stride64>8u*1024u*1024u)throw std::runtime_error("copyperf oversized row");
+        const UINT stride=UINT(stride64);
+        std::vector<BYTE> row(stride), checkRow(stride);
+        WICRect rc{0,0,int(width),1};
+        const auto start=Clock::now();
+        Check(frame->CopyPixels(&rc,stride,stride,row.data()),"copyperf first pixel");
+        const auto firstDone=Clock::now();
+        Check(frame->CopyPixels(&rc,stride,stride,checkRow.data()),"copyperf cached pixel");
+        const auto secondDone=Clock::now();
+        if(row!=checkRow)throw std::runtime_error("copyperf first and cached row mismatch");
+        result.first.push_back(Millis(start,firstDone));
+        result.second.push_back(Millis(firstDone,secondDone));
+    }
+    return result;
+}
+inline void RunDecodeIsolation() {
+    CComPtr<IWICImagingFactory> factory;
+    Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
+        IID_IWICImagingFactory,(void**)&factory),"copyperf WIC factory");
+    constexpr int iterations=10;
+    const auto result=MeasurePrimaryDecode(factory,
+        L"samples\\fixture-irot3-exif6-noaux.heic",iterations);
+    printf("HEIC_PRIMARY_WIC_COPYPIXELS_MEASURED samples=%d first_median_ms=%.3f cached_median_ms=%.3f\n",
+        iterations,Median(result.first),Median(result.second));
+    // Must not claim a win from time measurements alone; this is a baseline.
+    printf("HEIC_PRIMARY_DECODE_BASELINE_ONLY_NO_SPEEDUP_CLAIM\n");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
