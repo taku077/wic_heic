@@ -1,0 +1,38 @@
+name: HEIC isolated Shell thumbnail handler compile safety
+
+on:
+  push:
+    branches: [diagnostic/photos-wic-calltrace]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-provider-build:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Verify PowerShell 5.1 isolated registry script grammar
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $file='diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1'
+          $t=$null
+          $e=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath $file).Path,[ref]$t,[ref]$e)
+          if($e.Count -gt 0){throw ('PowerShell isolated trial parse error: '+($e -join '; '))}
+          Write-Host 'SHELL_TRIAL_POWERSHELL_5_1_PARSE_PASSED'
+      - name: Build standalone unregistered x64 Shell provider COM DLL
+        shell: pwsh
+        run: |
+          msbuild wictest/isolated_shell/HeicShellTrial.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Isolated provider compilation failed'}
+          $dll='wictest/isolated_shell/(Build)/x64/Release/WicHeicIsolatedThumbTrial.dll'
+          if(-not (Test-Path -LiteralPath $dll)){throw 'Isolated provider DLL missing'}
+          Write-Host 'SHELL_TRIAL_STANDALONE_DLL_BUILD_PASSED'
