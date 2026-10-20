@@ -63,7 +63,7 @@ inline void Run() {
     H(frame->SetPixelFormat(&format),"pixel format");
     CComPtr<IWICBitmapFrameDecode> source;
     CComPtr<IWICBitmapDecoder> decoder;
-    H(fac->CreateDecoderFromFilename(L"samples\\03.heic",nullptr,GENERIC_READ,
+    H(fac->CreateDecoderFromFilename(L"samples\\01.png",nullptr,GENERIC_READ,
         WICDecodeMetadataCacheOnDemand,&decoder),"input decoder");
     H(decoder->GetFrame(0,&source),"input frame");
     HRESULT hr=frame->WriteSource(source,nullptr);
