@@ -1,0 +1,39 @@
+name: HEIC Explorer warmup - Windows PowerShell 5.1 preflight
+
+on:
+  push:
+    branches:
+      - diagnostic/photos-wic-calltrace
+  workflow_dispatch:
+
+jobs:
+  ps51-parse-and-interop:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate script grammar and Shell interop on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5) { throw 'PS5.1 required for this smoke test' }
+          foreach($file in @(
+            'diagnostics/thumbnail_warmup/Explorer_HEIC_Warmup.ps1',
+            'diagnostics/thumbnail_warmup/Run_Synthetic_Explorer_Test.ps1'
+          )) {
+            $tokens=$null
+            $errors=$null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path -LiteralPath $file).Path,
+              [ref]$tokens,[ref]$errors
+            )
+            if($errors.Count -gt 0) {
+              $messages=($errors | ForEach-Object { $_.ToString() }) -join '; '
+              throw "PowerShell 5.1 syntax invalid in $file : $messages"
+            }
+          }
+          $result=@(& ./diagnostics/thumbnail_warmup/Explorer_HEIC_Warmup.ps1 -Mode SelfTest)
+          if(-not ($result -match 'WARMUP_SELFTEST_PASSED')) {
+            throw 'Native Shell cache interop did not compile on PowerShell 5.1'
+          }
+          Write-Host 'WIN10_POWERSHELL_5_1_PARSE_AND_NATIVE_INTEROP_PASSED'
