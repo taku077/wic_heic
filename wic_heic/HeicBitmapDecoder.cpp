@@ -2,6 +2,7 @@
 #include "wic_heic.h"
 #include "HeifStreamReader.h"
 #include "HeicBitmapDecoder.h"
+#include "PhotosWicTrace.h"
 #include "HeicBitmapFrameDecode.h"
 
 CHeicBitmapDecoder::CHeicBitmapDecoder()
@@ -80,6 +81,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::QueryCapability(__RPC__in_opt IStr
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *pIStream, WICDecodeOptions cacheOptions)
 {
+	WicHeicDiagnostic::Emit("DecoderOpen",0,0,0,0,pIStream?"stream":"null");
 	// https://github.com/strukturag/libheif/issues/83
 	try
 	{
@@ -275,6 +277,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrameCount(__RPC__out UINT *pCo
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_out_opt IWICBitmapFrameDecode **ppIBitmapFrame)
 {
+	WicHeicDiagnostic::Emit("DecoderGetFrame",index,0);
 	try
 	{
 		DbgLog("GetFrame: %d", index);

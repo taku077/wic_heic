@@ -4,6 +4,7 @@
 #include "HeicBitmapDecoder.h"
 #include "HeicBitmapFrameDecode.h"
 #include "HeicMetadataBlockReader.h"
+#include "PhotosWicTrace.h"
 
 CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle)
 	: m_Count(1)
@@ -144,6 +145,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetSize(__RPC__out UINT *puiWi
 
 	*puiWidth = static_cast<UINT>(m_Handle.get_width());
 	*puiHeight = static_cast<UINT>(m_Handle.get_height());
+	WicHeicDiagnostic::Emit("DecoderFrameGetSize",*puiWidth,*puiHeight,0,0,m_Handle.is_primary_image()?"primary":"auxiliary");
 
 	return S_OK;
 }
@@ -183,6 +185,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPalette(__RPC__in_opt IWIC
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const WICRect *prc, UINT cbStride, UINT cbBufferSize, __RPC__out_ecount_full(cbBufferSize) BYTE *pbBuffer)
 {
+	WicHeicDiagnostic::Emit("DecoderCopyPixels",prc?UINT(prc->Width):UINT(m_Handle.get_width()),prc?UINT(prc->Height):UINT(m_Handle.get_height()),0,0,prc?"region":"full");
 	DbgLog("%s: (prc=%p, cbStride=%u, cbBufferSize=%u, pbBuffer=%p)", __FUNCTION__, prc, cbStride, cbBufferSize, pbBuffer);
 
 	try
@@ -240,6 +243,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__deref_out_opt IWICMetadataQueryReader **ppIMetadataQueryReader)
 {
+	WicHeicDiagnostic::Emit("DecoderMetadataQuery");
 	DbgLog("%s", __FUNCTION__);
 
 	if (!ppIMetadataQueryReader) {
@@ -346,6 +350,7 @@ void CHeicBitmapFrameDecode::DecodeImage()
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::ReadFullContent(
     std::vector<uint8_t>* content)
 {
+	WicHeicDiagnostic::Emit("DecoderRawSourceRequested");
     if(!content)return E_POINTER;
     // Reading an auxiliary frame must never re-encode/rotate the primary item.
     // Only the actual primary image can expose the original full HEIF bytes.

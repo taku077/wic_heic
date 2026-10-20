@@ -56,6 +56,11 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
         FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL,nullptr);
     if(h==INVALID_HANDLE_VALUE)return;
+    LARGE_INTEGER length{};
+    if(!GetFileSizeEx(h,&length) || length.QuadPart >= 2*1024*1024){
+        CloseHandle(h);
+        return;
+    }
     char line[384]{};
     // All string parameters MUST be trusted fixed literals from this DLL.
     const int n=sprintf_s(line,sizeof(line),
