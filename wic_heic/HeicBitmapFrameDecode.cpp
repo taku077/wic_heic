@@ -347,6 +347,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::ReadFullContent(
     std::vector<uint8_t>* content)
 {
     if(!content)return E_POINTER;
-    if(!m_pDecoder)return WINCODEC_ERR_WRONGSTATE;
+    // Reading an auxiliary frame must never re-encode/rotate the primary item.
+    // Only the actual primary image can expose the original full HEIF bytes.
+    if(!m_pDecoder || m_Handle.empty())return WINCODEC_ERR_WRONGSTATE;
+    if(!m_Handle.is_primary_image())return WINCODEC_ERR_UNSUPPORTEDOPERATION;
     return m_pDecoder->CopyOriginalBytes(*content);
 }

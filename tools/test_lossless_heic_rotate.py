@@ -50,6 +50,13 @@ fixtureOutput=Path("wictest/samples/fixture-lossless-cw90.heic")
 assert not fixtureOutput.exists(), "Never overwrite existing fixture"
 rotated,_=transform(before)
 write_new(fixtureOutput,rotated)
+rotation180,_=transform(rotated)
+rotation270,_=transform(rotation180)
+for label,contents in (("cw180",rotation180),("cw270",rotation270)):
+    new_path=Path("wictest/samples/fixture-lossless-"+label+".heic")
+    assert not new_path.exists(), "Never overwrite existing fixture"
+    write_new(new_path,contents)
+    print("LOSSLESS_HEIC_OUTPUT_READY_FOR_WIC="+str(new_path))
 print("LOSSLESS_HEIC_OUTPUT_READY_FOR_WIC="+str(fixtureOutput))
 print("LOSSLESS_HEIC_FOUR_ROTATION_TEST_PASSED",steps)
 print("LOSSLESS_HEIC_SOURCE_UNCHANGED SHA256="+h)

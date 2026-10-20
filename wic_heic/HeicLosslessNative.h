@@ -216,6 +216,14 @@ inline Bytes Transform(const Bytes& original,uint8_t transform) {
     if(transform==0)return out;
     const auto top=Children(original,0,original.size());
     const Box ftyp=One(top,"ftyp"),meta=One(top,"meta");
+    if (ftyp.end-ftyp.data < 8) Bad("Truncated HEIF brand information");
+    const uint64_t majorBrand=Read(original,ftyp.data,4);
+    bool supported=(majorBrand==0x68656963 || majorBrand==0x68656978); // heic/heix
+    for (size_t offset=ftyp.data+8;offset+4<=ftyp.end;offset+=4) {
+        uint64_t brand=Read(original,offset,4);
+        if (brand==0x68656963 || brand==0x68656978) supported=true;
+    }
+    if(!supported)Bad("Unsupported non-HEIC HEIF brand");
     const auto m=Children(original,meta.data+4,meta.end);
     const auto iprp=One(m,"iprp"),pitm=One(m,"pitm");
     (void)pitm;
