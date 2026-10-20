@@ -153,7 +153,7 @@ try {
  # Shell host isolation stays ON: no DisableProcessIsolation key/value.
  $key=Open-NewRegistryKey ('Software\Classes\CLSID\'+$providerId+'\InprocServer32')
  $key.SetValue('',$dll,[Microsoft.Win32.RegistryValueKind]::String)
- $key.SetValue('ThreadingModel','Both',[Microsoft.Win32.RegistryValueKind]::String)
+ $key.SetValue('ThreadingModel','Apartment',[Microsoft.Win32.RegistryValueKind]::String)
  $key.Close()
  $registered+=('Software\Classes\CLSID\'+$providerId)
  $key=Open-NewRegistryKey ('Software\Classes\'+$progid+'\ShellEx\'+$handlerId)
