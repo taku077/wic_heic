@@ -2,6 +2,7 @@
 #include "wic_heic.h"
 #include "HeicBitmapFrameEncode.h"
 #include "HeicBitmapEncoder.h"
+#include <stdexcept>
 
 
 CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
@@ -247,12 +248,15 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	hr = pIBitmapSource->GetPixelFormat(&sourceFormat);
 	if (FAILED(hr)) return hr;
 
-	CComPtr<IWICBitmapSource> converted;
+	struct AutoReleaseSource {
+		IWICBitmapSource* p = nullptr;
+		~AutoReleaseSource() { if (p) p->Release(); }
+	} converted;
 	IWICBitmapSource* selected = pIBitmapSource;
 	if (!IsEqualGUID(sourceFormat, m_PixelFormat)) {
-		hr = WICConvertBitmapSource(m_PixelFormat, pIBitmapSource, &converted);
+		hr = WICConvertBitmapSource(m_PixelFormat, pIBitmapSource, &converted.p);
 		if (FAILED(hr)) return hr;
-		selected = converted;
+		selected = converted.p;
 	}
 
 	try {
