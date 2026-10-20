@@ -173,6 +173,14 @@ jobs:
               if ($events -match '(?i)\\samples\\|[A-Z]:\\|\.heic|\.jpg|\.png|GPS|EXIF|maker.?note') {
                 throw 'Sensitive file-identifying content leaked into WIC trace'
               }
+              $analyzer = Join-Path (Resolve-Path -LiteralPath '../diagnostics/photos_trace').Path 'PhotosTrace_Analyze.ps1'
+              & $analyzer -TracePath $trace
+              $summary = Get-ChildItem -LiteralPath '../diagnostics/photos_trace' -Filter 'WIC_Photos_Trace_Summary_*.txt' -File | Select-Object -First 1
+              if (-not $summary) { throw 'WIC trace analyzer did not save a summary' }
+              $body = Get-Content -LiteralPath $summary.FullName -Raw
+              if ($body -notmatch 'EncoderCommitLossless=' -or $body -notmatch 'EncoderCommitRecompressed=') {
+                throw 'WIC trace analyzer omitted required summary fields'
+              }
               Write-Host "WIC opt-in trace passed; event lines=$($events.Count); no paths or image metadata"
             }
             finally {
