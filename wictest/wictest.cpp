@@ -366,6 +366,7 @@ int main()
 		// the 2 MiB WIC trace budget before checking lossless rotation events.
 		ThumbnailPerformanceProbe::Run();
 		ThumbnailPerformanceProbe::RunDecodeIsolation();
+		ThumbnailPerformanceProbe::RunOpenPathBenchmark();
 		ShellPreloadProbe::Run();
 	}
 	catch (const std::exception& ex)

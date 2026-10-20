@@ -98,7 +98,20 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
 		// STATFLAG_DEFAULT call allocates pwcsName and costs extra COM/FS
 		// work; the stream reader already obtains its size with NONAME.
 		m_Reader = new CHeifStreamReader(pIStream);
+		LARGE_INTEGER counterFrequency{},before{},after{};
+		QueryPerformanceFrequency(&counterFrequency);
+		QueryPerformanceCounter(&before);
 		m_Context.read_from_reader(*m_Reader);
+		QueryPerformanceCounter(&after);
+		// Diagnostic opt-in only. Numeric microseconds, never image contents
+		// or paths. Investigates slow Explorer cold-thumbnail initialization.
+		if(counterFrequency.QuadPart>0 && after.QuadPart>=before.QuadPart) {
+			const uint64_t elapsedUs=
+				uint64_t(after.QuadPart-before.QuadPart)*1000000ull/
+				uint64_t(counterFrequency.QuadPart);
+			WicHeicDiagnostic::Emit("DecoderContextReadUs",
+				UINT((std::min)(elapsedUs,uint64_t(0xFFFFFFFFu))),0,0,0,"microseconds");
+		}
 	}
 	catch (const heif::Error& ex)
 	{

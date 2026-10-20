@@ -146,6 +146,48 @@ inline CopyPixelsTimes MeasurePrimaryDecode(IWICImagingFactory* factory,
     }
     return result;
 }
+// Compare WIC's automatic decoder discovery with a direct HEIC WIC
+// decoder using the SAME registered codec and synthetic file. The direct
+// path avoids repeated WIC format discovery, but is only diagnostic:
+// Explorer normally chooses automatic discovery and cannot be claimed fast.
+inline void RunOpenPathBenchmark() {
+    CComPtr<IWICImagingFactory> factory;
+    Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
+         IID_IWICImagingFactory,(void**)&factory),"openpath WIC factory");
+    constexpr const wchar_t* file=L"samples\\fixture-irot3-exif6-noaux.heic";
+    constexpr int iterations=10;
+    std::vector<double> automatic, explicitCodec;
+    for(int i=0;i<iterations;++i) {
+        // Interleave order to reduce order-dependent OS file cache effects.
+        for(int mode=0;mode<2;++mode) {
+            const bool isDirect=((mode + i)%2)==1;
+            const auto started=Clock::now();
+            CComPtr<IWICBitmapDecoder> decoder;
+            if(isDirect) {
+                CComPtr<IWICStream> stream;
+                Check(factory->CreateStream(&stream),"openpath create stream");
+                Check(stream->InitializeFromFilename(file,GENERIC_READ),"openpath stream file");
+                Check(factory->CreateDecoder(GUID_ContainerFormatHEIC,
+                    &GUID_VendorPrsyahmi,&decoder),"openpath codec create");
+                Check(decoder->Initialize(stream,WICDecodeMetadataCacheOnDemand),
+                    "openpath direct initialize");
+            } else {
+                Check(factory->CreateDecoderFromFilename(file,nullptr,GENERIC_READ,
+                    WICDecodeMetadataCacheOnDemand,&decoder),
+                    "openpath automatic initialize");
+            }
+            const auto completed=Clock::now();
+            UINT frames=0;
+            Check(decoder->GetFrameCount(&frames),"openpath frame count");
+            if(!frames)throw std::runtime_error("openpath HEIC image missing");
+            if(isDirect) explicitCodec.push_back(Millis(started,completed));
+            else automatic.push_back(Millis(started,completed));
+        }
+    }
+    printf("HEIC_WIC_OPEN_PATHS_MEASURED samples=%d automatic_median_ms=%.3f direct_median_ms=%.3f\n",
+        iterations,Median(automatic),Median(explicitCodec));
+    printf("HEIC_WIC_OPEN_PATH_DIAGNOSTIC_ONLY_NOT_EXPLORER_PARITY\n");
+}
 inline void RunDecodeIsolation() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
