@@ -221,6 +221,19 @@ jobs:
                   throw "One-click synthetic summary incomplete: $($oneSummary -join ',')"
                 }
                 Write-Host 'EXPLORER_ONECLICK_SYNTHETIC_SELFTEST_PASSED'
+                # User's Windows 10 ships Windows PowerShell 5.1, not
+                # necessarily PowerShell 7. Test the actual target runtime.
+                $ps51=Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe'
+                $ps51Out=Join-Path $env:RUNNER_TEMP 'heic-warmup-ps51-stdout.txt'
+                $ps51Err=Join-Path $env:RUNNER_TEMP 'heic-warmup-ps51-stderr.txt'
+                $ps51Args='-NoProfile -ExecutionPolicy Bypass -File "'+$oneClick+'" -Mode SelfTest -FixturePath "'+$source+'"'
+                $ps51Run=Start-Process -FilePath $ps51 -ArgumentList $ps51Args -Wait -PassThru -RedirectStandardOutput $ps51Out -RedirectStandardError $ps51Err
+                $ps51Lines=Get-Content -LiteralPath $ps51Out
+                if($ps51Run.ExitCode -ne 0 -or -not ($ps51Lines -match 'TEST_STATUS=RECORDED')) {
+                  throw "Windows PowerShell 5.1 one-click synthetic test failed: $($ps51Lines -join ',')"
+                }
+                Write-Host 'EXPLORER_ONECLICK_POWERSHELL_5_1_PASSED'
+
 
               } finally {
                 Remove-Item -LiteralPath $warmFolder -Recurse -Force -ErrorAction SilentlyContinue
