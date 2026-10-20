@@ -71,12 +71,35 @@ namespace TrialShell {
    [MarshalAs(UnmanagedType.Interface)]out ISharedBitmap bitmap,
    out uint cacheFlags,out ThumbId id);
  }
+ public sealed class ThumbnailStatus {
+   public int HResult;
+   public bool HasBitmap;
+   public uint CacheFlags;
+ }
  public static class Shell {
-  // QueryInterface must be performed in strongly typed C# rather than
-  // PowerShell's direct System.__ComObject -> interface conversion.
-  public static IThumbnailCache OpenThumbnailCache() {
+  // Keep COM invocation and out-interface marshalling entirely inside C#.
+  // PowerShell treats imported interfaces as System.__ComObject and cannot
+  // reliably dispatch GetThumbnail or cast to a ComImport interface.
+  public static ThumbnailStatus GetSyntheticThumbnail(string file,bool cacheOnly) {
     Guid clsid=new Guid("50EF4544-AC9F-4A8E-B21B-8A26180DB13F");
-    return (IThumbnailCache)Activator.CreateInstance(Type.GetTypeFromCLSID(clsid,true));
+    Guid iid=new Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE");
+    IThumbnailCache cache=null;
+    IShellItem item=null;
+    ISharedBitmap bitmap=null;
+    try {
+      cache=(IThumbnailCache)Activator.CreateInstance(Type.GetTypeFromCLSID(clsid,true));
+      int hr=SHCreateItemFromParsingName(file,IntPtr.Zero,ref iid,out item);
+      if(hr<0) return new ThumbnailStatus{HResult=hr};
+      uint flags=0;
+      ThumbId thumbId;
+      hr=cache.GetThumbnail(item,256,cacheOnly?1u:0u,
+                            out bitmap,out flags,out thumbId);
+      return new ThumbnailStatus{HResult=hr,HasBitmap=(bitmap!=null),CacheFlags=flags};
+    } finally {
+      if(bitmap!=null)Marshal.ReleaseComObject(bitmap);
+      if(item!=null)Marshal.ReleaseComObject(item);
+      if(cache!=null)Marshal.ReleaseComObject(cache);
+    }
   }
   [DllImport("shell32.dll",CharSet=CharSet.Unicode)]
   public static extern int SHCreateItemFromParsingName(
@@ -117,45 +140,26 @@ try {
  $key.Close()
  $registered+=('Software\WicHeicSyntheticTrial\'+$providerId)
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
- # Force unprivileged Shell interfaces to discover the ephemeral extension.
- $iid=[Guid]::Parse('43826D1E-E718-42EE-BC55-A1E261C37BFE')
- $factory=[TrialShell.Shell]::OpenThumbnailCache()
- $item=$null
- $bitmap=$null
- try {
-   $hr=[TrialShell.Shell]::SHCreateItemFromParsingName($file,[IntPtr]::Zero,
-                                                        [ref]$iid,[ref]$item)
-   if($hr -lt 0 -or $null -eq $item){throw ('Shell item failed: 0x{0:X8}' -f [uint32]$hr)}
-   $cache=$factory
-   $flags=[uint32]0
-   $id=New-Object TrialShell.ThumbId
-   $timer=[Diagnostics.Stopwatch]::StartNew()
-   $hr=$cache.GetThumbnail($item,[uint32]256,[uint32]0,
-                            [ref]$bitmap,[ref]$flags,[ref]$id)
-   $timer.Stop()
-   if($hr -lt 0 -or $null -eq $bitmap) {
-     throw ('Shell thumbnail extraction rejected synthetic association: 0x{0:X8}' -f [uint32]$hr)
-   }
-   Release-Com $bitmap;$bitmap=$null
-   $verifyFlags=[uint32]0
-   $verifyId=New-Object TrialShell.ThumbId
-   $hr=$cache.GetThumbnail($item,[uint32]256,[uint32]1,
-                            [ref]$bitmap,[ref]$verifyFlags,[ref]$verifyId)
-   if($hr -lt 0 -or $null -eq $bitmap) {throw 'Shell cache-only revisit did not find generated thumbnail'}
-   $regKey=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
-   try { $calls=[int]$regKey.GetValue('Calls',0) } finally { $regKey.Close() }
-   if($calls -lt 1) {
-     throw 'Shell generated a thumbnail but never invoked the isolated provider DLL'
-   }
-   Write-Host ('HEIC_SHELL_ISOLATED_PROVIDER_CALLED='+$calls)
-   Write-Host ('HEIC_SHELL_ISOLATED_THUMBNAIL_MS='+[Math]::Round($timer.Elapsed.TotalMilliseconds,2))
-   Write-Host 'HEIC_SHELL_ISOLATED_CACHE_REVISIT_PASSED'
-   $registeredOk=$true
- } finally {
-   Release-Com $bitmap
-   Release-Com $item
-   Release-Com $factory
+ # Exercise the registered handler through actual Windows IThumbnailCache.
+ $timer=[Diagnostics.Stopwatch]::StartNew()
+ $first=[TrialShell.Shell]::GetSyntheticThumbnail($file,$false)
+ $timer.Stop()
+ if($first.HResult -lt 0 -or -not $first.HasBitmap) {
+   throw ('Shell thumbnail extraction failed for synthetic association: 0x{0:X8}' -f [uint32]$first.HResult)
  }
+ $again=[TrialShell.Shell]::GetSyntheticThumbnail($file,$true)
+ if($again.HResult -lt 0 -or -not $again.HasBitmap) {
+   throw 'Shell cache-only revisit did not find generated thumbnail'
+ }
+ $regKey=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
+ try { $calls=[int]$regKey.GetValue('Calls',0) } finally { $regKey.Close() }
+ if($calls -lt 1) {
+   throw 'Shell generated a thumbnail but never invoked the isolated provider DLL'
+ }
+ Write-Host ('HEIC_SHELL_ISOLATED_PROVIDER_CALLED='+$calls)
+ Write-Host ('HEIC_SHELL_ISOLATED_THUMBNAIL_MS='+[Math]::Round($timer.Elapsed.TotalMilliseconds,2))
+ Write-Host 'HEIC_SHELL_ISOLATED_CACHE_REVISIT_PASSED'
+ $registeredOk=$true
 } finally {
  # Always remove only newly-owned isolated CLSID/ProgID/extension keys;
  # the actual WIC codec registration is managed by the separate CI step.
