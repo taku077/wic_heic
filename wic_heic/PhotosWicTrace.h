@@ -44,7 +44,18 @@ inline bool TracePath(wchar_t (&out)[512]) {
         L"TraceFile",RRF_RT_REG_SZ,nullptr,out,&cb);
     if(rc!=ERROR_SUCCESS)return false;
     out[511]=0;
-    return ApprovedLocalPath(out);
+    if(!ApprovedLocalPath(out))return false;
+    // HKCU tracing expires automatically; a forgotten Stop command
+    // can never leave persistent photo-edit diagnostics active.
+    ULONGLONG deadline=0;
+    DWORD nDeadline=sizeof(deadline);
+    if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\WicHeic",
+        L"TraceUntilFileTime",RRF_RT_REG_QWORD,nullptr,
+        &deadline,&nDeadline)!=ERROR_SUCCESS)return false;
+    FILETIME now{};
+    GetSystemTimeAsFileTime(&now);
+    const ULONGLONG now64=(ULONGLONG(now.dwHighDateTime)<<32)|now.dwLowDateTime;
+    return deadline>now64;
 }
 inline void Emit(const char* event,UINT width=0,UINT height=0,
                  BYTE transform=0,BYTE compression=0,
