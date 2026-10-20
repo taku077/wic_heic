@@ -11,6 +11,7 @@
 #include "WICLosslessRotationProbe.h"
 #include "WICHeifOptionsProbe.h"
 #include "NativeLosslessProbe.h"
+#include "WICDirectLosslessProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -327,6 +328,7 @@ int main()
 		WICLosslessRotationProbe::Run();
 		WICHeifOptionsProbe::Run();
 		NativeLosslessProbe::Run();
+		WICDirectLosslessProbe::Run();
 		ConvertToHeic(L"samples\\01.png", L"samples\\out-01.heic");
 		ConvertToHeic(L"samples\\02.png", L"samples\\out-02.heic");
 		ConvertToHeic(L"samples\\03.heic", L"samples\\out-03.heic");
