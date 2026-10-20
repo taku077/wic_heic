@@ -157,6 +157,8 @@ inline void RunOpenPathBenchmark() {
     constexpr const wchar_t* file=L"samples\\fixture-irot3-exif6-noaux.heic";
     constexpr int iterations=10;
     std::vector<double> automatic, explicitCodec;
+    int automaticOurDecoder=0,automaticOtherDecoder=0;
+    int directOurDecoder=0,directOtherDecoder=0;
     for(int i=0;i<iterations;++i) {
         // Interleave order to reduce order-dependent OS file cache effects.
         for(int mode=0;mode<2;++mode) {
@@ -177,6 +179,15 @@ inline void RunOpenPathBenchmark() {
                     "openpath automatic initialize");
             }
             const auto completed=Clock::now();
+            // Verify WHICH decoder WIC selected. The huge automatic/direct
+            // timing gap is meaningless if the providers differ.
+            CComPtr<IWICBitmapDecoderInfo> info;
+            Check(decoder->GetDecoderInfo(&info),"openpath decoder info");
+            CLSID chosen{};
+            Check(info->GetCLSID(&chosen),"openpath decoder CLSID");
+            const bool ourCodec=IsEqualCLSID(chosen,CLSID_HEICDecoder);
+            if(isDirect) (ourCodec?directOurDecoder:directOtherDecoder)++;
+            else (ourCodec?automaticOurDecoder:automaticOtherDecoder)++;
             UINT frames=0;
             Check(decoder->GetFrameCount(&frames),"openpath frame count");
             if(!frames)throw std::runtime_error("openpath HEIC image missing");
@@ -186,6 +197,8 @@ inline void RunOpenPathBenchmark() {
     }
     printf("HEIC_WIC_OPEN_PATHS_MEASURED samples=%d automatic_median_ms=%.3f direct_median_ms=%.3f\n",
         iterations,Median(automatic),Median(explicitCodec));
+    printf("HEIC_WIC_OPEN_CODEC_IDENTITY samples=%d automatic_our_decoder=%d automatic_other_decoder=%d direct_our_decoder=%d direct_other_decoder=%d\n",
+        iterations,automaticOurDecoder,automaticOtherDecoder,directOurDecoder,directOtherDecoder);
     printf("HEIC_WIC_OPEN_PATH_DIAGNOSTIC_ONLY_NOT_EXPLORER_PARITY\n");
 }
 // Investigate the expense of libheif's stream callbacks without modifying
