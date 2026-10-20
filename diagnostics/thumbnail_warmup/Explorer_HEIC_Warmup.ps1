@@ -47,6 +47,9 @@ namespace WicHeicShellWarm {
         public int Cached;
         public int Generated;
         public int Failed;
+        public long CacheLookupTicks;
+        public long GenerationTicks;
+        public long FolderElapsedMs;
     }
     public static class Native {
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -97,6 +100,7 @@ namespace WicHeicShellWarm {
             WarmResult result=new WarmResult();
             if(!IsSafeFolder(path)) return result;
             maxFiles=Math.Max(1,Math.Min(30,maxFiles));
+            System.Diagnostics.Stopwatch folderTimer=System.Diagnostics.Stopwatch.StartNew();
             // Avoid recursive scanning and linked files; no user file is mutated.
             List<string> files=new List<string>();
             try {
@@ -130,12 +134,16 @@ namespace WicHeicShellWarm {
                         if(hr<0 || item==null){result.Failed++;continue;}
                         uint flags=0;
                         WTS_THUMBNAILID unused;
+                        long cacheStart=System.Diagnostics.Stopwatch.GetTimestamp();
                         hr=cache.GetThumbnail(item,256,INCACHEONLY,out bitmap,out flags,out unused);
+                        result.CacheLookupTicks+=System.Diagnostics.Stopwatch.GetTimestamp()-cacheStart;
                         if(hr>=0 && bitmap!=null) {
                             result.Cached++;
                         } else {
                             ReleaseCom(bitmap); bitmap=null;
+                            long generateStart=System.Diagnostics.Stopwatch.GetTimestamp();
                             hr=cache.GetThumbnail(item,256,EXTRACT,out bitmap,out flags,out unused);
+                            result.GenerationTicks+=System.Diagnostics.Stopwatch.GetTimestamp()-generateStart;
                             if(hr>=0 && bitmap!=null) result.Generated++;
                             else result.Failed++;
                         }
@@ -153,6 +161,7 @@ namespace WicHeicShellWarm {
                 ReleaseCom(obj);
                 if(background) SetThreadPriority(GetCurrentThread(),THREAD_MODE_BACKGROUND_END);
             }
+            result.FolderElapsedMs=folderTimer.ElapsedMilliseconds;
             return result;
         }
     }
@@ -178,7 +187,7 @@ if ($Mode -eq 'Folder') {
         throw 'WARMUP_INVALID_FOLDER'
     }
     $result = [WicHeicShellWarm.Native]::RunFolder($Folder, $MaxFiles, $limit, [IntPtr]::Zero)
-    "WARMUP_FOLDER_RESULT attempted=$($result.Attempted) cached=$($result.Cached) generated=$($result.Generated) failed=$($result.Failed)"
+    "WARMUP_FOLDER_RESULT attempted=$($result.Attempted) cached=$($result.Cached) generated=$($result.Generated) failed=$($result.Failed) folder_ms=$($result.FolderElapsedMs)"
     if ($result.Failed -gt 0) { throw 'WARMUP_FOLDER_FAILED' }
     return
 }
@@ -226,6 +235,9 @@ $visits = 0
 $generated = 0
 $cached = 0
 $errors = 0
+$cacheTicks = [long]0
+$generationTicks = [long]0
+$folderElapsedMs = [long]0
 'WARMUP_WATCH_STARTED auto_exit_seconds=' + $DurationSeconds
 while ([DateTime]::UtcNow -lt $limit) {
     $folder = Get-ForegroundExplorerFolder
@@ -236,10 +248,16 @@ while ([DateTime]::UtcNow -lt $limit) {
         $generated += $result.Generated
         $cached += $result.Cached
         $errors += $result.Failed
+        $cacheTicks += $result.CacheLookupTicks
+        $generationTicks += $result.GenerationTicks
+        $folderElapsedMs += $result.FolderElapsedMs
     }
     Start-Sleep -Milliseconds 1500
 }
-"WARMUP_WATCH_COMPLETED folders=$visits generated=$generated reused=$cached errors=$errors"
+$frequency=[System.Diagnostics.Stopwatch]::Frequency
+$cacheMs=[Math]::Round(1000.0*$cacheTicks/$frequency,2)
+$generationMs=[Math]::Round(1000.0*$generationTicks/$frequency,2)
+"WARMUP_WATCH_COMPLETED folders=$visits generated=$generated reused=$cached errors=$errors cache_query_ms=$cacheMs generation_ms=$generationMs folder_elapsed_ms=$folderElapsedMs"
 # When launched as a private child process, end PowerShell explicitly. The
 # default remains callable in-process by CI, without terminating its runner.
 if($ExitWhenDone){exit 0}

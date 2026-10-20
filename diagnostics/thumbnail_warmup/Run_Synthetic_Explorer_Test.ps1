@@ -106,6 +106,12 @@ try {
        $rows.Add('WATCH_GENERATED='+$hit.Groups[2].Value)
        $rows.Add('WATCH_REUSED='+$hit.Groups[3].Value)
        $rows.Add('WATCH_ERRORS='+$hit.Groups[4].Value)
+     $timings=[regex]::Match($log,'cache_query_ms=([0-9.,]+) generation_ms=([0-9.,]+) folder_elapsed_ms=(\d+)')
+     if($timings.Success) {
+       $rows.Add('CACHE_QUERY_MS='+$timings.Groups[1].Value)
+       $rows.Add('GENERATION_MS='+$timings.Groups[2].Value)
+       $rows.Add('FOLDER_ELAPSED_MS='+$timings.Groups[3].Value)
+     } else {$rows.Add('TIMING_METRICS_AVAILABLE=false')}
      }else{$rows.Add('WATCH_SUMMARY_MISSING=true')}
    }
    $completed=($null -ne $hit -and $hit.Success)
