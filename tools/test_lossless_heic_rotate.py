@@ -6,7 +6,7 @@ import tempfile
 sys.path.insert(0,str(Path(__file__).parent))
 from lossless_heic_rotate_experimental import UnsupportedHEIC, transform, write_new
 
-fixture=Path("wictest/samples/fixture-irot3-exif6.heic")
+fixture=Path("wictest/samples/fixture-irot3-exif6-noaux.heic")
 before=fixture.read_bytes()
 h=hashlib.sha256(before).hexdigest()
 steps=[]

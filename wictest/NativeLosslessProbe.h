@@ -12,7 +12,7 @@ inline HeicLosslessNative::Bytes Read(const char* file) {
         std::istreambuf_iterator<char>());
 }
 inline void Run() {
-    const auto initial=Read("samples\\fixture-irot3-exif6.heic");
+    const auto initial=Read("samples\\fixture-irot3-exif6-noaux.heic");
     const auto expected=Read("samples\\fixture-lossless-cw90.heic");
     const auto actual=HeicLosslessNative::Transform(initial,1);
     if(actual!=expected)

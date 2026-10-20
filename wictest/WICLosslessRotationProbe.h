@@ -20,7 +20,7 @@ inline void Run() {
         CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,(void**)&factory),"WIC factory");
 
     CComPtr<IWICBitmapDecoder> sourceDecoder,outputDecoder;
-    Must(factory->CreateDecoderFromFilename(L"samples\\fixture-irot3-exif6.heic",
+    Must(factory->CreateDecoderFromFilename(L"samples\\fixture-irot3-exif6-noaux.heic",
         nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&sourceDecoder),
         "load synthetic source");
     Must(factory->CreateDecoderFromFilename(L"samples\\fixture-lossless-cw90.heic",

@@ -23,7 +23,7 @@ inline void Run() {
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,(void**)&factory),"create factory");
     CComPtr<IWICBitmapDecoder> decoder;
-    Check(factory->CreateDecoderFromFilename(L"samples\\fixture-irot3-exif6.heic",
+    Check(factory->CreateDecoderFromFilename(L"samples\\fixture-irot3-exif6-noaux.heic",
         nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),"create source decoder");
     CComPtr<IWICBitmapFrameDecode> source;
     Check(decoder->GetFrame(0,&source),"source frame");
