@@ -10,6 +10,7 @@
 #include "EncoderGuardProbe.h"
 #include "ICCProfileProbe.h"
 #include "HighBitDepthProbe.h"
+#include "ThumbnailPerformanceProbe.h"
 #include "WICLosslessRotationProbe.h"
 #include "WICHeifOptionsProbe.h"
 #include "NativeLosslessProbe.h"
@@ -345,6 +346,7 @@ int main()
 		EncoderGuardProbe::Run();
 		ICCProfileProbe::Run();
 		HighBitDepthProbe::Run();
+		ThumbnailPerformanceProbe::Run();
 		WICLosslessRotationProbe::Run();
 		WICHeifOptionsProbe::Run();
 		NativeLosslessProbe::Run();
