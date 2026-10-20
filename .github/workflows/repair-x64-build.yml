@@ -9,6 +9,7 @@ on:
       - feature/lossless-heic-rotation
       - feature/wic-heif-encoder-options
       - feature/lossless-wic-native
+      - feature/wic-lossless-source-transfer
       - fix/encoder-geometry-failsafe
   workflow_dispatch:
 
