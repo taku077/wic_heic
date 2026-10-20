@@ -61,9 +61,17 @@ foreach($check in @('CLSID\'+$providerId,$extension,$progid)) {
 }
 $work=Join-Path $env:RUNNER_TEMP ('wic_shell_trial_'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work -ErrorAction Stop | Out-Null
-$file=Join-Path $work ('synthetic'+$extension)
-Copy-Item -LiteralPath $src -Destination $file
-if((Sha256 $file) -ne $hash){throw 'Synthetic fixture changed during copy'}
+# A separate artificial file name ensures each iteration starts without a
+# previously cached thumbnail. Never enumerate or write a user's photos.
+$files=New-Object 'System.Collections.Generic.List[string]'
+for($index=0;$index -lt 10;$index++) {
+ $itemName=('synthetic_{0:D2}{1}' -f $index,$extension)
+ $copy=Join-Path $work $itemName
+ Copy-Item -LiteralPath $src -Destination $copy
+ if((Sha256 $copy) -ne $hash){throw 'Synthetic fixture changed during copy'}
+ $files.Add($copy)
+}
+Write-Host ('SHELL_TRIAL_ARTIFICIAL_IMAGES='+$files.Count)
 
 # All native calls use documented Windows interfaces, never enumerate private
 # images and never write photo data. The exact test extension is newly created.
@@ -203,34 +211,54 @@ try {
  $directHr=[TrialShell.Shell]::ProbeComActivation($providerId)
  Write-Host ('SHELL_TRIAL_DIRECT_COM_HRESULT=0x'+$directHr.ToString('X8'))
  if($directHr -ne 0){throw 'Synthetic thumbnail provider class not directly registered'}
- # Exercise the registered handler through actual Windows IThumbnailCache.
- $timer=[Diagnostics.Stopwatch]::StartNew()
- $first=[TrialShell.Shell]::GetSyntheticThumbnail($file,$false)
- $timer.Stop()
- $snapKey=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
+ # Exercise the registered handler through actual Windows IThumbnailCache
+ # for ten distinct artificial files and verify that every subsequent lookup
+ # hits Shell cache without invoking the provider again.
+ $elapsed=New-Object 'System.Collections.Generic.List[double]'
+ foreach($trialFile in $files) {
+   $timer=[Diagnostics.Stopwatch]::StartNew()
+   $first=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$false)
+   $timer.Stop()
+   if($first.HResult -lt 0 -or -not $first.HasBitmap) {
+     $bound=[TrialShell.Shell]::BindThumbnailHandler($trialFile)
+     Write-Host ('SHELL_TRIAL_BIND_TO_THUMBNAIL_HANDLER_HRESULT=0x'+$bound.ToString('X8'))
+     throw ('Shell thumbnail extraction failed for synthetic association: 0x'+$first.HResult.ToString('X8'))
+   }
+   $elapsed.Add($timer.Elapsed.TotalMilliseconds)
+ }
+ $marker=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
  try {
-   $attempts=[int]$snapKey.GetValue('Attempts',0)
-   $activated=[int]$snapKey.GetValue('Activated',0)
- } finally { $snapKey.Close() }
+   $calls=[int]$marker.GetValue('Calls',0)
+   $attempts=[int]$marker.GetValue('Attempts',0)
+   $activated=[int]$marker.GetValue('Activated',0)
+ } finally { $marker.Close() }
  Write-Host ('SHELL_TRIAL_PROVIDER_CONSTRUCTED='+$activated)
  Write-Host ('SHELL_TRIAL_HANDLER_ENTRY_ATTEMPTS='+$attempts)
- if($first.HResult -lt 0 -or -not $first.HasBitmap) {
-   $bound=[TrialShell.Shell]::BindThumbnailHandler($file)
-   Write-Host ('SHELL_TRIAL_BIND_TO_THUMBNAIL_HANDLER_HRESULT=0x'+$bound.ToString('X8'))
-   throw ('Shell thumbnail extraction failed for synthetic association: 0x'+$first.HResult.ToString('X8'))
- }
- $again=[TrialShell.Shell]::GetSyntheticThumbnail($file,$true)
- if($again.HResult -lt 0 -or -not $again.HasBitmap) {
-   throw 'Shell cache-only revisit did not find generated thumbnail'
- }
- $regKey=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
- try { $calls=[int]$regKey.GetValue('Calls',0) } finally { $regKey.Close() }
- if($calls -lt 1) {
-   throw 'Shell generated a thumbnail but never invoked the isolated provider DLL'
- }
  Write-Host ('HEIC_SHELL_ISOLATED_PROVIDER_CALLED='+$calls)
- Write-Host ('HEIC_SHELL_ISOLATED_THUMBNAIL_MS='+[Math]::Round($timer.Elapsed.TotalMilliseconds,2))
+ if($calls -ne $files.Count -or $attempts -ne $files.Count) {
+   throw ('Shell provider call-count mismatch: expected='+$files.Count+' calls='+$calls+' attempts='+$attempts)
+ }
+ foreach($trialFile in $files) {
+   $again=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$true)
+   if($again.HResult -lt 0 -or -not $again.HasBitmap) {
+     throw 'Shell cache-only revisit did not find generated thumbnail'
+   }
+ }
+ $verifyMarker=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
+ try {
+   $afterHits=[int]$verifyMarker.GetValue('Calls',0)
+ } finally { $verifyMarker.Close() }
+ if($afterHits -ne $calls) {throw 'Shell cache revisit unexpectedly re-invoked the provider'}
+ $sort=$elapsed.ToArray()
+ [Array]::Sort($sort)
+ $median=($sort[4]+$sort[5])/2
+ Write-Host ('HEIC_SHELL_ISOLATED_THUMBNAIL_MEDIAN_MS='+[Math]::Round($median,2))
+ Write-Host ('HEIC_SHELL_ISOLATED_THUMBNAIL_P90_MS='+[Math]::Round($sort[8],2))
+ Write-Host ('HEIC_SHELL_ISOLATED_SYNTHETIC_COUNT='+$files.Count)
  Write-Host 'HEIC_SHELL_ISOLATED_CACHE_REVISIT_PASSED'
+ foreach($copy in $files) {
+   if((Sha256 $copy) -ne $hash){throw 'An artificial HEIC source copy changed during thumbnail generation'}
+ }
  $registeredOk=$true
 } finally {
  # Always remove only newly-owned isolated CLSID/ProgID/extension keys;
