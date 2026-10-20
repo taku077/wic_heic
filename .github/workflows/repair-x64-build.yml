@@ -172,6 +172,35 @@ jobs:
                 throw 'WIC trace analyzer omitted required summary fields'
               }
               Write-Host "WIC opt-in trace passed; event lines=$($events.Count); no paths or image metadata"
+              # Shell-warmup prototype uses no registration changes. Run only
+              # on isolated synthetic HEIC copies and verify source integrity.
+              $warmup=(Resolve-Path -LiteralPath '../diagnostics/thumbnail_warmup/Explorer_HEIC_Warmup.ps1').Path
+              $self=@(& $warmup -Mode SelfTest)
+              if(-not ($self -match 'WARMUP_SELFTEST_PASSED')) { throw 'HEIC shell warmup self-test failed' }
+              $warmFolder=Join-Path $env:RUNNER_TEMP ('wic_thumb_warm_'+$PID+'_'+[guid]::NewGuid().ToString('N'))
+              New-Item -ItemType Directory -Path $warmFolder | Out-Null
+              try {
+                $source=(Resolve-Path -LiteralPath 'samples/fixture-irot3-exif6-noaux.heic').Path
+                $sourceHash=(Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash
+                for($i=0;$i -lt 3;$i++) {
+                  Copy-Item -LiteralPath $source -Destination (Join-Path $warmFolder ('test'+$i+'.heic'))
+                }
+                $first=@(& $warmup -Mode Folder -Folder $warmFolder -MaxFiles 3 -DurationSeconds 30)
+                if(-not ($first -match 'attempted=3 cached=0 generated=3 failed=0')) {
+                  throw "Shell warmup did not prime all synthetic images: $($first -join ',')"
+                }
+                $revisit=@(& $warmup -Mode Folder -Folder $warmFolder -MaxFiles 3 -DurationSeconds 30)
+                if(-not ($revisit -match 'attempted=3 cached=3 generated=0 failed=0')) {
+                  throw "Shell warmup did not skip cached images: $($revisit -join ',')"
+                }
+                if((Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash -ne $sourceHash) {
+                  throw 'HEIC shell warmer changed its original fixture'
+                }
+                Write-Host 'EXPLORER_WARMUP_SYNTHETIC_CACHE_REVISIT_PASSED'
+              } finally {
+                Remove-Item -LiteralPath $warmFolder -Recurse -Force -ErrorAction SilentlyContinue
+              }
+
             }
             finally {
               Pop-Location
