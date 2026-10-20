@@ -11,6 +11,7 @@
 #include "ICCProfileProbe.h"
 #include "HighBitDepthProbe.h"
 #include "ThumbnailPerformanceProbe.h"
+#include "ShellPreloadProbe.h"
 #include "WICLosslessRotationProbe.h"
 #include "WICHeifOptionsProbe.h"
 #include "NativeLosslessProbe.h"
@@ -364,6 +365,7 @@ int main()
 		// Measure performance after the bounded diagnostic feature tests: do not consume
 		// the 2 MiB WIC trace budget before checking lossless rotation events.
 		ThumbnailPerformanceProbe::Run();
+		ShellPreloadProbe::Run();
 	}
 	catch (const std::exception& ex)
 	{
