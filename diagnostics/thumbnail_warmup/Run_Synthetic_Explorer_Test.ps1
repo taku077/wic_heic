@@ -13,6 +13,9 @@ if(-not (Test-Path -LiteralPath $helper -PathType Leaf) -or
  throw 'Synthetic-only test: fixture or warmup helper missing'
 }
 $sourceHash=(Get-FileHash -LiteralPath $FixturePath -Algorithm SHA256).Hash
+if($sourceHash -ne 'D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95') {
+ throw 'Artificial fixture SHA256 mismatch: refusing to operate on an unknown image'
+}
 $root=Join-Path $PSScriptRoot 'Results'
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 $test=Join-Path $root ('ExplorerTrial_'+(Get-Date -Format 'yyyyMMdd_HHmmss')+'_'+$PID)
@@ -132,4 +135,5 @@ try {
  Compress-Archive -LiteralPath $includes -DestinationPath $zip -CompressionLevel Optimal
  Write-Output ('TEST_REPORT='+$zip)
  Write-Output ('TEST_STATUS='+$(if($rows -match '^TEST_FAILED='){'FAILED'}else{'RECORDED'}))
+ if($rows -match '^TEST_FAILED=') { throw 'Synthetic Explorer test incomplete; see the generated ZIP report' }
 }
