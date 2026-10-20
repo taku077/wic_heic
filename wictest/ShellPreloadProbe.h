@@ -14,6 +14,7 @@
 #include <thread>
 #include <vector>
 #include <string>
+#include "ShellThumbnailWarmup.h"
 
 namespace ShellPreloadProbe {
 struct Counts {
@@ -66,45 +67,37 @@ inline void Run() {
                 paths.push_back(path);
                 allFiles.push_back(path);
             }
-            Counts result;
+            // First verify these unique synthetic paths are not cached.
+            int beforeCache=0;
+            for(const auto& path:paths) {
+                bool cached=false;
+                if(SUCCEEDED(One(path,WTS_INCACHEONLY,&cached)) && cached)
+                    ++beforeCache;
+            }
+            ShellThumbnailWarmup::Result result;
             const auto start=std::chrono::steady_clock::now();
-            auto worker=[&](std::atomic<int>& next) {
-                const HRESULT co=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
-                if(FAILED(co)) { ++result.unavailable; return; }
-                while(true) {
-                    const int i=next.fetch_add(1);
-                    if(i>=perMode)break;
-                    bool wasCached=false;
-                    HRESULT hr=One(paths[size_t(i)],WTS_EXTRACT,&wasCached);
-                    if(SUCCEEDED(hr)) ++result.success;
-                    else ++result.unavailable;
-                    if(wasCached) ++result.cacheHits;
-                }
-                CoUninitialize();
-            };
-            std::atomic<int> next{0};
-            // The wictest main thread uses a single-threaded COM apartment;
-            // both modes need dedicated MTA worker(s) for a fair comparison.
-            std::thread first([&](){worker(next);});
-            if(mode==1) {
-                // A deliberate 2-worker cap for low-power CPUs and HDD safety.
-                std::thread second([&](){worker(next);});
-                first.join();
-                second.join();
-            } else first.join();
+            ShellThumbnailWarmup::WarmPaths(paths,mode==0?1u:2u,result,
+                                           nullptr,true);
             const auto duration=std::chrono::duration<double,std::milli>(
                 std::chrono::steady_clock::now()-start).count();
             int verified=0;
-            // Independent cache-only lookup checks whether Windows Shell now
-            // recognizes the thumbnail, rather than just a private image buffer.
+            const auto warmStart=std::chrono::steady_clock::now();
+            // Independent cache-only lookup: no second HEVC decode permitted.
             for(const auto& path:paths) {
                 bool cached=false;
                 if(SUCCEEDED(One(path,WTS_INCACHEONLY,&cached)) && cached)
                     ++verified;
             }
-            printf("SHELL_PRELOAD_%s files=%d extracted=%d cache_only_hits=%d errors=%d elapsed_ms=%.3f\n",
-                mode==0?"SERIAL":"PARALLEL2",perMode,result.success.load(),
-                verified,result.unavailable.load(),duration);
+            const auto warmDuration=std::chrono::duration<double,std::milli>(
+                std::chrono::steady_clock::now()-warmStart).count();
+            printf("SHELL_PRELOAD_%s files=%d before_cache=%d generated=%u cache_only_hits=%d errors=%u elapsed_ms=%.3f warm_lookup_ms=%.3f\n",
+                mode==0?"SERIAL":"PARALLEL2",perMode,beforeCache,
+                result.generated.load(),verified,result.failed.load(),
+                duration,warmDuration);
+            if(beforeCache!=0 || result.failed.load()!=0 || verified!=perMode ||
+               result.attempted.load()!=perMode)
+                throw std::runtime_error("Shell warmup cache safety regression");
+
         }
         printf("SHELL_PRELOAD_EXPERIMENT_ONLY_NOT_EXPLORER_WIN10_VERIFIED\n");
     } catch (...) {cleanup();throw;}
