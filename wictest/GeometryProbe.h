@@ -133,7 +133,7 @@ inline void Run() {
     // This MUST be rejected to prove the geometry test is not a size-only check.
     Pixels stretched=reference;
     for(UINT y=0;y<stretched.h;y++)for(UINT x=0;x<stretched.w;x++) {
-        const UINT srcX=std::min(stretched.w-1,(x*3)/4);
+        const UINT srcX=((stretched.w-1 < (x*3)/4) ? stretched.w-1 : (x*3)/4);
         for(int c=0;c<3;c++)stretched.rgb[(size_t(y)*stretched.w+x)*3+c]=
             reference.rgb[(size_t(y)*stretched.w+srcX)*3+c];
     }
