@@ -192,6 +192,61 @@ jobs:
             if ($unregister.ExitCode -ne 0) { Write-Warning "Runner-only COM deregistration failed: $($unregister.ExitCode)" }
           }
 
+      - name: Confirm HKCU trace reaches real WIC codec without environment override
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $exe=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $root=(Resolve-Path -LiteralPath 'diagnostics/photos_trace').Path
+          $start=Join-Path $root 'PhotosTrace_Start.ps1'
+          $stop=Join-Path $root 'PhotosTrace_Stop.ps1'
+          Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($reg.ExitCode -ne 0) { throw 'HKCU trace COM registration failed' }
+          $started=$false
+          try {
+            & $start
+            $started=$true
+            $props=Get-ItemProperty -Path 'HKCU:\Software\WicHeic' -ErrorAction Stop
+            $trace=[string]$props.TraceFile
+            if(-not $trace -or -not (Test-Path -LiteralPath $trace)) { throw 'HKCU trace log not created' }
+            Push-Location -LiteralPath 'wictest'
+            try {
+              & $exe
+              if($LASTEXITCODE -ne 0) { throw 'Native WIC test failed with HKCU trace enabled' }
+            } finally { Pop-Location }
+            $lines=@(Get-Content -LiteralPath $trace -Encoding UTF8)
+            foreach($event in @('DecoderOpen','EncoderInitialize','FrameInitializeOptions','EncoderCommitLossless')) {
+              if(-not ($lines | Where-Object { $_ -match ('\bevent='+$event+' ') })) {
+                throw "HKCU trace missing actual native WIC event: $event"
+              }
+            }
+            $lengthBefore=(Get-Item -LiteralPath $trace).Length
+            if($lengthBefore -eq 0) { throw 'HKCU capture was empty' }
+            # Expire tracing in the disposable runner and verify that the codec
+            # does not append events. Restore the deadline before Stop to
+            # preserve its ownership verification.
+            $deadline=[long]$props.TraceUntilFileTime
+            try {
+              Set-ItemProperty -Path 'HKCU:\Software\WicHeic' -Name TraceUntilFileTime -Value ([DateTime]::UtcNow.AddMinutes(-1).ToFileTimeUtc()) -ErrorAction Stop
+              Push-Location -LiteralPath 'wictest'
+              try {
+                & $exe
+                if($LASTEXITCODE -ne 0) { throw 'Native WIC test failed with expired trace' }
+              } finally { Pop-Location }
+              $lengthAfter=(Get-Item -LiteralPath $trace).Length
+              if($lengthBefore -ne $lengthAfter) { throw 'Expired HKCU diagnostic trace still appended' }
+            } finally {
+              Set-ItemProperty -Path 'HKCU:\Software\WicHeic' -Name TraceUntilFileTime -Value $deadline -ErrorAction Stop
+            }
+            Write-Host 'HKCU_TRACE_AND_EXPIRATION_PASSED (native runner, NOT Windows Photos)'
+          } finally {
+            if($started) { & $stop }
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0) { throw 'HKCU trace COM deregistration failed' }
+          }
+
       - name: Verify privacy-limited Photos trace enable and clean shutdown
         shell: pwsh
         run: |
