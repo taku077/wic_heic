@@ -37,6 +37,19 @@ inline void Run() {
             if(std::string(e.what())=="Malformed native HEIC accepted") throw;
         }
     }
+    // A synthetic "thmb" or "auxl" primary link must be rejected,
+    // because a primary-only rotation would leave related images stale.
+    for(const char* tag : {"thmb","auxl"}) {
+        auto withRelated=initial;
+        const unsigned char marker[4]={'c','d','s','c'};
+        auto it=std::search(withRelated.begin(),withRelated.end(),marker,marker+4);
+        if(it==withRelated.end())throw std::runtime_error("Synthetic EXIF reference missing");
+        for(int j=0;j<4;j++)it[j]=static_cast<unsigned char>(tag[j]);
+        bool rejected=false;
+        try { auto unsafe=HeicLosslessNative::Transform(withRelated,1);(void)unsafe; }
+        catch(const std::runtime_error&) { rejected=true; }
+        if(!rejected)throw std::runtime_error("Unsafe thumbnail/HDR rotation accepted");
+    }
     printf("NATIVE_LOSSLESS_HEIF_MATCHES_PYTHON_AND_ROTATION_TEST_PASSED\n");
 }
 }
