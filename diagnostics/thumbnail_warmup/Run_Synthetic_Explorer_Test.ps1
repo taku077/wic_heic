@@ -63,7 +63,7 @@ try {
      foreach($w in @($shell.Windows())) {try {$before[[string]$w.HWND]=$true}catch{}}
    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
    $exe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-   $args='-NoProfile -ExecutionPolicy Bypass -File "'+$helper+'" -Mode Watch -DurationSeconds 20 -MaxFiles 10'
+   $args='-NoProfile -ExecutionPolicy Bypass -File "'+$helper+'" -Mode Watch -DurationSeconds 20 -MaxFiles 10 -ExitWhenDone'
    $watch=Start-Process -FilePath $exe -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
    Start-Sleep -Milliseconds 1500
    Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ArgumentList ('"'+$folder+'"') | Out-Null

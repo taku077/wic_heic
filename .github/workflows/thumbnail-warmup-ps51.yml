@@ -37,3 +37,26 @@ jobs:
             throw 'Native Shell cache interop did not compile on PowerShell 5.1'
           }
           Write-Host 'WIN10_POWERSHELL_5_1_PARSE_AND_NATIVE_INTEROP_PASSED'
+
+          # Reproduce real one-click process invocation. Previously the 20s
+          # watcher printed its completion marker but did not exit in time.
+          $exe=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $script=(Resolve-Path -LiteralPath 'diagnostics/thumbnail_warmup/Explorer_HEIC_Warmup.ps1').Path
+          $out=Join-Path $env:RUNNER_TEMP 'watcher-child-stdout.txt'
+          $err=Join-Path $env:RUNNER_TEMP 'watcher-child-stderr.txt'
+          $args='-NoProfile -ExecutionPolicy Bypass -File "'+$script+'" -Mode Watch -DurationSeconds 5 -MaxFiles 1 -ExitWhenDone'
+          $started=Get-Date
+          $child=Start-Process -FilePath $exe -ArgumentList $args -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          if(-not $child.WaitForExit(20000)) {
+            Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue
+            throw 'WATCHER_CHILD_EXIT_TIMEOUT: stdout='+(Get-Content -LiteralPath $out -Raw)
+          }
+          $stdout=Get-Content -LiteralPath $out -Raw
+          $stderr=Get-Content -LiteralPath $err -Raw
+          if($child.ExitCode -ne 0 -or -not $stdout.Contains('WARMUP_WATCH_COMPLETED')) {
+            throw "WATCHER_CHILD_LIFECYCLE_FAILED exit=$($child.ExitCode) out=$stdout err=$stderr"
+          }
+          $elapsed=((Get-Date)-$started).TotalSeconds
+          if($elapsed -ge 20) {throw "WATCHER_CHILD_TOO_SLOW seconds=$elapsed"}
+          Write-Host ('WIN10_POWERSHELL_5_1_CHILD_EXIT_PASSED seconds='+[Math]::Round($elapsed,2))
+

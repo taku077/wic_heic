@@ -10,7 +10,8 @@ param(
     [ValidateSet('Watch','Folder','SelfTest')][string]$Mode = 'Watch',
     [ValidateRange(5,600)][int]$DurationSeconds = 180,
     [ValidateRange(1,30)][int]$MaxFiles = 20,
-    [string]$Folder
+    [string]$Folder,
+    [switch]$ExitWhenDone
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
@@ -239,3 +240,6 @@ while ([DateTime]::UtcNow -lt $limit) {
     Start-Sleep -Milliseconds 1500
 }
 "WARMUP_WATCH_COMPLETED folders=$visits generated=$generated reused=$cached errors=$errors"
+# When launched as a private child process, end PowerShell explicitly. The
+# default remains callable in-process by CI, without terminating its runner.
+if($ExitWhenDone){exit 0}
