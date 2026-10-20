@@ -35,21 +35,15 @@ int64_t CHeifStreamReader::get_position() const
 
 int CHeifStreamReader::read(void* data, size_t size)
 {
-	ULARGE_INTEGER uli;
-	ULONG nRead;
-	HRESULT hr = m_Stream->Read(data, static_cast<ULONG>(size), &nRead);
-	if (hr != S_OK) {
-		return -1;
-	}
-
-	hr = m_Stream->Seek({ 0 }, STREAM_SEEK_CUR, &uli);
-	if (hr == S_OK) {
-		m_LastPos = static_cast<int64_t>(uli.QuadPart);
-	} else {
-		m_LastPos += nRead;
-	}
-	DbgLog("CHeifStreamReader::read(readSize=%zu) -> totalRead=%zu, lastPos=%zu", size, nRead, m_LastPos);
-
+	// The reader owns the IStream cursor. Seek(STREAM_SEEK_CUR) after each Read
+	// is redundant and causes an extra COM call for each libheif read request.
+	if ((!data && size) || size > ULONG_MAX) return -1;
+	ULONG nRead=0;
+	const HRESULT hr=m_Stream->Read(data,static_cast<ULONG>(size),&nRead);
+	if (FAILED(hr) || nRead != size) return -1;
+	m_LastPos += static_cast<int64_t>(nRead);
+	DbgLog("CHeifStreamReader::read(readSize=%zu) -> totalRead=%u, lastPos=%lld",
+		size,nRead,static_cast<long long>(m_LastPos));
 	return 0;
 }
 

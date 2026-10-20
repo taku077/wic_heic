@@ -94,10 +94,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
 			return E_INVALIDARG;
 		}
 
-		STATSTG stat;
-		pIStream->Stat(&stat, STATFLAG_DEFAULT);
-		DbgLog("%s: filename=%ws", __FUNCTION__, stat.pwcsName);
-
+		// Do not request the filename for every Explorer thumbnail. A
+		// STATFLAG_DEFAULT call allocates pwcsName and costs extra COM/FS
+		// work; the stream reader already obtains its size with NONAME.
 		m_Reader = new CHeifStreamReader(pIStream);
 		m_Context.read_from_reader(*m_Reader);
 	}
