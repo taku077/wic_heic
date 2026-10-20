@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+ <ItemGroup Label="ProjectConfigurations">
+  <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+ </ItemGroup>
+ <PropertyGroup Label="Globals">
+  <ProjectGuid>{E3D207CA-97B1-4B69-BD1A-0C436B8AA04F}</ProjectGuid>
+  <Keyword>Win32Proj</Keyword>
+  <RootNamespace>WicHeicIsolatedShellTrial</RootNamespace>
+  <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+ </PropertyGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+ <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+  <ConfigurationType>DynamicLibrary</ConfigurationType>
+  <UseDebugLibraries>false</UseDebugLibraries>
+  <PlatformToolset>v143</PlatformToolset>
+  <CharacterSet>Unicode</CharacterSet>
+  <WholeProgramOptimization>true</WholeProgramOptimization>
+ </PropertyGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+ <ImportGroup Label="ExtensionSettings" />
+ <ImportGroup Label="Shared" />
+ <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+ </ImportGroup>
+ <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  <OutDir>$(ProjectDir)(Build)\x64\Release\</OutDir>
+  <IntDir>$(ProjectDir)(Temp)\x64\Release\</IntDir>
+  <TargetName>WicHeicIsolatedThumbTrial</TargetName>
+ </PropertyGroup>
+ <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  <ClCompile>
+   <WarningLevel>Level4</WarningLevel>
+   <LanguageStandard>stdcpp17</LanguageStandard>
+   <PreprocessorDefinitions>WIN32;_WINDOWS;_USRDLL;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+   <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+   <ExceptionHandling>Sync</ExceptionHandling>
+  </ClCompile>
+  <Link>
+   <SubSystem>Windows</SubSystem>
+   <AdditionalDependencies>ole32.lib;windowscodecs.lib;gdi32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+  </Link>
+ </ItemDefinitionGroup>
+ <ItemGroup><ClCompile Include="HeicTrialThumbnail.cpp" /></ItemGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+ <ImportGroup Label="ExtensionTargets" />
+</Project>
