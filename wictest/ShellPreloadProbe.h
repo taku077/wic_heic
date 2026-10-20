@@ -83,13 +83,15 @@ inline void Run() {
                 CoUninitialize();
             };
             std::atomic<int> next{0};
-            if(mode==0) worker(next);
-            else {
+            // The wictest main thread uses a single-threaded COM apartment;
+            // both modes need dedicated MTA worker(s) for a fair comparison.
+            std::thread first([&](){worker(next);});
+            if(mode==1) {
                 // A deliberate 2-worker cap for low-power CPUs and HDD safety.
                 std::thread second([&](){worker(next);});
-                worker(next);
+                first.join();
                 second.join();
-            }
+            } else first.join();
             const auto duration=std::chrono::duration<double,std::milli>(
                 std::chrono::steady_clock::now()-start).count();
             int verified=0;
