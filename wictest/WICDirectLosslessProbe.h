@@ -107,6 +107,44 @@ inline void RejectAuxiliaryImage(IWICImagingFactory* factory) {
     if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
         throw std::runtime_error("Unsafe linked auxiliary image was rotated");
 }
+inline void RejectRasterOnlyRotation(IWICImagingFactory* factory) {
+    // A WIC flip-rotator exposes pixels but no original HEVC bitstream.
+    // This resembles one possible Photos editing pipeline. It must NEVER
+    // be silently re-encoded when NoCompression is explicitly requested.
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",
+        nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),
+        "open raster-transform fixture");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"raster-transform original");
+    CComPtr<IWICBitmapFlipRotator> rotator;
+    Check(factory->CreateBitmapFlipRotator(&rotator),"raster-transform rotator");
+    Check(rotator->Initialize(source,WICBitmapTransformRotate90),
+        "wrap source in WIC pixel rotator");
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"raster-transform encoder");
+    CComPtr<IWICStream> output;
+    Check(factory->CreateStream(&output),"raster-transform output");
+    Check(output->InitializeFromFilename(
+        L"samples\\fixture-wic-raster-rejected.heic",GENERIC_WRITE),
+        "raster-transform destination");
+    Check(encoder->Initialize(output,WICBitmapEncoderNoCache),"raster-transform encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    CComPtr<IPropertyBag2> options;
+    Check(encoder->CreateNewFrame(&frame,&options),"raster-transform options");
+    PROPBAG2 method{};method.pstrName=const_cast<LPOLESTR>(L"HeifCompressionMethod");
+    VARIANT noCompression{};noCompression.vt=VT_UI1;noCompression.bVal=1;
+    Check(options->Write(1,&method,&noCompression),"raster-transform no-recompress option");
+    Check(frame->Initialize(options),"raster-transform frame init");
+    Check(frame->SetSize(1920,1080),"raster-transform output dimensions");
+    HRESULT hr=frame->WriteSource(rotator,nullptr);
+    printf("WIC_LOSSLESS_RASTER_WRAPPER_REJECTION=0x%08X\n",(unsigned)hr);
+    if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("WIC raster wrapper was incorrectly treated as lossless source");
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -122,6 +160,7 @@ inline void Run() {
     if(Read(L"samples\\fixture-irot3-exif6-noaux.heic")!=original)
         throw std::runtime_error("Original synthetic HEIC was modified");
     RejectAuxiliaryImage(factory);
+    RejectRasterOnlyRotation(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
 }
 }
