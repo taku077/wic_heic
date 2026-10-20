@@ -7,7 +7,7 @@ Windows 10 Explorer integration is unverified until a real user test.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Watch','Folder','SelfTest')][string]$Mode = 'Watch',
+    [ValidateSet('Watch','Folder','SelfTest','CacheOnly')][string]$Mode = 'Watch',
     [ValidateRange(5,600)][int]$DurationSeconds = 180,
     [ValidateRange(1,30)][int]$MaxFiles = 20,
     [string]$Folder,
@@ -47,6 +47,7 @@ namespace WicHeicShellWarm {
         public int Cached;
         public int Generated;
         public int Failed;
+        public int Missing;
         public long CacheLookupTicks;
         public long GenerationTicks;
         public long FolderElapsedMs;
@@ -97,6 +98,11 @@ namespace WicHeicShellWarm {
                    ext.Equals(".heif",StringComparison.OrdinalIgnoreCase);
         }
         public static WarmResult RunFolder(string path,int maxFiles,DateTime deadlineUtc,IntPtr expectedWindow) {
+            return RunFolder(path,maxFiles,deadlineUtc,expectedWindow,false);
+        }
+        // Cache-only mode is strictly read-only: never request EXTRACT.
+        public static WarmResult RunFolder(string path,int maxFiles,DateTime deadlineUtc,
+                                           IntPtr expectedWindow,bool cacheOnly) {
             WarmResult result=new WarmResult();
             if(!IsSafeFolder(path)) return result;
             maxFiles=Math.Max(1,Math.Min(30,maxFiles));
@@ -141,6 +147,7 @@ namespace WicHeicShellWarm {
                             result.Cached++;
                         } else {
                             ReleaseCom(bitmap); bitmap=null;
+                            if(cacheOnly) { result.Missing++; continue; }
                             long generateStart=System.Diagnostics.Stopwatch.GetTimestamp();
                             hr=cache.GetThumbnail(item,256,EXTRACT,out bitmap,out flags,out unused);
                             result.GenerationTicks+=System.Diagnostics.Stopwatch.GetTimestamp()-generateStart;
@@ -182,6 +189,16 @@ if ($Mode -eq 'SelfTest') {
     return
 }
 $limit = [DateTime]::UtcNow.AddSeconds($DurationSeconds)
+if ($Mode -eq 'CacheOnly') {
+    if (-not [WicHeicShellWarm.Native]::IsSafeFolder($Folder)) {
+        throw 'WARMUP_INVALID_FOLDER'
+    }
+    $result = [WicHeicShellWarm.Native]::RunFolder(
+        $Folder, $MaxFiles, $limit, [IntPtr]::Zero, $true)
+    "WARMUP_CACHE_SNAPSHOT attempted=$($result.Attempted) cached=$($result.Cached) missing=$($result.Missing) failed=$($result.Failed)"
+    if ($result.Failed -gt 0) { throw 'WARMUP_CACHE_SNAPSHOT_FAILED' }
+    return
+}
 if ($Mode -eq 'Folder') {
     if (-not [WicHeicShellWarm.Native]::IsSafeFolder($Folder)) {
         throw 'WARMUP_INVALID_FOLDER'

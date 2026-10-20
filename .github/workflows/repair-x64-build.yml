@@ -191,6 +191,11 @@ jobs:
                 for($i=0;$i -lt 3;$i++) {
                   Copy-Item -LiteralPath $source -Destination (Join-Path $warmFolder ('test'+$i+'.heic'))
                 }
+                # Cache-only snapshots must NOT decode/extract anything.
+                $pre=@(& $warmup -Mode CacheOnly -Folder $warmFolder -MaxFiles 3 -DurationSeconds 30)
+                if(-not ($pre -match 'attempted=3 cached=0 missing=3 failed=0')) {
+                  throw "Cache-only cold baseline changed or missing: $($pre -join ',')"
+                }
                 $first=@(& $warmup -Mode Folder -Folder $warmFolder -MaxFiles 3 -DurationSeconds 30)
                 if(-not ($first -match 'attempted=3 cached=0 generated=3 failed=0')) {
                   throw "Shell warmup did not prime all synthetic images: $($first -join ',')"
@@ -201,6 +206,10 @@ jobs:
                 }
                 if((Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash -ne $sourceHash) {
                   throw 'HEIC shell warmer changed its original fixture'
+                }
+                $post=@(& $warmup -Mode CacheOnly -Folder $warmFolder -MaxFiles 3 -DurationSeconds 30)
+                if(-not ($post -match 'attempted=3 cached=3 missing=0 failed=0')) {
+                  throw "Cache-only revisit missing: $($post -join ',')"
                 }
                 Write-Host 'EXPLORER_WARMUP_SYNTHETIC_CACHE_REVISIT_PASSED'
                 # One-click package must be runnable on plain Windows PowerShell

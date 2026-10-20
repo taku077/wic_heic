@@ -57,6 +57,17 @@ try {
    }
    $rows.Add('CACHE_GENERATE_AND_REVISIT=PASS')
  } else {
+   # Explicit baseline, before Explorer is launched: a cache-only read
+   # cannot generate thumbnails or alter source photos.
+   $snap=@(& $helper -Mode CacheOnly -Folder $folder -MaxFiles 10 -DurationSeconds 30)
+   $matchSnap=[regex]::Match(($snap -join ' '),'WARMUP_CACHE_SNAPSHOT attempted=(\d+) cached=(\d+) missing=(\d+) failed=(\d+)')
+   if(-not $matchSnap.Success -or [int]$matchSnap.Groups[1].Value -ne 10 -or
+      [int]$matchSnap.Groups[4].Value -ne 0) {
+     throw 'Pre-Explorer cache-only baseline did not complete'
+   }
+   $rows.Add('CACHE_PRE_EXPLORER_HITS='+$matchSnap.Groups[2].Value)
+   $rows.Add('CACHE_PRE_EXPLORER_MISSING='+$matchSnap.Groups[3].Value)
+   $rows.Add('CACHE_PRE_EXPLORER_IS_READ_ONLY=true')
    # Enumerate IDs first; do not close any Explorer window that predates test.
    $shell=New-Object -ComObject Shell.Application
    try {
@@ -116,6 +127,15 @@ try {
    }
    $completed=($null -ne $hit -and $hit.Success)
    $rows.Add('WATCH_COMPLETION_MARKER='+$completed)
+   # Snapshot again after the watcher, without generating missing items.
+   $after=@(& $helper -Mode CacheOnly -Folder $folder -MaxFiles 10 -DurationSeconds 30)
+   $matchAfter=[regex]::Match(($after -join ' '),'WARMUP_CACHE_SNAPSHOT attempted=(\d+) cached=(\d+) missing=(\d+) failed=(\d+)')
+   if($matchAfter.Success -and [int]$matchAfter.Groups[4].Value -eq 0) {
+     $rows.Add('CACHE_POST_WATCHER_HITS='+$matchAfter.Groups[2].Value)
+     $rows.Add('CACHE_POST_WATCHER_MISSING='+$matchAfter.Groups[3].Value)
+   } else {
+     $rows.Add('CACHE_POST_WATCHER_SNAPSHOT_FAILED=true')
+   }
    $rows.Add('EXPLORER_VISIBLE_THUMBNAILS_VERIFIED=false')
  }
  $ok=$true
