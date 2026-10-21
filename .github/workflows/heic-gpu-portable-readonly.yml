@@ -74,6 +74,14 @@ jobs:
             if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne $shaBefore){throw "Source synthetic HEIC modified: $name"}
             Write-Host "HEIC_GPU_PORTABLE_FIXTURE name=$name bytes=$((Get-Item $dest).Length) sha256=$((Get-FileHash $dest -Algorithm SHA256).Hash)"
           }
+          # HEVC 4032x3024 is a separate hardware capability gate.
+          # A real Main10 GPU may decode 1080p but reject portrait 12MP.
+          $detail=Join-Path $samples 'synthetic12mp_detail.h265'
+          & $env:HEIC_CI_FFMPEG -hide_banner -nostdin -loglevel error -threads 2 -f lavfi -i 'testsrc2=size=4032x3024:rate=1' -vf 'noise=alls=24:allf=t+u' -frames:v 1 -pix_fmt yuv420p10le -c:v libx265 -preset ultrafast -x265-params 'log-level=error:pools=2:frame-threads=1' -f hevc $detail
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $detail)){throw 'High-detail synthetic 12MP Main10 source generation failed'}
+          $detailBytes=(Get-Item -LiteralPath $detail).Length
+          if($detailBytes -lt 1MB -or $detailBytes -gt 64MB){throw "Unreasonable detailed HEVC fixture: $detailBytes"}
+          Write-Host "HEIC_GPU_PORTABLE_12MP_FIXTURE coded_width=4032 coded_height=3024 bytes=$detailBytes sha256=$((Get-FileHash -LiteralPath $detail -Algorithm SHA256).Hash)"
           $libBin=Join-Path $env:FFMPEG_RESEARCH_ROOT 'bin'
           # Package only these codec, pixel-format and audio utility FFmpeg DLLs.
           # The isolated-PATH test below will reject any omitted transitive DLL.
@@ -113,8 +121,8 @@ jobs:
           }
           $sw | ForEach-Object {Write-Host $_}
           if($exit -ne 0){throw "Isolated-PATH HEVC selftest failed code=$exit"}
-          if(-not ($sw -match 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_2_OF_2_PASS')){
-            throw 'Portability cannot be claimed without 2/2 decoded HEVC fixtures'
+          if(-not ($sw -match 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS')){
+            throw 'Portability cannot be claimed without 3/3 decoded HEVC fixtures'
           }
           Write-Host 'HEIC_GPU_PORTABLE_BUNDLED_CPU_SELFTEST_PASS'
       - name: Verify hardware probe reports unproven without a real D3D11 Main10 device
@@ -150,7 +158,7 @@ jobs:
           $logs=@(Get-ChildItem -LiteralPath $dir -Filter 'GPU_Readonly_Result_*.txt' -File)
           if($logs.Count -ne 1){throw 'CMD must save exactly one unique log'}
           $content=[IO.File]::ReadAllText($logs[0].FullName)
-          foreach($require in @('HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_2_OF_2_PASS',
+          foreach($require in @('HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS',
               '=== GPU VIDEO HARDWARE DECODER CAPS ===','HEIC_GPU_CAPS_READONLY_NO_MSI_NO_REGISTRY_PASS',
               '=== GPU INDEX 0 ===','HEIC_GPU_PORTABLE_NOT_PROVEN')){
             if(-not $content.Contains($require)){throw "Unexpected/incomplete user diagnostic log: $require"}
