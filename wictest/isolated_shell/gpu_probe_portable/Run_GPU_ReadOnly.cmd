@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 set "LOG=%~dp0GPU_Readonly_Result.txt"
 > "%LOG%" echo HEIC GPU D3D11VA Main10 read-only research diagnostic
