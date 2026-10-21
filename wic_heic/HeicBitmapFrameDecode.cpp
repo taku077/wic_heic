@@ -9,6 +9,24 @@
 #include <new>
 #endif
 #include "PhotosWicTrace.h"
+#ifdef WIC_HEIC_PRIVATE_FAST_ADAPTIVE
+#include <stdexcept>
+#include <new>
+namespace {
+std::atomic<unsigned int> g_privateActiveHevcDecodes{0};
+struct ScopedHevcDecodeCount {
+    unsigned int active;
+    ScopedHevcDecodeCount() noexcept
+      : active(g_privateActiveHevcDecodes.fetch_add(1, std::memory_order_acq_rel) + 1) {}
+    ~ScopedHevcDecodeCount() noexcept {
+        g_privateActiveHevcDecodes.fetch_sub(1, std::memory_order_acq_rel);
+    }
+    ScopedHevcDecodeCount(const ScopedHevcDecodeCount&) = delete;
+    ScopedHevcDecodeCount& operator=(const ScopedHevcDecodeCount&) = delete;
+};
+}
+#endif
+
 
 CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle)
 	: m_Count(1)
@@ -346,12 +364,13 @@ void CHeicBitmapFrameDecode::DecodeImage()
 	}
 
 	// Small thumbnails and uncommon HEIC formats keep the original decoder.
-	// The CI-only 12MP A/B showed exact PBGRA pixel parity and lower wall
-	// time at two codec threads, at a measured cost in CPU time.
-#ifdef WIC_HEIC_PRIVATE_FAST2
+	// The isolated 12MP A/B showed single-image gains at 4 threads and
+	// almost identical 4-image throughput at 2 or 4 threads. Bound the
+	// private codec concurrency dynamically; never change the global WIC codec.
+#ifdef WIC_HEIC_PRIVATE_FAST_ADAPTIVE
 	// Only the MSI's PRIVATE decoder is built with this macro. Never enable
 	// it in the globally registered WIC codec or the Windows Photos encoder.
-	// Restrict extra CPU usage to high-resolution primary frames.
+	// Restrict extra CPU usage to high-resolution 8-bit opaque frames.
 	const uint64_t pixels = uint64_t(m_Handle.get_width()) * uint64_t(m_Handle.get_height());
 	SYSTEM_INFO sys{};
 	GetSystemInfo(&sys);
@@ -359,7 +378,9 @@ void CHeicBitmapFrameDecode::DecodeImage()
 		!m_Handle.has_alpha_channel() && sys.dwNumberOfProcessors >= 2) {
 		heif_decoding_options* options = heif_decoding_options_alloc();
 		if (!options) throw std::bad_alloc();
-		options->num_codec_threads = 2;
+		ScopedHevcDecodeCount concurrency;
+		options->num_codec_threads =
+			(concurrency.active == 1 && sys.dwNumberOfProcessors >= 4) ? 4 : 2;
 		heif_image* decoded = nullptr;
 		const heif_error error = heif_decode_image(m_Handle.get_raw_image_handle(),
 			&decoded, heif_colorspace_RGB, m_chroma, options);
