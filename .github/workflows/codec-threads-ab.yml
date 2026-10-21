@@ -50,6 +50,12 @@ jobs:
           if(-not (Test-Path '_out/x64/include') -or -not (Test-Path '_out/x64/lib')) {
             throw 'Native library installation missing'
           }
+      - name: Save native dependency cache after successful build
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-\${{ env.CODEC_DEPS }}-v1
       - name: Build unshipped private codec with 1/2/4-thread trial switch
         shell: pwsh
         run: |
