@@ -53,7 +53,8 @@ int wmain(){
     if(FAILED(adapter->GetDesc1(&description)))continue;
     // Virtual CI runners can expose WARP / Microsoft Basic software adapters.
     // Those do not prove HEVC hardware decode support on the user's Intel GPU.
-    const bool software=(description.Flags&DXGI_ADAPTER_FLAG_SOFTWARE)!=0;
+    const bool basicMicrosoft=(description.VendorId==0x1414 && description.DeviceId==0x008c);
+    const bool software=((description.Flags&DXGI_ADAPTER_FLAG_SOFTWARE)!=0) || basicMicrosoft;
     std::printf("HEIC_GPU_ADAPTER index=%u vendor=0x%04X device=0x%04X software=%u description=%ls\n",
        index,description.VendorId,description.DeviceId,unsigned(software),description.Description);
     if(software)continue;
