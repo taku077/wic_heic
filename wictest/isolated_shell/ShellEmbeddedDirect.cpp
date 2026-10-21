@@ -120,21 +120,21 @@ int wmain(int argc,wchar_t** argv){
   Require(module!=nullptr,"Shell DLL cannot load");
   auto entry=reinterpret_cast<FactoryFn>(GetProcAddress(module,"DllGetClassObject"));
   Require(entry!=nullptr,"Shell COM export missing");
-  std::vector<double> full,small;
+  std::vector<double> full,embeddedTimes;
   for(int i=0;i<8;++i){
    bool embed=(i%4==1||i%4==2);
    auto got=Capture(entry,embed?with:base,256);
    Require(got.width==256 && got.height==192,"bad 256px geometry");
    Require(got.alpha==WTSAT_ARGB || got.alpha==WTSAT_RGB,
            "invalid Shell WTS_ALPHATYPE");
-   (embed?small:full).push_back(got.elapsedMs);
+   (embed?embeddedTimes:full).push_back(got.elapsedMs);
    std::printf("SHELL_EMBEDDED_SAMPLE route=%s time_ms=%.2f hash=%016llx\n",
        embed?"embedded":"full",got.elapsedMs,
        static_cast<unsigned long long>(got.pixelHash));
   }
-  Require(full.size()==4&&small.size()==4,"unbalanced A/B trial");
+  Require(full.size()==4&&embeddedTimes.size()==4,"unbalanced A/B trial");
   std::printf("SHELL_EMBEDDED_MEDIAN full_ms=%.2f embedded_ms=%.2f saving_pct=%.2f\n",
-        Median(full),Median(small),100.0*(1.0-Median(small)/Median(full)));
+        Median(full),Median(embeddedTimes),100.0*(1.0-Median(embeddedTimes)/Median(full)));
   const auto original=Capture(entry,base,256);
   const auto accelerated=Capture(entry,with,256);
   Require(original.pixels.size()==accelerated.pixels.size(),"Shell output dimensions differ");
