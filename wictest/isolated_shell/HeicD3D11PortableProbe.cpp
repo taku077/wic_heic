@@ -78,6 +78,7 @@ struct Measurement{
  bool hardware=false;
  int w=0,h=0;
  AVPixelFormat format=AV_PIX_FMT_NONE;
+ int profile=AV_PROFILE_UNKNOWN;
  double decoderMs=0,readbackMs=0,colorMs=0,totalMs=0;
 };
 Measurement OneFrame(const Bytes& compressed,Route& route){
@@ -141,6 +142,7 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  m.hardware=route.requestedGpu;
  m.w=source->width;m.h=source->height;
  m.format=static_cast<AVPixelFormat>(source->format);
+ m.profile=ctx->profile;
  m.bgra.resize(size_t(m.w)*m.h*4);
  Sws scaler(sws_getContext(m.w,m.h,m.format,m.w,m.h,
    AV_PIX_FMT_BGRA,SWS_BICUBIC,nullptr,nullptr,nullptr));
@@ -177,8 +179,8 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  return m;
 }
 void Print(const char* name,const char* mode,const Measurement& m){
- std::printf("HEIC_GPU_PORTABLE_FRAME sample=%s mode=%s true_hw_d3d11=%u coded_width=%d coded_height=%d cpu_format=%s decoder_ms=%.3f readback_ms=%.3f bgra_ms=%.3f total_ms=%.3f\n",
-   name,mode,unsigned(m.hardware),m.w,m.h,av_get_pix_fmt_name(m.format),
+ std::printf("HEIC_GPU_PORTABLE_FRAME sample=%s mode=%s true_hw_d3d11=%u coded_width=%d coded_height=%d hevc_profile=%d cpu_format=%s decoder_ms=%.3f readback_ms=%.3f bgra_ms=%.3f total_ms=%.3f\n",
+   name,mode,unsigned(m.hardware),m.w,m.h,m.profile,av_get_pix_fmt_name(m.format),
    m.decoderMs,m.readbackMs,m.colorMs,m.totalMs);
 }
 bool Audit(const char* name,const Measurement& sw,const Measurement& gpu){
@@ -221,8 +223,13 @@ int wmain(int argc,wchar_t** argv){
     Print(name,"software-selftest",result);
     const int expectedW=i==0?2048:(i==1?1920:4032);
     const int expectedH=i==0?2048:(i==1?1080:3024);
+    const int expectedProfile=i==2?AV_PROFILE_HEVC_MAIN_10:AV_PROFILE_HEVC_REXT;
     Need(result.w==expectedW&&result.h==expectedH,
          "Packed HEVC fixture decoded with wrong dimensions");
+    std::printf("HEIC_GPU_PORTABLE_PROFILE sample=%s got=%d expected=%d\n",
+       name,result.profile,expectedProfile);
+    Need(result.profile==expectedProfile,
+         "HEVC profile changed; refuse GPU profile contract until source reviewed");
    }
    std::puts("HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS");
    std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
@@ -275,6 +282,14 @@ int wmain(int argc,wchar_t** argv){
    try{
     const Measurement sw=OneFrame(compressed,software);
     Print(name,"software",sw);
+    // The Intel D3D11 Main10 hardware profile does not imply RExt support.
+    // The two smaller samples are HEVC Range Extensions, not HEVC Main10.
+    // They demonstrably failed hwaccel initialisation on Intel HD620. Keep
+    // them software-only, rather than producing noisy driver errors.
+    const bool main10=(sw.profile==AV_PROFILE_HEVC_MAIN_10);
+    std::printf("HEIC_GPU_PORTABLE_PROFILE_GUARD sample=%s profile=%d route=%s\n",
+      name,sw.profile,main10?"d3d11_candidate":"software_only");
+    if(!main10)continue;
     hardware.gotD3D11=false;
     const Measurement hw=OneFrame(compressed,hardware);
     Need(hardware.gotD3D11&&hw.hardware,
@@ -290,8 +305,8 @@ int wmain(int argc,wchar_t** argv){
       name,err.what());
    }
   }
-  std::printf("HEIC_GPU_PORTABLE_SUMMARY proven=%d total=3 device_reused=1 product_enabled=0\n",proven);
-  if(proven==3)std::puts("HEIC_GPU_PORTABLE_MAIN10_HARDWARE_12MP_DECODE_AND_CPU_READBACK_PROVEN");
+  std::printf("HEIC_GPU_PORTABLE_SUMMARY gpu_eligible_main10=1 proven=%d total_samples=3 software_rext_samples=2 device_reused=1 product_enabled=0\n",proven);
+  if(proven==1)std::puts("HEIC_GPU_PORTABLE_MAIN10_HARDWARE_12MP_DECODE_AND_CPU_READBACK_PROVEN");
   else std::puts("HEIC_GPU_PORTABLE_GPU_PATH_NOT_PROVEN_KEEP_SOFTWARE_FALLBACK");
   std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
   return 0;
