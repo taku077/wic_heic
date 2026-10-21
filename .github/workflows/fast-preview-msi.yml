@@ -5,62 +5,52 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
   fast-preview:
     runs-on: windows-2022
-    timeout-minutes: 40
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
           persist-credentials: false
       - uses: microsoft/setup-msbuild@v2
-      - name: Compute pinned codec signature
-        shell: pwsh
-        run: |
-          $refs=(git submodule status --recursive) -join ([string][char]10)
-          $hash=[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
-          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Restore native codec dependencies
-        uses: actions/cache/restore@v4
-        id: deps
-        with:
-          path: wic_heic/3rdparty/_out/x64
-          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
-      - name: Build pinned dependencies if cache is absent
-        if: steps.deps.outputs.cache-hit != 'true'
-        shell: pwsh
-        working-directory: wic_heic/3rdparty
-        run: |
-          foreach($name in @('libde265','kvazaar','libheif')){
-            cmd /c "call build-$name.bat x64"
-            if($LASTEXITCODE -ne 0){throw "Dependency build failed: $name"}
-          }
-      - name: Compile WIC codec, fast Shell DLL and dedicated MSI
+      - name: Build fast Shell DLL and dedicated per-user MSI
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
-          if($LASTEXITCODE -ne 0){throw 'Native WIC decoder build failed'}
           msbuild wictest/isolated_shell/HeicShellFastPreview.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Fast thumbnail DLL build failed'}
           msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Fast thumbnail MSI build failed'}
-      - name: Validate real .heic extension Shell extraction and MSI cleanup
+      - name: Download already CI-tested WIC decoder MSI for isolated runtime test
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $folder=Join-Path $env:RUNNER_TEMP 'pinned-wic-codec'
+          New-Item -ItemType Directory -Path $folder | Out-Null
+          gh run download 39560736899 -n WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED -D $folder -R taku077/wic_heic
+          if($LASTEXITCODE -ne 0){throw 'Pinned CI-verified decoder MSI unavailable'}
+          $codec=Join-Path $folder 'WicHeic-HEIC-x64.msi'
+          if(-not (Test-Path -LiteralPath $codec)){throw 'Downloaded WIC MSI missing'}
+          "PINNED_WIC_MSI=$codec" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Verify actual .heic Shell extraction and reversible MSI install
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $codec=$env:PINNED_WIC_MSI
           $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/WicHeicFastPreview.msi').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
-          $p=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $codec)) -Wait -PassThru
-          if($p.ExitCode -ne 0){throw 'Test codec COM registration failed'}
+          $p=Start-Process msiexec.exe -ArgumentList ('/i "{0}" /qn /norestart' -f $codec) -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "Pinned WIC MSI install failed $($p.ExitCode)"}
           try{
             & ./diagnostics/thumbnail_warmup/CI_FastPreviewMsi.ps1 -MsiPath $msi -FixturePath $fixture
             if(-not $?){throw 'Real HEIC fast preview test failed'}
           }finally{
-            $p=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
-            if($p.ExitCode -ne 0){throw 'Test codec COM cleanup failed'}
+            $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $codec) -Wait -PassThru
+            if($p.ExitCode -ne 0){throw "Pinned WIC MSI uninstall failed $($p.ExitCode)"}
           }
       - name: Upload real .heic Fast Thumbnail MSI after all checks pass
         uses: actions/upload-artifact@v4
