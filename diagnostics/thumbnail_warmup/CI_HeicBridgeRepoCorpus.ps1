@@ -34,7 +34,31 @@ foreach($file in $files){
       $h1=(Get-FileHash $primary -Algorithm SHA256).Hash
       $h2=(Get-FileHash $elementary -Algorithm SHA256).Hash
       $eq=($h1 -eq $h2) -and ((Get-Item $primary).Length -eq (Get-Item $elementary).Length)
-      if($eq){$equal++}else{$mismatch++}
+      if($eq){$equal++}else{
+        $mismatch++
+        Write-Host "HEIC_HW_BRIDGE_CORPUS_MISMATCH_ANALYSIS file=$file"
+        $variantIndex=0
+        foreach($filter in @('transpose=clock','transpose=cclock','hflip,vflip','hflip','vflip','transpose=clock,hflip','transpose=cclock,hflip')){
+          $result=Join-Path $dest ($base+".candidate$variantIndex.bgra")
+          if(Test-Path $result){throw 'Refuse overwriting rotation candidate'}
+          & $ffmpeg.Source -hide_banner -nostdin -loglevel error -f hevc -i $compressed -frames:v 1 -vf $filter -pix_fmt bgra -f rawvideo $result
+          if($LASTEXITCODE -eq 0 -and (Test-Path $result)){
+            $wanted=(Get-FileHash $primary -Algorithm SHA256).Hash
+            $candidate=(Get-FileHash $result -Algorithm SHA256).Hash
+            $matches=($wanted -eq $candidate) -and ((Get-Item $primary).Length -eq (Get-Item $result).Length)
+            Write-Host "HEIC_HW_BRIDGE_ROTATION_CANDIDATE file=$file filter=$filter pixel_exact=$matches"
+          } else {
+            Write-Host "HEIC_HW_BRIDGE_ROTATION_CANDIDATE file=$file filter=$filter unavailable=1"
+          }
+          $variantIndex++
+        }
+        $noRotate=Join-Path $dest ($base+'.noautorotate.bgra')
+        & $ffmpeg.Source -hide_banner -nostdin -loglevel error -noautorotate -i $source -frames:v 1 -pix_fmt bgra -f rawvideo $noRotate
+        if($LASTEXITCODE -eq 0 -and (Test-Path $noRotate)){
+          $noRotateMatches=(Get-FileHash $noRotate -Algorithm SHA256).Hash -eq (Get-FileHash $elementary -Algorithm SHA256).Hash
+          Write-Host "HEIC_HW_BRIDGE_NOAUTOROTATE_MATCH file=$file pixel_exact=$noRotateMatches"
+        }
+      }
       Write-Host "HEIC_HW_BRIDGE_CORPUS_SAMPLE file=$file extract=1 decoded=1 pixels_equal=$eq heic_bytes=$((Get-Item $primary).Length) annexb_bytes=$((Get-Item $elementary).Length)"
     }else{
       $unavailable++
