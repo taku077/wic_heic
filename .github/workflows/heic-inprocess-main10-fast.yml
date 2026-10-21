@@ -63,6 +63,34 @@ jobs:
           msbuild wictest/isolated_shell/HeicInprocessGpuAB.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Windows C++ AVCodec decoder build failed'}
           Write-Host 'HEIC_INPROCESS_CPP_BUILD_PASS'
+      - name: Generate 12MP synthetic Main10 Annex B stream in disposable CI for phase timing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $bridge=Join-Path $env:RUNNER_TEMP 'heic_native_bridge'
+          $annex=Join-Path $bridge 'synthetic12mp.h265'
+          $reference=Join-Path $bridge 'synthetic12mp.native.bgra'
+          foreach($file in @($annex,$reference)){if(Test-Path -LiteralPath $file){throw "No overwrite permitted: $file"}}
+          & $env:FFMPEG_CLI -hide_banner -nostdin -loglevel error -threads 2 -f lavfi -i 'testsrc2=size=4032x3024:rate=1' -frames:v 1 -pix_fmt yuv420p10le -c:v libx265 -preset ultrafast -x265-params 'log-level=error:pools=2:frame-threads=1' -f hevc $annex
+          if($LASTEXITCODE -ne 0){throw '12MP 10bit synthetic HEVC generation failed'}
+          & $env:FFMPEG_CLI -hide_banner -nostdin -loglevel error -threads 2 -f hevc -i $annex -frames:v 1 -pix_fmt bgra -f rawvideo $reference
+          if($LASTEXITCODE -ne 0){throw '12MP BGRA control decode failed'}
+          if((Get-Item -LiteralPath $reference).Length -ne (4032*3024*4)){throw '12MP BGRA output geometry unexpected'}
+          Write-Host "HEIC_INPROCESS_SYNTHETIC12_MAIN10_REFERENCE_HEVC_BYTES=$((Get-Item -LiteralPath $annex).Length)"
+      - name: Measure 12MP one-frame in-process CPU decode and color stages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicInprocessGpuAB.exe').Path
+          & $exe software12
+          if($LASTEXITCODE -ne 0){throw '12MP in-process HEVC decode failed'}
+          $a=Join-Path $env:RUNNER_TEMP 'heic_native_bridge/synthetic12mp.native.bgra'
+          $b=Join-Path $env:RUNNER_TEMP 'heic_inprocess_software12/synthetic12mp.bgra'
+          if(-not (Test-Path -LiteralPath $b)){throw '12MP decoded BGRA unavailable'}
+          $same=((Get-FileHash -LiteralPath $a -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash)
+          Write-Host "HEIC_INPROCESS_SYNTHETIC12_MAIN10_BGRA_EXACT=$same"
+          if(-not $same){throw '12MP HEVC color or decoder parity failed'}
+          Write-Host 'HEIC_INPROCESS_SYNTHETIC12_MAIN10_STAGE_TIMING_PASS'
       - name: Assert byte-exact BGRA from both in-process Main10 decodes
         shell: pwsh
         run: |
