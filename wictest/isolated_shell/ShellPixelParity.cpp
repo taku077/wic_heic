@@ -18,7 +18,7 @@
 
 using Microsoft::WRL::ComPtr;
 namespace {
-constexpr UINT kSize=256;
+UINT kSize=256; // CI-only runtime choice, set once before comparisons.
 const CLSID kCacheClsid={0x50ef4544,0xac9f,0x4a8e,{0xb2,0x1b,0x8a,0x26,0x18,0x0d,0xb1,0x3f}};
 
 void Checked(HRESULT hr,const char* stage) {
@@ -177,7 +177,12 @@ Pixels ShellCached(const std::wstring& filename,IThumbnailCache* cache) {
 
 int wmain(int argc,wchar_t** argv) {
     try {
-        Required(argc==2,"usage: ShellPixelParity.exe <CI synthetic work folder>");
+        Required(argc==3,"usage: ShellPixelParity.exe <CI synthetic work folder> <128|256|512>");
+        if(std::wcscmp(argv[2],L"128")==0)kSize=128;
+        else if(std::wcscmp(argv[2],L"256")==0)kSize=256;
+        else if(std::wcscmp(argv[2],L"512")==0)kSize=512;
+        else throw std::runtime_error("unsupported CI thumbnail size");
+        std::printf("SHELL_PIXEL_PARITY_SIZE=%u\n",kSize);
         const std::wstring root=FullPath(argv[1]);
         GuardCiFolder(root);
         CoScope scope;
