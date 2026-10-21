@@ -5,6 +5,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <dxgi1_2.h>
+#include <wrl/client.h>
 #include <psapi.h>
 #include <algorithm>
 #include <chrono>
@@ -26,6 +28,7 @@ extern "C" {
 #pragma comment(lib,"avutil.lib")
 #pragma comment(lib,"swscale.lib")
 #pragma comment(lib,"psapi.lib")
+#pragma comment(lib,"dxgi.lib")
 namespace {
 using Clock=std::chrono::steady_clock;
 using Bytes=std::vector<uint8_t>;
@@ -221,6 +224,31 @@ int wmain(int argc,wchar_t** argv){
    return 0;
   }
   const int adapter=arg[0]-L'0';
+  // Important: a D3D11 texture from WARP / Microsoft Basic Render is NOT
+  // evidence of hardware HEVC acceleration. Only physically enumerated
+  // Intel adapters can be counted by this Intel GPU research diagnostic.
+  Microsoft::WRL::ComPtr<IDXGIFactory1> dxgi;
+  if(FAILED(CreateDXGIFactory1(IID_PPV_ARGS(dxgi.GetAddressOf())))){
+   std::puts("HEIC_GPU_PORTABLE_NOT_PROVEN stage=dxgi_factory");
+   return 0;
+  }
+  Microsoft::WRL::ComPtr<IDXGIAdapter1> selected;
+  const HRESULT enumerated=dxgi->EnumAdapters1(UINT(adapter),selected.GetAddressOf());
+  if(FAILED(enumerated)||!selected){
+   std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN stage=adapter_not_present adapter=%d\n",adapter);
+   return 0;
+  }
+  DXGI_ADAPTER_DESC1 info{};
+  Need(SUCCEEDED(selected->GetDesc1(&info)),"DXGI adapter metadata query failed");
+  const bool software=(info.Flags&DXGI_ADAPTER_FLAG_SOFTWARE)!=0 ||
+    (info.VendorId==0x1414);
+  const bool intel=info.VendorId==0x8086;
+  std::printf("HEIC_GPU_PORTABLE_ADAPTER index=%d vendor=0x%04X device=0x%04X software=%d intel=%d description=%ls\n",
+    adapter,info.VendorId,info.DeviceId,int(software),int(intel),info.Description);
+  if(software||!intel){
+   std::puts("HEIC_GPU_PORTABLE_NOT_PROVEN stage=not_physical_intel_adapter");
+   return 0;
+  }
   Device gpu;
   const std::string which(1,char('0'+adapter));
   const auto start=Clock::now();
