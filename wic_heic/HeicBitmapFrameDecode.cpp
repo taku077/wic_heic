@@ -4,6 +4,10 @@
 #include "HeicBitmapDecoder.h"
 #include "HeicBitmapFrameDecode.h"
 #include "HeicMetadataBlockReader.h"
+#ifdef WIC_HEIC_PRIVATE_FAST2
+#include <stdexcept>
+#include <new>
+#endif
 #include "PhotosWicTrace.h"
 
 CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle)
@@ -344,7 +348,33 @@ void CHeicBitmapFrameDecode::DecodeImage()
 	// Default decoder scheduling remains in force. A bounded two-codec-thread
 	// experiment regressed 256px thumbnail measurements on the Windows CI
 	// runner; do not increase CPU usage without a repeatable improvement.
+#ifdef WIC_HEIC_PRIVATE_FAST2
+	// Only the MSI's PRIVATE decoder is built with this macro. Never enable
+	// it in the globally registered WIC codec or the Windows Photos encoder.
+	// Restrict extra CPU usage to high-resolution primary frames.
+	const uint64_t pixels = uint64_t(m_Handle.get_width()) * uint64_t(m_Handle.get_height());
+	SYSTEM_INFO sys{};
+	GetSystemInfo(&sys);
+	if (pixels >= 6000000ull && sys.dwNumberOfProcessors >= 2) {
+		heif_decoding_options* options = heif_decoding_options_alloc();
+		if (!options) throw std::bad_alloc();
+		options->num_codec_threads = 2;
+		heif_image* decoded = nullptr;
+		const heif_error error = heif_decode_image(m_Handle.get_raw_image_handle(),
+			&decoded, heif_colorspace_RGB, m_chroma, options);
+		heif_decoding_options_free(options);
+		if (error.code != heif_error_Ok) {
+			if (decoded) heif_image_release(decoded);
+			throw heif::Error(error);
+		}
+		if (!decoded) throw std::runtime_error("HEIC decode image missing");
+		m_Image = heif::Image(decoded);
+	} else {
+		m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
+	}
+#else
 	m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
+#endif
 	m_PlaneInterleaved = m_Image.get_plane2(heif_channel_interleaved, &m_Stride);
 
 	DbgLog("Decode: (chroma=%d, bpp=%d, stride=%d)",
