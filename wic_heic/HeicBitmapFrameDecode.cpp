@@ -4,6 +4,10 @@
 #include "HeicBitmapDecoder.h"
 #include "HeicBitmapFrameDecode.h"
 #include "HeicMetadataBlockReader.h"
+#ifdef WIC_HEIC_PRIVATE_THREAD_EXPERIMENT
+#include <stdexcept>
+#include <cstring>
+#endif
 #include "PhotosWicTrace.h"
 
 CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle)
