@@ -275,11 +275,15 @@ jobs:
           $caps=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/D3D11HevcCaps.exe').Path
           $lines=@(& $caps)
           if($LASTEXITCODE -ne 0){throw 'Native D3D11 capability probe failed'}
-          $eligible=@($lines | ForEach-Object {
-            if($_ -match '^HEIC_GPU_PROFILE adapter=(\d+) profile=hevc_main10 exposed=1 output_format=1 decoder_config12mp=1$'){
-              [int]$Matches[1]
-            }
+          # Both pinned Main10 sources must be supported by the SAME adapter.
+          # A 4032x3024 capability query alone is not a sufficient eligibility test.
+          $square=@($lines | ForEach-Object {
+            if($_ -match '^HEIC_GPU_MAIN10_TARGET adapter=(\d+) width=2048 height=2048 decoder_config=1$'){[int]$Matches[1]}
           })
+          $portrait=@($lines | ForEach-Object {
+            if($_ -match '^HEIC_GPU_MAIN10_TARGET adapter=(\d+) width=1080 height=1920 decoder_config=1$'){[int]$Matches[1]}
+          })
+          $eligible=@($square | Where-Object {$_ -in $portrait})
           if($eligible.Count -eq 0){
             Write-Host 'HEIC_INPROCESS_GPU_NOT_PROVEN reason=runner_has_no_main10_hw_adapter'
           } else {
