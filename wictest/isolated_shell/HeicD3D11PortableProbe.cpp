@@ -252,6 +252,69 @@ double Median3(std::vector<double> measurements){
  std::sort(measurements.begin(),measurements.end());
  return measurements[1];
 }
+// Exercise THE SAME NV12 -> planar view used by hardware, but on CI's
+// CPU-created synthetic NV12 frame. This proves 8-bit parity without
+// claiming CI's Microsoft software renderer is genuine Intel hardware.
+void Main8SimulatedNv12ColorSelftest(const Measurement& cpu) {
+ constexpr int w=HeicNative8::W,h=HeicNative8::H,cw=w/2,ch=h/2;
+ Need(cpu.profile==AV_PROFILE_HEVC_MAIN &&
+      cpu.matrix==AVCOL_SPC_UNSPECIFIED &&
+      cpu.colorRange==AVCOL_RANGE_MPEG &&
+      cpu.nativeYuv8.size()==size_t(w)*h*3/2,
+      "8bit synthetic CPU frame profile/matrix/range changed");
+ const Bytes& canonical=cpu.nativeYuv8;
+ const size_t luma=size_t(w)*h;
+ const size_t chromaSamples=luma/4;
+ Bytes interleaved(chromaSamples*2);
+ for(size_t n=0;n<chromaSamples;++n) {
+  interleaved[2*n]=canonical[luma+n];
+  interleaved[2*n+1]=canonical[luma+chromaSamples+n];
+ }
+ AVFrame nv12{};
+ nv12.format=AV_PIX_FMT_NV12;nv12.width=w;nv12.height=h;
+ nv12.data[0]=const_cast<uint8_t*>(canonical.data());
+ nv12.data[1]=interleaved.data();
+ nv12.linesize[0]=w;nv12.linesize[1]=w;
+ HeicNative8::PlanarNv12View planar;
+ HeicNative8::BuildPlanarNv12View(&nv12,planar);
+ Need(planar.chroma.size()==size_t(w)*h/2,
+      "NV12 chroma-only repack allocation unexpectedly large");
+ Need(HeicNative8::Normalize(&nv12)==canonical,
+      "Synthetic NV12 normalization did not recover all source YUV bytes");
+ auto Color=[&](AVPixelFormat format,const uint8_t* const src[4],
+                const int stride[4])->Bytes {
+  Sws scaler(sws_getContext(w,h,format,w,h,AV_PIX_FMT_BGRA,
+     SWS_BICUBIC,nullptr,nullptr,nullptr));
+  Need(scaler!=nullptr,"Synthetic NV12 matrix test swscale create failed");
+  Need(sws_setColorspaceDetails(scaler.get(),sws_getCoefficients(SWS_CS_ITU601),0,
+        sws_getCoefficients(SWS_CS_DEFAULT),1,0,1<<16,1<<16)>=0,
+        "Synthetic NV12 matrix test colorspace refused");
+  Bytes result(size_t(w)*h*4);
+  uint8_t* dst[4]={result.data(),nullptr,nullptr,nullptr};
+  int dstStride[4]={w*4,0,0,0};
+  Need(sws_scale(scaler.get(),src,stride,0,h,dst,dstStride)==h,
+       "Synthetic NV12 RGB conversion incomplete");
+  return result;
+ };
+ const Bytes corrected=Color(AV_PIX_FMT_YUV420P,planar.data,planar.linesize);
+ Need(corrected==cpu.bgra,
+      "Canonical GPU NV12 chroma repack must yield exact CPU YUV420P BGRA");
+ const uint8_t* rawData[4]={nv12.data[0],nv12.data[1],nullptr,nullptr};
+ const int rawStride[4]={nv12.linesize[0],nv12.linesize[1],0,0};
+ const Bytes uncorrected=Color(AV_PIX_FMT_NV12,rawData,rawStride);
+ uint64_t changed=0,absSum=0;
+ unsigned peak=0;
+ for(size_t i=0;i<corrected.size();++i){
+  const unsigned diff=unsigned(std::abs(int(corrected[i])-int(uncorrected[i])));
+  changed+=(diff!=0);absSum+=diff;peak=std::max(peak,diff);
+ }
+ std::printf("HEIC_GPU_MAIN8_SIMULATED_NV12_COLOR_CONTROL full_yuv_bytes=%llu chroma_only_scratch_bytes=%llu planar_bgra_exact_cpu=1 raw_nv12_vs_planar_changed_channels=%llu raw_nv12_vs_planar_mae_rgba=%.6f max_error=%u no_hardware_claim=1\n",
+    static_cast<unsigned long long>(canonical.size()),
+    static_cast<unsigned long long>(planar.chroma.size()),
+    static_cast<unsigned long long>(changed),
+    double(absSum)/corrected.size(),peak);
+ std::puts("HEIC_GPU_MAIN8_SIMULATED_NV12_PLANAR_COLOR_BYTE_EXACT_PASS");
+}
 double MeanRgbError(const Bytes& lhs,const Bytes& rhs){
  Need(lhs.size()==rhs.size()&&lhs.size()==size_t(256)*192*4,
       "Quality control buffers must be matching 256x192 BGRA");
@@ -389,6 +452,7 @@ int wmain(int argc,wchar_t** argv){
      Need(difference.changed==1 && difference.maxDiff==1 &&
           difference.xmin==0 && difference.ymin==0,
           "8-bit native YUV comparison failed to detect changed luma");
+     Main8SimulatedNv12ColorSelftest(result);
      std::puts("HEIC_GPU_MAIN8_NATIVE_YUV_POSITIVE_AND_NEGATIVE_SELFTEST_PASS");
     }
     if(i>=2){
