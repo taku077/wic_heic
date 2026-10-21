@@ -53,4 +53,22 @@ if(-not $header.Contains($oldLine)){throw 'Pinned transform alignment definition
 $header=$header.Replace($oldLine,$newLine)
 [IO.File]::WriteAllText((Resolve-Path $tables).Path,$header,[Text.UTF8Encoding]::new($false))
 Write-Host 'WIC_HEIC_CI_AVX2_MSVC_ALIGNED_64_PATCH_APPLIED'
+
+# Pinned upstream CMake does not advertise SUPPORTS_AVX2 under MSVC, so
+# HAVE_AVX2 never becomes true even on x64. Only the uninstalled CI build
+# enables the *separately compiled, runtime-guarded* AVX2 kernels.
+$cmakePath='wic_heic/3rdparty/libde265/CMakeLists.txt'
+$cmake=(Get-Content -LiteralPath $cmakePath -Raw) -replace '\r\n',[string][char]10
+$pattern='      set(SUPPORTS_SSE4_1 1)'
+if(-not $cmake.Contains($pattern)){throw 'Pinned upstream MSVC feature block changed'}
+$replacement=@'
+      set(SUPPORTS_SSE4_1 1)
+      if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND ENABLE_AVX2)
+        set(SUPPORTS_AVX2 1)
+      endif()
+'@
+$cmake=$cmake.Replace($pattern,$replacement)
+[IO.File]::WriteAllText((Resolve-Path $cmakePath).Path,$cmake,[Text.UTF8Encoding]::new($false))
+Write-Host 'WIC_HEIC_CI_AVX2_MSVC_CMAKE_ENABLED'
+
 Write-Host 'WIC_HEIC_CI_AVX2_DISPATCH_PATCH_APPLIED_RUNTIME_GUARDED'
