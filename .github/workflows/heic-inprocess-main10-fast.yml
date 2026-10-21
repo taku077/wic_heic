@@ -107,6 +107,38 @@ jobs:
           & $exe --synthetic12
           if($LASTEXITCODE -ne 0){throw 'Thumbnail quality/speed A/B test failed'}
           Write-Host 'HEIC_THUMB_SCALE_ABBA_RESULTS_RECORDED_RESEARCH_ONLY'
+      - name: Generate independent detailed 12MP Main10 synthetic HEVC and software reference
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $bridge=Join-Path $env:RUNNER_TEMP 'heic_native_bridge'
+          $annex=Join-Path $bridge 'synthetic12mp_detail.h265'
+          $ref=Join-Path $bridge 'synthetic12mp_detail.native.bgra'
+          foreach($file in @($annex,$ref)){if(Test-Path $file){throw "Refuse existing detailed fixture $file"}}
+          & $env:FFMPEG_CLI -hide_banner -nostdin -loglevel error -threads 2 -f lavfi -i 'testsrc2=size=4032x3024:rate=1' -vf 'noise=alls=24:allf=t+u' -frames:v 1 -pix_fmt yuv420p10le -c:v libx265 -preset ultrafast -x265-params 'log-level=error:pools=2:frame-threads=1' -f hevc $annex
+          if($LASTEXITCODE -ne 0){throw 'High-detail synthetic 12MP HEVC encode failed'}
+          & $env:FFMPEG_CLI -hide_banner -nostdin -loglevel error -threads 2 -f hevc -i $annex -frames:v 1 -pix_fmt bgra -f rawvideo $ref
+          if($LASTEXITCODE -ne 0){throw 'High-detail synthetic BGRA reference decode failed'}
+          if((Get-Item $ref).Length -ne (4032*3024*4)){throw 'High-detail synthetic BGRA geometry invalid'}
+          Write-Host "HEIC_THUMB_DETAIL12_SYNTHETIC_HEVC_BYTES=$((Get-Item $annex).Length)"
+      - name: Verify high-detail 12MP decoder parity and three hybrid thumbnail quality levels
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicInprocessGpuAB.exe').Path
+          $env:HEIC_INPROCESS_DUMP_YUV='1'
+          & $exe software12detail
+          if($LASTEXITCODE -ne 0){throw 'High-detail 12MP Main10 in-process decoder failed'}
+          $ref=Join-Path $env:RUNNER_TEMP 'heic_native_bridge/synthetic12mp_detail.native.bgra'
+          $actual=Join-Path $env:RUNNER_TEMP 'heic_inprocess_software12detail/synthetic12mp_detail.bgra'
+          if(-not (Test-Path $actual)){throw 'High-detail BGRA image missing'}
+          $exact=((Get-FileHash -LiteralPath $ref -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $actual -Algorithm SHA256).Hash)
+          Write-Host "HEIC_THUMB_DETAIL12_BGRA_EXACT=$exact"
+          if(-not $exact){throw 'High-detail 12MP BGRA parity mismatch'}
+          $scaler=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicThumbnailScaleAB.exe').Path
+          & $scaler --synthetic12detail
+          if($LASTEXITCODE -ne 0){throw 'High-detail 12MP Fant vs hybrid quality ABBA failed'}
+          Write-Host 'HEIC_THUMB_DETAIL12_ABBA_PASS_RESEARCH_ONLY'
       - name: Assert byte-exact BGRA from both in-process Main10 decodes
         shell: pwsh
         run: |
