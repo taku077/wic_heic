@@ -3,6 +3,7 @@
 param([Parameter(Mandatory=$true)][string]$MsiPath,
       [Parameter(Mandatory=$true)][string]$FixturePath)
 $ErrorActionPreference='Stop'
+Write-Host 'FAST_PREVIEW_SMOKE_ENTERED'
 if($env:GITHUB_ACTIONS -ne 'true' -or -not $env:RUNNER_TEMP) {
  throw 'This MSI smoke test runs ONLY on a disposable GitHub Actions runner'
 }
@@ -27,9 +28,12 @@ $installed=$false
 $marker="Software\WicHeicFastPreviewCI\$cls"
 try {
  $log=Join-Path $folder 'install.log'
+ Write-Host 'FAST_PREVIEW_SMOKE_BEFORE_INSTALL'
  $p=Start-Process msiexec.exe -ArgumentList ('/i "{0}" /qn /norestart /l*v "{1}"' -f $msi,$log) -Wait -PassThru
+ Write-Host ('FAST_PREVIEW_SMOKE_INSTALL_CODE='+$p.ExitCode)
  if($p.ExitCode -ne 0){throw ('Fast MSI install exit='+$p.ExitCode)}
  $installed=$true
+ Write-Host 'FAST_PREVIEW_SMOKE_INSTALLED'
  $key=$hkcu.OpenSubKey("Software\Classes\CLSID\$cls\InprocServer32")
  if(-not $key){throw 'Fast COM class was not registered'}
  try {
@@ -49,7 +53,9 @@ try {
  $reference=Get-Content -LiteralPath 'diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1' -Raw
  $match=[regex]::Match($reference,"(?s)\`$native=@'\s*(.*?)\s*'@")
  if(-not $match.Success){throw 'Could not locate inspected C# COM interface definitions'}
+ Write-Host 'FAST_PREVIEW_SMOKE_BEFORE_ADDTYPE'
  Add-Type -TypeDefinition $match.Groups[1].Value -Language CSharp -ErrorAction Stop
+ Write-Host 'FAST_PREVIEW_SMOKE_AFTER_ADDTYPE'
  if([TrialShell.Shell]::ProbeComActivation($cls) -ne 0){throw 'Fast COM DLL cannot be activated'}
  $testKey=$hkcu.CreateSubKey($marker)
  try {$testKey.SetValue('Enable',1,[Microsoft.Win32.RegistryValueKind]::DWord)}
@@ -61,6 +67,7 @@ try {
    Copy-Item -LiteralPath $fixture -Destination $copy
    $files+=$copy
  }
+ Write-Host 'FAST_PREVIEW_SMOKE_BEFORE_FIRST_EXTRACTION'
  foreach($file in $files){
    $result=[TrialShell.Shell]::GetSyntheticThumbnail($file,$false,[uint32]256)
    if($result.HResult -lt 0 -or -not $result.HasBitmap) {
@@ -91,6 +98,7 @@ try {
  Write-Host 'FAST_PREVIEW_MSI_SOURCE_HASHES_PASSED'
 } finally {
  if($installed){
+   Write-Host 'FAST_PREVIEW_SMOKE_BEFORE_UNINSTALL'
    $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $msi) -Wait -PassThru
    if($p.ExitCode -ne 0){throw ('MSI uninstall failed: '+$p.ExitCode)}
  }
