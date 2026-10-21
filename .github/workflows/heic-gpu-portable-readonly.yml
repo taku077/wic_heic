@@ -82,6 +82,15 @@ jobs:
           $detailBytes=(Get-Item -LiteralPath $detail).Length
           if($detailBytes -lt 1MB -or $detailBytes -gt 64MB){throw "Unreasonable detailed HEVC fixture: $detailBytes"}
           Write-Host "HEIC_GPU_PORTABLE_12MP_FIXTURE coded_width=4032 coded_height=3024 bytes=$detailBytes sha256=$((Get-FileHash -LiteralPath $detail -Algorithm SHA256).Hash)"
+          # Additional 8-bit Main (NV12) 12MP synthetic. This is NOT a real HEIC:
+          # it measures whether the Intel Main-profile hardware decoder can
+          # preserve BGRA pixels and Windows Fant output, independently of Main10.
+          $detail8=Join-Path $samples 'synthetic12mp_8bit_detail.h265'
+          & $env:HEIC_CI_FFMPEG -hide_banner -nostdin -loglevel error -threads 2 -f lavfi -i 'testsrc2=size=4032x3024:rate=1' -vf 'noise=alls=24:allf=t+u' -frames:v 1 -pix_fmt yuv420p -c:v libx265 -preset ultrafast -x265-params 'log-level=error:pools=2:frame-threads=1' -f hevc $detail8
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $detail8)){throw '12MP HEVC Main 8bit synthetic fixture generation failed'}
+          $detail8Bytes=(Get-Item -LiteralPath $detail8).Length
+          if($detail8Bytes -lt 1MB -or $detail8Bytes -gt 64MB){throw "Unsafe Main 8bit HEVC fixture: $detail8Bytes"}
+          Write-Host "HEIC_GPU_PORTABLE_MAIN8_12MP_FIXTURE coded_width=4032 coded_height=3024 bytes=$detail8Bytes sha256=$((Get-FileHash -LiteralPath $detail8 -Algorithm SHA256).Hash)"
           $libBin=Join-Path $env:FFMPEG_RESEARCH_ROOT 'bin'
           # Package only these codec, pixel-format and audio utility FFmpeg DLLs.
           # The isolated-PATH test below will reject any omitted transitive DLL.
@@ -104,7 +113,7 @@ jobs:
           [IO.File]::WriteAllLines($manifest,$lines,[Text.Encoding]::UTF8)
           "HEIC_GPU_PORTABLE_STAGING=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "HEIC_GPU_PORTABLE_BUNDLE_FILES=$($lines.Count) bundle_bytes=$((Get-ChildItem $root -Recurse -File|Measure-Object -Property Length -Sum).Sum)"
-      - name: Actually decode both bundled HEVC Main10 samples in the portable EXE on CI
+      - name: Verify all four bundled HEVC sample streams on Windows via isolated-path portable EXE
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -121,8 +130,12 @@ jobs:
           }
           $sw | ForEach-Object {Write-Host $_}
           if($exit -ne 0){throw "Isolated-PATH HEVC selftest failed code=$exit"}
-          if(-not ($sw -match 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS')){
-            throw 'Portability cannot be claimed without 3/3 decoded HEVC fixtures'
+          if(-not ($sw -match 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_4_OF_4_PASS') -or
+             -not ($sw -match 'sample=synthetic12mp_8bit_detail got=1 expected=1') -or
+             -not ($sw -match 'sample=synthetic12mp_detail got=2 expected=2') -or
+             -not ($sw -match 'sample=04 got=4 expected=4') -or
+             -not ($sw -match 'sample=fixture-irot3-exif6-noaux got=4 expected=4')){
+            throw 'Native 8bit/10bit synthetic and RExt HEIC-derived profile gates are not verified'
           }
           Write-Host 'HEIC_GPU_PORTABLE_BUNDLED_CPU_SELFTEST_PASS'
       - name: Verify hardware probe reports unproven without a real D3D11 Main10 device
@@ -133,7 +146,8 @@ jobs:
           $response=@(& $exe 0 2>&1)
           $response | ForEach-Object {Write-Host $_}
           if($LASTEXITCODE -ne 0){throw 'Portable D3D11 research probe unexpectedly crashed'}
-          if(($response -match 'HEIC_GPU_PORTABLE_MAIN10_HARDWARE_.*DECODE_AND_CPU_READBACK_PROVEN') -or
+          if((($response -match 'HEIC_GPU_PORTABLE_MAIN10_HARDWARE_.*DECODE_AND_CPU_READBACK_PROVEN') -or
+              ($response -match 'HEIC_GPU_PORTABLE_MAIN8_HARDWARE_12MP_FANT_EXACT_PROVEN')) -or
              -not ($response -match 'HEIC_GPU_PORTABLE_NOT_PROVEN')){
             throw 'Virtual runner cannot establish physical Intel hardware decode'
           }
@@ -165,7 +179,7 @@ jobs:
           $logs=@(Get-ChildItem -LiteralPath $dir -Filter 'GPU_Readonly_Result_*.txt' -File)
           if($logs.Count -ne 1){throw 'CMD must save exactly one unique log'}
           $content=[IO.File]::ReadAllText($logs[0].FullName)
-          foreach($require in @('HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS',
+          foreach($require in @('HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_4_OF_4_PASS',
               '=== GPU VIDEO HARDWARE DECODER CAPS ===','HEIC_GPU_CAPS_READONLY_NO_MSI_NO_REGISTRY_PASS',
               '=== GPU INDEX 0 ===','HEIC_GPU_PORTABLE_NOT_PROVEN')){
             if(-not $content.Contains($require)){throw "Unexpected/incomplete user diagnostic log: $require"}
@@ -191,10 +205,10 @@ jobs:
           $logs=@(Get-ChildItem -LiteralPath $folder -Filter 'GPU_Thumbnail_Experimental_*.txt' -File)
           if($logs.Count -ne 1){throw 'Experimental CLI must create unique single report'}
           $content=[IO.File]::ReadAllText($logs[0].FullName)
-          if($content -notmatch 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS' -or
+          if($content -notmatch 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_4_OF_4_PASS' -or
              $content -notmatch 'HEIC_GPU_PORTABLE_NOT_PROVEN' -or
              $content -match 'HEIC_GPU_THUMB_TIMES'){
-            throw 'No Intel GPU on virtual runner: no GPU thumbnail timing may be fabricated'
+            throw 'No physical Intel GPU on virtual runner: thumbnail timing must not be fabricated'
           }
           Write-Host 'HEIC_GPU_THUMB_OPTIONAL_COMMAND_NEGATIVE_HARDWARE_CI_PASS'
           Remove-Item -LiteralPath $logs[0].FullName
