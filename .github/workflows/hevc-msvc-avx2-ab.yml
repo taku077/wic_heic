@@ -86,8 +86,10 @@ jobs:
           & ./diagnostics/thumbnail_warmup/Enable_AVX2_Libde265_CI.ps1
           if(-not $?){throw 'Pinned libde265 experimental dispatch patch failed'}
           $status=git -C wic_heic/3rdparty/libde265 diff --name-only
-          if(@($status).Count -ne 1 -or $status -ne 'libde265/x86/sse.cc'){
-            throw 'Experimental native-source edit affected unexpected files'
+          $expected=@('libde265/x86/sse.cc','libde265/x86/transform-dct-tables.h')
+          $unexpected=@($status | Where-Object {$_ -notin $expected})
+          if(@($status).Count -ne 2 -or $unexpected.Count -ne 0){
+            throw ('Unexpected native-source changes: '+($status -join ','))
           }
       - name: Build optimized libde265 static library with AVX2 kernels
         shell: pwsh

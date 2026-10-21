@@ -37,4 +37,26 @@ $insertion=@'
 $patched=$source.Insert($insertAt,$insertion)
 if($patched -eq $source){throw 'No patch change'}
 [IO.File]::WriteAllText((Resolve-Path $path).Path,$patched,[Text.UTF8Encoding]::new($false))
+# Pinned AVX2 transform table used GCC __attribute__ unconditionally,
+# which MSVC does not accept. Adapt only its alignment macro.
+$tables='wic_heic/3rdparty/libde265/libde265/x86/transform-dct-tables.h'
+$header=(Get-Content -LiteralPath $tables -Raw) -replace '\r\n',[string][char]10
+$oldMacro=@'
+#ifndef ALIGNED_64
+#define ALIGNED_64(decl) decl __attribute__((aligned(64)))
+#endif
+'@
+$newMacro=@'
+#ifndef ALIGNED_64
+#if defined(_MSC_VER)
+#define ALIGNED_64(decl) __declspec(align(64)) decl
+#else
+#define ALIGNED_64(decl) decl __attribute__((aligned(64)))
+#endif
+#endif
+'@
+if(-not $header.Contains($oldMacro)){throw 'AVX2 pinned transform table alignment macro changed unexpectedly'}
+$header=$header.Replace($oldMacro,$newMacro)
+[IO.File]::WriteAllText((Resolve-Path $tables).Path,$header,[Text.UTF8Encoding]::new($false))
+Write-Host 'WIC_HEIC_CI_AVX2_MSVC_ALIGNED_64_PATCH_APPLIED'
 Write-Host 'WIC_HEIC_CI_AVX2_DISPATCH_PATCH_APPLIED_RUNTIME_GUARDED'
