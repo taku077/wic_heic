@@ -281,7 +281,7 @@ jobs:
             if($_ -match '^HEIC_GPU_MAIN10_TARGET adapter=(\d+) width=2048 height=2048 decoder_config=1$'){[int]$Matches[1]}
           })
           $portrait=@($lines | ForEach-Object {
-            if($_ -match '^HEIC_GPU_MAIN10_TARGET adapter=(\d+) width=1080 height=1920 decoder_config=1$'){[int]$Matches[1]}
+            if($_ -match '^HEIC_GPU_MAIN10_TARGET adapter=(\d+) width=1920 height=1080 decoder_config=1$'){[int]$Matches[1]}
           })
           $eligible=@($square | Where-Object {$_ -in $portrait})
           if($eligible.Count -eq 0){
