@@ -143,6 +143,14 @@ jobs:
           msbuild wictest/isolated_shell/HeifNativeAnnexB.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Direct HEIC encoded-image to HEVC AnnexB bridge failed to compile'}
           Write-Host 'HEIC_NATIVE_ANNEXB_CPP_COMPILED_NO_REGISTER'
+      - name: Refuse malformed HEVC NAL, hvcC and ISOBMFF lengths before GPU submission
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifNativeAnnexB.exe').Path
+          & $exe --selftest
+          if($LASTEXITCODE -ne 0){throw 'Annex B malformed-input selftests failed'}
+          Write-Host 'HEIC_NATIVE_ANNEXB_MALFORMED_INPUT_GUARDS_CI_PASSED'
       - name: Compare native HEIC raw-item AnnexB output against FFmpeg reference pixels
         shell: pwsh
         run: |
