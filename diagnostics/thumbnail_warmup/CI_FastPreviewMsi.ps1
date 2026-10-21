@@ -14,7 +14,7 @@ $keys=@(
  "Software\Classes\.heic\ShellEx\$thumb",
  "Software\Classes\SystemFileAssociations\.heic\ShellEx\$thumb"
 )
-$hkcu=[Microsoft.Win32.Registry]::CurrentUser
+$hkcu=[Microsoft.Win32.Registry]::LocalMachine
 foreach($key in $keys) {
  $k=$hkcu.OpenSubKey($key)
  if($k){$k.Close();throw ('Preexisting per-user registration: '+$key)}
@@ -57,7 +57,7 @@ try {
  Add-Type -TypeDefinition $match.Groups[1].Value -Language CSharp -ErrorAction Stop
  Write-Host 'FAST_PREVIEW_SMOKE_AFTER_ADDTYPE'
  if([TrialShell.Shell]::ProbeComActivation($cls) -ne 0){throw 'Fast COM DLL cannot be activated'}
- $testKey=$hkcu.CreateSubKey($marker)
+ $testKey=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($marker)
  try {$testKey.SetValue('Enable',1,[Microsoft.Win32.RegistryValueKind]::DWord)}
  finally {$testKey.Close()}
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
@@ -75,7 +75,7 @@ try {
      throw ('Real .heic Shell thumbnail failed: '+$result.HResult)
    }
  }
- $key=$hkcu.OpenSubKey($marker)
+ $key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($marker)
  try {$calls=[int]$key.GetValue('Calls',0)}
  finally {$key.Close()}
  if($calls -ne 10){throw ('Fast handler not used for real .heic extraction: '+$calls)}
@@ -116,7 +116,7 @@ try {
    $key=$hkcu.OpenSubKey($subkey)
    if($key){$key.Close();throw ('Residual per-user registry key: '+$subkey)}
  }
- $hkcu.DeleteSubKeyTree($marker,$false)
+ [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($marker,$false)
  Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
- Write-Host 'FAST_PREVIEW_MSI_REGISTRY_UNINSTALL_RESTORE_PASSED'
+ Write-Host 'FAST_PREVIEW_MSI_HKLM_ROLLBACK_PASSED'
 }
