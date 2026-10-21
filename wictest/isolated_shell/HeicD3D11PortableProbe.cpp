@@ -289,6 +289,16 @@ int wmain(int argc,wchar_t** argv){
        name,sps.generalProfileIdc,sps.spsCount);
     Need(result.profile==expectedProfile && sps.generalProfileIdc==expectedProfile,
          "HEVC profile changed/mismatched SPS; refuse GPU profile contract");
+    if(i==2){
+     const Bytes ref=HeicThumbFant::Scale(result.bgra,result.w,result.h);
+     const Bytes control=HeicThumbFant::Scale(result.bgra,result.w,result.h);
+     Need(ref==control && ref.size()==size_t(256)*192*4,
+          "Windows WIC Fant control not deterministic at 12MP");
+     int nonOpaque=0;
+     for(size_t p=3;p<ref.size();p+=4)nonOpaque+=(ref[p]!=255);
+     Need(nonOpaque==0,"WIC Fant opacity/alpha unexpected");
+     std::puts("HEIC_GPU_THUMB_WIC_FANT_REFERENCE_256x192_SELFTEST_PASS");
+    }
    }
    std::puts("HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS");
    std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
@@ -373,6 +383,11 @@ int wmain(int argc,wchar_t** argv){
     // This is bounded at three pairs, so it never becomes an open-ended loop.
     std::vector<double> cpuTotal{sw.totalMs},gpuTotal{hw.totalMs};
     std::vector<double> gpuDecode{hw.decoderMs},gpuReadback{hw.readbackMs},gpuColor{hw.colorMs};
+    std::vector<double> thumbTotal,smallReadback;
+    if(gpuThumbMode&&hw.thumbProduced){
+     thumbTotal.push_back(hw.thumb.totalMs);
+     smallReadback.push_back(hw.thumb.smallReadbackMs);
+    }
     for(int repetition=1;repetition<3;++repetition){
      const Measurement nextCpu=OneFrame(compressed,software);
      Print(name,"software-repeat",nextCpu);
@@ -389,11 +404,25 @@ int wmain(int argc,wchar_t** argv){
      gpuDecode.push_back(nextGpu.decoderMs);
      gpuReadback.push_back(nextGpu.readbackMs);
      gpuColor.push_back(nextGpu.colorMs);
+     if(gpuThumbMode&&nextGpu.thumbProduced){
+      thumbTotal.push_back(nextGpu.thumb.totalMs);
+      smallReadback.push_back(nextGpu.thumb.smallReadbackMs);
+     }
     }
     const double cpuMedian=Median3(cpuTotal),gpuMedian=Median3(gpuTotal);
     std::printf("HEIC_GPU_PORTABLE_REPEATED_BENCH sample=%s trials=3 cpu_total_median_ms=%.3f gpu_total_median_ms=%.3f gpu_decoder_median_ms=%.3f gpu_readback_median_ms=%.3f gpu_color_median_ms=%.3f total_improvement_percent=%.2f true_hardware_passes=3 exact_reference_audited=3\n",
        name,cpuMedian,gpuMedian,Median3(gpuDecode),Median3(gpuReadback),
        Median3(gpuColor),100.0*(cpuMedian-gpuMedian)/cpuMedian);
+    if(gpuThumbMode){
+     if(thumbTotal.size()==3){
+      std::printf("HEIC_GPU_THUMB_REPEATED_BENCH sample=%s trials=3 gpu_thumb_median_ms=%.3f small_bgra_readback_median_ms=%.3f hevc_gpu_decode_median_ms=%.3f gpu_decode_plus_thumb_median_ms=%.3f control_full_readback_median_ms=%.3f research_only=1\n",
+       name,Median3(thumbTotal),Median3(smallReadback),Median3(gpuDecode),
+       Median3(gpuDecode)+Median3(thumbTotal),Median3(gpuReadback));
+     }else{
+      std::printf("HEIC_GPU_THUMB_REPEATED_NOT_PROVEN sample=%s completed=%llu requested=3\n",
+       name,static_cast<unsigned long long>(thumbTotal.size()));
+     }
+    }
     ++proven;
    }catch(const std::exception& err){
     std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s reason=%s\n",
