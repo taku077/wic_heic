@@ -31,3 +31,33 @@ B. 実機配布を一切せずに、人工HEICにICC・アルファ・10bit/HDR�
 C. Windows 10の実写真テストは、破壊・上書きを避ける復元手順と明示的な許可が得られるまで保留する。
 
 **結論：隔離ShellのARGB画質完全一致は有望な実証済み成果。ただしWindows 10標準JPEG同等の実用性能は未達・未検証。**
+
+## 2026-10-21追補：同一WIC画素源からJPEGを生成した速度比較と遅延の内訳
+
+隔離CI専用の `wictest/isolated_shell/ShellJpegComparison.cpp` を追加した。
+人工HEICのWICデコード画素を24bpp BGRに変換し、Windows WICの標準JPEGエンコーダーで `.jpg` を作成する。各ペアは同じデコード元画像に由来するが、JPEGは非可逆圧縮されるためファイル内容が同一という意味ではない。JPEG生成の時間はサムネイル表示時間に含めない。
+
+異なる新規パスのJPEGと実験用 `.wictrial` HEICを交互にWindows `IThumbnailCache` へ渡し、初回取得と `WTS_INCACHEONLY` 再訪を計測した。HEIC側は実験用直接WIC Shellプロバイダー、JPEG側はWindows標準のJPEG処理経路なので、純粋な形式だけの差ではなく**現在の実装の処理経路比較**である。
+
+小さい元画像ではJPEG側が100×100のサムネイルを返す一方、HEIC実験ハンドラー側が256×256へ拡大して返す。処理画素数の異なる4ペアを公正な速度比較から除外し、同じ寸法を返した6ペアのみで集計した。
+
+- CI https://github.com/taku077/wic_heic/actions/runs/39559855974
+- 1回目の初回Shell取得中央値：HEIC **132.89ms**、JPEG **8.50ms**（6ペア）。
+- 2回目の初回Shell取得中央値：HEIC **132.60ms**、JPEG **8.32ms**（6ペア）。
+- 同じ6ペアのキャッシュ再訪中央値はHEIC約0.62ms、JPEG約0.39～0.44ms。
+- Windows Server 2022の測定であり、**Windows 10 Explorerの画面表示時間、コールドOS/SSD/HDDキャッシュ測定とは区別**する。
+
+さらに同じ6ペアで、Shell計測をすべて終えた**後**に、独立したインプロセスWIC描画経路の各段階を測定した。
+
+- CI https://github.com/taku077/wic_heic/actions/runs/39560343574
+- 直接WICのデコーダー生成、初期化・フレーム取得、Scaler/Converter初期化は、いずれもHEICで概ね0.4ms以内。
+- 32bpp PBGRAへの縮小付き `IWICFormatConverter::CopyPixels` 中央値：HEIC **122.20ms／122.23ms**、JPEG **2.70ms／2.89ms**。
+- `CopyPixels` は遅延の支配的な段階であり、**この段階にはHEVCの実画像デコード・画素変換・縮小の実処理が含まれる**。これだけでは内部のHEVCデコード単独時間とは断定できない。
+- HEICのWICデコーダーを明示的に選択する起動高速化だけでは、この `CopyPixels` 遅延は解消されない。
+
+`wic_heic/HeicBitmapFrameDecode.cpp` の現行コードを点検した結果、初回 `CopyPixels` → `DecodeImage()` → `m_Handle.decode_image(heif_colorspace_RGB,m_chroma)` で実画像が遅延デコードされる構造を確認した。現在のShell試作ハンドラーは `GetFrame` → WIC Fant scalerを用いる。WIC側には `GetThumbnail` メソッドが実装されているが、埋め込みサムネイルがある場合に活用して高速化できるか、向き・HDR/ICC・画質の差が許容できるかは未試験。
+
+**次の優先順位:** 
+1. 公開人工HEICで埋め込みサムネイルの有無、解像度、デコード時間、主画像との向き・色差を検査する。
+2. 埋め込みサムネイルが必要サイズを満たすときだけ試験的に選択し、実行時間と画素／ICC／EXIFの同一性をチェックする。差がある場合、画素完全一致とは評価しない。
+3. フルHEVCデコードと縮小／色変換の時間内訳を、人工画像・隔離CI・CPU負荷制限付きで分解する。マルチスレッドを無条件に増やさない。
