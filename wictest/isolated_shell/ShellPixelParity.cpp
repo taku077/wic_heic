@@ -78,7 +78,7 @@ struct Pixels {
     UINT width=0,height=0;
     std::vector<BYTE> bytes;
 };
-Pixels WicReference(const std::wstring& filename,IWICImagingFactory* factory) {
+Pixels WicReference(const std::wstring& filename,IWICImagingFactory* factory,UINT targetSize) {
     ComPtr<IWICStream> stream;
     Checked(factory->CreateStream(stream.GetAddressOf()),"wic stream");
     Checked(stream->InitializeFromFilename(filename.c_str(),GENERIC_READ),"wic stream open");
@@ -96,8 +96,8 @@ Pixels WicReference(const std::wstring& filename,IWICImagingFactory* factory) {
     Required(width>0 && height>0 && width<=10000 && height<=10000,"wic bounds");
     const UINT maxSide=(std::max)(width,height);
     Pixels pixels;
-    pixels.width=(std::max)(1u,UINT(uint64_t(width)*kSize/maxSide));
-    pixels.height=(std::max)(1u,UINT(uint64_t(height)*kSize/maxSide));
+    pixels.width=(std::max)(1u,UINT(uint64_t(width)*targetSize/maxSide));
+    pixels.height=(std::max)(1u,UINT(uint64_t(height)*targetSize/maxSide));
     const auto count=uint64_t(pixels.width)*pixels.height*4;
     Required(count<=16*1024*1024 && count<=UINT_MAX,"wic output too large");
     ComPtr<IWICBitmapScaler> scaler;
@@ -202,7 +202,15 @@ int wmain(int argc,wchar_t** argv) {
             Required(GetFileAttributesW(path.c_str())!=INVALID_FILE_ATTRIBUTES,
                      "missing synthetic file");
             Pixels shell=ShellCached(path,cache.Get());
-            Pixels reference=WicReference(path,factory.Get());
+            const UINT returnedSize=(std::max)(shell.width,shell.height);
+            // IThumbnailCache may return a bucket LARGER than cx (for
+            // example, 256px for a 128px request). Compare actual pixels,
+            // never silently pretend this is a 128px output.
+            Required(returnedSize>=kSize && returnedSize<=1024,
+                     "Shell thumbnail unexpected size bucket");
+            std::printf("SHELL_PIXEL_SIZE_NEGOTIATION index=%d requested=%u returned=%u dimensions=%ux%u\n",
+                        i,kSize,returnedSize,shell.width,shell.height);
+            Pixels reference=WicReference(path,factory.Get(),returnedSize);
             if(shell.width!=reference.width || shell.height!=reference.height) {
                 std::printf("SHELL_PIXEL_DIMENSIONS_MISMATCH index=%d shell=%ux%u wic=%ux%u\n",
                     i,shell.width,shell.height,reference.width,reference.height);
