@@ -54,7 +54,7 @@ jobs:
         with:
           path: wic_heic/3rdparty/_out/x64
           key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
-      - name: Compile candidate private 2-thread decoder (never register globally)
+      - name: Compile adaptive 2/4-thread private decoder (never register globally)
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -66,7 +66,7 @@ jobs:
           Copy-Item -LiteralPath $dll -Destination 'Installer/WicHeicPrivateCodec.dll'
           $hash=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
           "ADAPTIVE_PRIVATE_HASH=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "FAST2_PRIVATE_DLL_SHA256=$hash"
+          Write-Host "ADAPTIVE_PRIVATE_DLL_SHA256=$hash"
           if(Test-Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{6215667C-74CA-4076-A769-3F834C3F25F5}\InprocServer32'){
             throw 'Private codec erroneously registered globally'
           }
@@ -110,7 +110,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Old v0.3.0 MSI not available'}
           $old=Join-Path $target 'WicHeicFastPreview.msi'
           if((Get-FileHash -LiteralPath $old -Algorithm SHA256).Hash -ne '3BD7A99135C4F0271FB84F9809A6E4CCE792C8B331D5D18E1CEF48AD9876D3FA'){
-            throw 'Unexpected old v0.2.0 baseline MSI digest'
+            throw 'Unexpected old v0.3.0 baseline MSI digest'
           }
           "ADAPTIVE_V030_MSI=$old" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Prove MSI upgrade from v0.3.0, DLL replacement and full uninstall
@@ -157,7 +157,7 @@ jobs:
               if($p.ExitCode -ne 0){throw "v0.4.0 rollback failure $($p.ExitCode)"}
             } elseif($oldInstalled) {
               $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $old) -Wait -PassThru
-              if($p.ExitCode -ne 0){throw "v0.4.0 rollback failure $($p.ExitCode)"}
+              if($p.ExitCode -ne 0){throw "v0.3.0 rollback failure $($p.ExitCode)"}
             }
           }
           $k=$cu.OpenSubKey($key)
