@@ -133,7 +133,7 @@ jobs:
           $response=@(& $exe 0 2>&1)
           $response | ForEach-Object {Write-Host $_}
           if($LASTEXITCODE -ne 0){throw 'Portable D3D11 research probe unexpectedly crashed'}
-          if(($response -match 'MAIN10_HARDWARE_DECODE_AND_CPU_READBACK_PROVEN') -or
+          if(($response -match 'HEIC_GPU_PORTABLE_MAIN10_HARDWARE_.*DECODE_AND_CPU_READBACK_PROVEN') -or
              -not ($response -match 'HEIC_GPU_PORTABLE_NOT_PROVEN')){
             throw 'Virtual runner cannot establish physical Intel hardware decode'
           }
