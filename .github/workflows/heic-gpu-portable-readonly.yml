@@ -62,7 +62,7 @@ jobs:
           Copy-Item -LiteralPath $binary -Destination $root
           $caps=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/D3D11HevcCaps.exe').Path
           Copy-Item -LiteralPath $caps -Destination $root
-          foreach($file in @('Run_GPU_ReadOnly.cmd','README_JA.txt','FFMPEG_LICENSE_NOTICE.txt')){
+          foreach($file in @('Run_GPU_ReadOnly.cmd','Run_GPU_Thumbnail_Experimental.cmd','README_JA.txt','FFMPEG_LICENSE_NOTICE.txt')){
             Copy-Item -LiteralPath "wictest/isolated_shell/gpu_probe_portable/$file" -Destination $root
           }
           foreach($name in @('04','fixture-irot3-exif6-noaux')){
@@ -137,6 +137,13 @@ jobs:
              -not ($response -match 'HEIC_GPU_PORTABLE_NOT_PROVEN')){
             throw 'Virtual runner cannot establish physical Intel hardware decode'
           }
+          $preview=@(& $exe thumb:0 2>&1)
+          $preview | ForEach-Object {Write-Host $_}
+          if($LASTEXITCODE -ne 0 -or
+             ($preview -match 'HEIC_GPU_THUMB_TIMES') -or
+             -not ($preview -match 'HEIC_GPU_PORTABLE_NOT_PROVEN')){
+             throw 'Research-only small-readback cannot claim GPU performance on software CI'
+          }
           Write-Host 'HEIC_GPU_PORTABLE_GPU_SUCCESS_UNPROVEN_UNTIL_REAL_INTEL_PC'
       - name: Exercise original user CMD launcher and verify persistent unique read-only log
         shell: pwsh
@@ -165,6 +172,31 @@ jobs:
           }
           Write-Host "HEIC_GPU_PORTABLE_REAL_CMD_SMOKETEST_PASSED log=$($logs[0].Name) bytes=$($logs[0].Length)"
           # User logs must NOT be included in the sealed downloadable artifact.
+          Remove-Item -LiteralPath $logs[0].FullName
+      - name: Smoke-test optional experimental GPU-thumbnail command on software-only CI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $folder=$env:HEIC_GPU_PORTABLE_STAGING
+          $cmd=Join-Path $folder 'Run_GPU_Thumbnail_Experimental.cmd'
+          if(-not (Test-Path -LiteralPath $cmd)){throw 'Optional thumbnail runner missing'}
+          $env:HEIC_GPU_PROBE_CI='1'
+          try {
+            Push-Location $folder
+            try {
+              & $env:ComSpec /d /c ('"' + $cmd + '"')
+              if($LASTEXITCODE -ne 0){throw 'Optional thumbnail command failed on software-only runner'}
+            } finally {Pop-Location}
+          } finally {Remove-Item Env:HEIC_GPU_PROBE_CI -ErrorAction SilentlyContinue}
+          $logs=@(Get-ChildItem -LiteralPath $folder -Filter 'GPU_Thumbnail_Experimental_*.txt' -File)
+          if($logs.Count -ne 1){throw 'Experimental CLI must create unique single report'}
+          $content=[IO.File]::ReadAllText($logs[0].FullName)
+          if($content -notmatch 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS' -or
+             $content -notmatch 'HEIC_GPU_PORTABLE_NOT_PROVEN' -or
+             $content -match 'HEIC_GPU_THUMB_TIMES'){
+            throw 'No Intel GPU on virtual runner: no GPU thumbnail timing may be fabricated'
+          }
+          Write-Host 'HEIC_GPU_THUMB_OPTIONAL_COMMAND_NEGATIVE_HARDWARE_CI_PASS'
           Remove-Item -LiteralPath $logs[0].FullName
       - name: Upload portable noninstaller diagnostic (research use only)
         uses: actions/upload-artifact@v4
