@@ -42,6 +42,12 @@ jobs:
           $ErrorActionPreference='Stop'
           & ./diagnostics/thumbnail_warmup/CI_HeicMetadataSignals.ps1
           if(-not $?){throw 'HEIC metadata inventory failed'}
+      - name: Validate metadata-selected HEIC orientation against AnnexB exact pixels
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/CI_HeicMetadataDirectedParity.ps1
+          if(-not $?){throw 'Metadata-directed HEIC rendering parity failed'}
       - name: Investigate existing HEIC fixture colors and rotation via AnnexB
         shell: pwsh
         run: |
