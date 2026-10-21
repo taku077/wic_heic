@@ -1,0 +1,182 @@
+name: HEIC Fast Thumbnail v0.3.0 conservative 2-thread MSI
+on:
+  push:
+    branches: [candidate/fast-thumbnail-thread2-v0.3.0]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  fast2-msi:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compute exact native dependency signature
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $hash=[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore pinned native libde265 and libheif
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-\${{ env.CODEC_DEPS }}-v1
+      - name: Prepare native tools only if needed
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Build exact native dependencies on cache miss
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($name in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$name.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Native dependency build failed $name"}
+          }
+      - name: Cache native dependencies for next optimization iteration
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-\${{ env.CODEC_DEPS }}-v1
+      - name: Compile candidate private 2-thread decoder (never register globally)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CL='/DWIC_HEIC_PRIVATE_FAST2'
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Optimized private WIC codec build failed'}
+          Remove-Item Env:\CL
+          $dll=(Resolve-Path 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          Copy-Item -LiteralPath $dll -Destination 'Installer/WicHeicPrivateCodec.dll'
+          $hash=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+          "FAST2_PRIVATE_HASH=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "FAST2_PRIVATE_DLL_SHA256=$hash"
+          if(Test-Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{6215667C-74CA-4076-A769-3F834C3F25F5}\InprocServer32'){
+            throw 'Private codec erroneously registered globally'
+          }
+      - name: Build actual Shell handler and safe MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeicShellFastPreview.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Native Shell fast handler build failed'}
+          msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Fast 2-thread MSI build failed'}
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Artificial 12MP image generator failed'}
+      - name: Generate 12MP original-safe synthetic picture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $generator=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          $codec=(Resolve-Path 'Installer/WicHeicPrivateCodec.dll').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          & $generator $codec $fixture
+          if($LASTEXITCODE -ne 0){throw 'Artificial 12MP HEIC generation failed'}
+          "FAST2_LARGE_FIXTURE=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Validate installed .heic previews with real extension and 12MP benchmark
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $msi=(Resolve-Path '(Build)/x64/Release/en-US/WicHeicFastPreview.msi').Path
+          $fixture=(Resolve-Path 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          & ./diagnostics/thumbnail_warmup/CI_FastPreviewMsi.ps1 -MsiPath $msi -FixturePath $fixture -LargeFixturePath $env:FAST2_LARGE_FIXTURE
+          if(-not $?){throw 'Fast2 .heic extraction or rollback test failed'}
+      - name: Download confirmed v0.2.0 installer to test non-destructive major upgrade
+        shell: pwsh
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $target=Join-Path $env:RUNNER_TEMP 'existing-v020'
+          New-Item -ItemType Directory -Path $target | Out-Null
+          gh run download 39567581068 -n WicHeic-FastThumbnail-v0.2.0-PrivateDecoder-Win10-UNVERIFIED -D $target -R taku077/wic_heic
+          if($LASTEXITCODE -ne 0){throw 'Old v0.2.0 MSI not available'}
+          $old=Join-Path $target 'WicHeicFastPreview.msi'
+          if((Get-FileHash -LiteralPath $old -Algorithm SHA256).Hash -ne 'F020A98609504FB1E23AF70F8541507645CA551BE10F443239996B25FB2484DC'){
+            throw 'Unexpected old v0.2.0 baseline MSI digest'
+          }
+          "FAST2_V020_MSI=$old" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Prove MSI upgrade from v0.2.0, DLL replacement and full uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $old=$env:FAST2_V020_MSI
+          $new=(Resolve-Path '(Build)/x64/Release/en-US/WicHeicFastPreview.msi').Path
+          $cls='{D973196C-165C-4FCE-8838-17C37037D384}'
+          $shell='{E357FCCD-A995-4576-B01F-234630154E96}'
+          $key="Software\Classes\.heic\ShellEx\$shell"
+          $cu=[Microsoft.Win32.Registry]::CurrentUser
+          if($cu.OpenSubKey($key)){throw 'Existing per-user HEIC handler found before upgrade'}
+          $oldInstalled=$false
+          $newInstalled=$false
+          try{
+            $p=Start-Process msiexec.exe -ArgumentList ('/i "{0}" /qn /norestart' -f $old) -Wait -PassThru
+            if($p.ExitCode -ne 0){throw "Baseline v0.2.0 MSI install failed $($p.ExitCode)"}
+            $oldInstalled=$true
+            $k=$cu.OpenSubKey($key)
+            if(-not $k){throw 'v0.2.0 Shell override missing'}
+            $k.Close()
+            Write-Host 'FAST2_MSI_V020_INSTALLED'
+            $p=Start-Process msiexec.exe -ArgumentList ('/i "{0}" /qn /norestart' -f $new) -Wait -PassThru
+            if($p.ExitCode -ne 0){throw "v0.3.0 in-place upgrade failed $($p.ExitCode)"}
+            $newInstalled=$true
+            $inproc=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Classes\CLSID\$cls\InprocServer32")
+            if(-not $inproc){throw 'New provider class not registered'}
+            try {$dllPath=[string]$inproc.GetValue('')}
+            finally {$inproc.Close()}
+            $private=Join-Path (Split-Path -Parent $dllPath) 'WicHeicPrivateCodec.dll'
+            if(-not (Test-Path $private)){throw 'New private WIC decoder missing'}
+            $current=(Get-FileHash -LiteralPath $private -Algorithm SHA256).Hash
+            if($current -ne $env:FAST2_PRIVATE_HASH){throw 'v0.3.0 upgrade did not replace old codec'}
+            $k=$cu.OpenSubKey($key)
+            if(-not $k){throw 'New per-user HEIC thumbnail override missing'}
+            try {
+              if([string]$k.GetValue('') -ne $cls){throw 'HEIC handler points at wrong CLSID'}
+            } finally {$k.Close()}
+            Write-Host 'FAST2_MSI_V020_TO_V030_UPGRADE_PASSED'
+          } finally {
+            if($newInstalled) {
+              $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $new) -Wait -PassThru
+              if($p.ExitCode -ne 0){throw "v0.3.0 rollback failure $($p.ExitCode)"}
+            } elseif($oldInstalled) {
+              $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $old) -Wait -PassThru
+              if($p.ExitCode -ne 0){throw "v0.2.0 rollback failure $($p.ExitCode)"}
+            }
+          }
+          $k=$cu.OpenSubKey($key)
+          if($k){$k.Close();throw 'Per-user HEIC association left behind after upgraded MSI uninstall'}
+          $k=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("Software\Classes\CLSID\$cls")
+          if($k){$k.Close();throw 'Experimental Shell COM registration left behind'}
+          Write-Host 'FAST2_MSI_UPGRADE_AND_ROLLBACK_PASSED'
+      - name: Package MSI only after fresh-install and upgrade checks pass
+        shell: pwsh
+        run: |
+          $out='WicHeicFastThumbnail_v0.3.0_Candidate'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          Copy-Item '(Build)/x64/Release/en-US/WicHeicFastPreview.msi' -Destination $out
+          Copy-Item 'diagnostics/thumbnail_warmup/FAST_PREVIEW_MSI_JA.md' -Destination (Join-Path $out 'README_JA.md')
+          Get-FileHash (Join-Path $out 'WicHeicFastPreview.msi') -Algorithm SHA256 | Format-List
+      - name: Upload conservative fast 2-thread WIC thumbnail candidate MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: WicHeic-FastThumbnail-v0.3.0-Thread2-Candidate-Win10-UNVERIFIED
+          path: WicHeicFastThumbnail_v0.3.0_Candidate/
+          if-no-files-found: error
+          retention-days: 14
