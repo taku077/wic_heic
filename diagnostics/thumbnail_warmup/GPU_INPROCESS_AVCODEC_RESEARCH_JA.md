@@ -25,3 +25,15 @@
 - CPU baselineのunrotated BGRAとFFmpeg CLIの参照が厳密一致するかはWindows CIの結果次第。10bit変換時の色マトリクス差は確認してから扱う。
 - 実GPUでAV_PIX_FMT_D3D11 frameが得られ、hwframe transferが成功し、出力の回転、ICC/NCLX、10bit色変換、alpha対応、256pxサムネイルの画質が再現できるまではユーザー配布なし。
 - 2件の研究A/Bで初回Explorer高速化は証明できない。将来、10～30件の同一条件ABBA（プロセス初期化時間込み）とGPU対SWのCPU/メモリ/画質を確認。最大30%以上等の明確な改善の目途が立つまでMSIを作らない。
+
+## 2026-10-22 継続調査：Windows実測で発見した色再現性差分
+- `fd6443a` のWindows CI：固定版FFmpeg SDK取得成功、MSVCで`HeicInprocessGpuAB.cpp`コンパイル成功。
+- `04.heic` は元Annex BをCLIでBGRA復号した画像と、libavcodecプロセス内復号BGRAが **SHA256およびバイト数で完全一致**。
+- `fixture-irot3-exif6-noaux.heic` はHEVCフレーム復号には成功したが、BGRAのSHA256が参照値と不一致（8,294,400byteの寸法一致のみ）。
+- 計測値はCi上の研究用wall時間：04 HEVC約31〜37ms、もう1枚約16〜21ms。これはExplorer表示時間でも第7世代Intel実機の速度でもない。
+- CI失敗は意図した画素一致ゲートの正常動作。2枚目を一致とみなしたり、GPU高速化ができたと主張しない。
+- `d23c682` でHEVC AVFrameのYCbCr matrix・量子化rangeに基づきlibswscaleの`sws_setColorspaceDetails`を呼び、BT709/BT2020/601等既知の行列だけを受理。未対応行列はfail-closed。
+- `874ee16` までに、色変換前の10bit `YUV420P10LE` を診断専用に保存し、CLIの同一Annex Bから復号した10bit YUVをSHA256比較するCIを追加。これで2枚目の差がHEVC復号由来かYCbCr→BGRA変換由来かを独立に識別する。
+- **この新規色変換変更と10bit YUV raw parityのCI合格は未確認**。該当SHAのActionsステータスが確認できてから合格と認定すること。
+- 過去のCIでGPU実ハードウェア未搭載、D3D11VA実復号未実証。製品WIC/Explorer、MSI、Photos、HEIC Managerは一切変更していない。
+- 通常プッシュ時の総合ネイティブ再構築は抑え、絞ったMain10プロセス内復号CI + 軽量ガードCIによりフィードバックを得る構成へ変更。
