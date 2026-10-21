@@ -6,7 +6,7 @@ set "LOG=%~dp0GPU_Thumbnail_Experimental_%RANDOM%_%RANDOM%.txt"
 if exist "%LOG%" goto NEWLOG
 > "%LOG%" echo Intel 12MP HEVC Main10 direct GPU VideoProcessor 256px thumbnail research
 >> "%LOG%" echo Experimental mode; NOT an installer or Windows Explorer optimization.
->> "%LOG%" echo Only three bundled artificial HEVC samples are opened.
+>> "%LOG%" echo Only four bundled pinned HEVC streams (two HEIC-derived, two synthetic) are opened.
 >> "%LOG%" echo Output BGRA thumbnail remains in RAM; only this report text is written.
 >> "%LOG%" echo Compare against Windows WIC Fant and full-frame P010 readback.
 >> "%LOG%" echo === CPU SELFTEST ===
