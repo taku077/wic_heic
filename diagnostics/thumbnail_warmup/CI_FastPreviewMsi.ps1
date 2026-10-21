@@ -14,10 +14,12 @@ $keys=@(
  "Software\Classes\.heic\ShellEx\$thumb",
  "Software\Classes\SystemFileAssociations\.heic\ShellEx\$thumb"
 )
-$hkcu=[Microsoft.Win32.Registry]::LocalMachine
+$hkcu=[Microsoft.Win32.Registry]::CurrentUser
+$hklm=[Microsoft.Win32.Registry]::LocalMachine
 foreach($key in $keys) {
- $k=$hkcu.OpenSubKey($key)
- if($k){$k.Close();throw ('Preexisting per-user registration: '+$key)}
+ $root=if($key -eq $keys[0]){$hklm}else{$hkcu}
+ $k=$root.OpenSubKey($key)
+ if($k){$k.Close();throw ('Preexisting preview registration: '+$key)}
 }
 $msi=(Resolve-Path -LiteralPath $MsiPath).Path
 $fixture=(Resolve-Path -LiteralPath $FixturePath).Path
@@ -34,7 +36,7 @@ try {
  if($p.ExitCode -ne 0){throw ('Fast MSI install exit='+$p.ExitCode)}
  $installed=$true
  Write-Host 'FAST_PREVIEW_SMOKE_INSTALLED'
- $key=$hkcu.OpenSubKey("Software\Classes\CLSID\$cls\InprocServer32")
+ $key=$hklm.OpenSubKey("Software\Classes\CLSID\$cls\InprocServer32")
  if(-not $key){throw 'Fast COM class was not registered'}
  try {
    $dll=[string]$key.GetValue('')
@@ -113,7 +115,8 @@ try {
    if($p.ExitCode -ne 0){throw ('MSI uninstall failed: '+$p.ExitCode)}
  }
  foreach($subkey in $keys){
-   $key=$hkcu.OpenSubKey($subkey)
+   $root=if($subkey -eq $keys[0]){$hklm}else{$hkcu}
+   $key=$root.OpenSubKey($subkey)
    if($key){$key.Close();throw ('Residual per-user registry key: '+$subkey)}
  }
  [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($marker,$false)
