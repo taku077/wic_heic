@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 #include "HevcAnnexBSpsProfile.h"
+#include "HeicD3D11GpuThumbnail.h"
+#include "HeicThumbFantReference.h"
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/hwcontext.h>
@@ -30,6 +32,9 @@ extern "C" {
 #pragma comment(lib,"swscale.lib")
 #pragma comment(lib,"psapi.lib")
 #pragma comment(lib,"dxgi.lib")
+#pragma comment(lib,"d3d11.lib")
+#pragma comment(lib,"ole32.lib")
+#pragma comment(lib,"windowscodecs.lib")
 namespace {
 using Clock=std::chrono::steady_clock;
 using Bytes=std::vector<uint8_t>;
@@ -67,7 +72,7 @@ Bytes ReadSafe(const std::wstring& file){
  Need(fread(out.data(),1,out.size(),input.get())==out.size(),"Fixture incomplete");
  return out;
 }
-struct Route {bool requestedGpu=false;bool gotD3D11=false;AVBufferRef* device=nullptr;};
+struct Route {bool requestedGpu=false;bool gotD3D11=false;bool thumbPilot=false;AVBufferRef* device=nullptr;};
 AVPixelFormat PickHardware(AVCodecContext* codec,const AVPixelFormat* formats){
  const auto* route=static_cast<Route*>(codec->opaque);
  if(!route||!route->requestedGpu)return AV_PIX_FMT_NONE;
@@ -81,6 +86,9 @@ struct Measurement{
  AVPixelFormat format=AV_PIX_FMT_NONE;
  int profile=AV_PROFILE_UNKNOWN;
  double decoderMs=0,readbackMs=0,colorMs=0,totalMs=0;
+ bool thumbAttempted=false,thumbProduced=false;
+ std::string thumbReason;
+ HeicGpuThumb::Output thumb;
 };
 Measurement OneFrame(const Bytes& compressed,Route& route){
  const AVCodec* decoder=avcodec_find_decoder(AV_CODEC_ID_HEVC);
@@ -125,10 +133,18 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  Need(result>=0,"HEVC decoder did not return a frame");
  const auto decodedAt=Clock::now();
  const AVFrame* source=decoded.get();
+ HeicGpuThumb::Output gpuThumbResult;
+ bool thumbOk=false;std::string thumbReason;
  if(route.requestedGpu){
   Need(decoded->format==AV_PIX_FMT_D3D11,
        "AVFrame pixel format is not D3D11 hardware texture");
   route.gotD3D11=true;
+  if(route.thumbPilot){
+   try{
+    gpuThumbResult=HeicGpuThumb::Render(decoded.get(),route.device);
+    thumbOk=true;
+   }catch(const std::exception& e){thumbReason=e.what();}
+  }
   Need(av_hwframe_transfer_data(downloaded.get(),decoded.get(),0)>=0,
        "D3D11 to CPU GPU frame readback failed");
   source=downloaded.get();
@@ -144,6 +160,10 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  m.w=source->width;m.h=source->height;
  m.format=static_cast<AVPixelFormat>(source->format);
  m.profile=ctx->profile;
+ m.thumbAttempted=route.thumbPilot;
+ m.thumbProduced=thumbOk;
+ m.thumbReason=thumbReason;
+ if(thumbOk)m.thumb=std::move(gpuThumbResult);
  m.bgra.resize(size_t(m.w)*m.h*4);
  Sws scaler(sws_getContext(m.w,m.h,m.format,m.w,m.h,
    AV_PIX_FMT_BGRA,SWS_BICUBIC,nullptr,nullptr,nullptr));
@@ -189,6 +209,33 @@ double Median3(std::vector<double> measurements){
  std::sort(measurements.begin(),measurements.end());
  return measurements[1];
 }
+void AuditThumbnail(const char* sample,const Measurement& gpu,const Bytes& reference){
+ if(!gpu.thumbAttempted)return;
+ if(!gpu.thumbProduced){
+  std::printf("HEIC_GPU_THUMB_NOT_PROVEN sample=%s reason=%s\n",sample,gpu.thumbReason.c_str());
+  return;
+ }
+ const Bytes& candidate=gpu.thumb.bgra;
+ Need(candidate.size()==reference.size() && candidate.size()==size_t(256)*192*4,
+      "GPU thumb dimensions invalid");
+ uint64_t total=0,squares=0;unsigned maxerr=0,nonopaque=0;
+ for(size_t p=0;p<candidate.size();p+=4){
+  if(candidate[p+3]!=255)++nonopaque;
+  for(unsigned ch=0;ch<3;++ch){
+   const unsigned diff=unsigned(std::abs(int(candidate[p+ch])-int(reference[p+ch])));
+   total+=diff;squares+=uint64_t(diff)*diff;maxerr=std::max(maxerr,diff);
+  }
+ }
+ const double count=256.0*192*3;
+ const double mae=double(total)/count,mse=double(squares)/count;
+ const double psnr=mse==0?99.0:10.0*std::log10(65025.0/mse);
+ std::printf("HEIC_GPU_THUMB_COMPARE sample=%s vs_wic_fant_mae=%.6f psnr_db=%.3f max_rgb_error=%u nonopaque_pixels=%u quality_approved=0\n",
+   sample,mae,psnr,maxerr,nonopaque);
+ std::printf("HEIC_GPU_THUMB_TIMES sample=%s setup_ms=%.3f video_blt_submit_ms=%.3f small_256px_readback_ms=%.3f gpu_thumb_total_ms=%.3f hevc_gpu_decode_ms=%.3f hevc_plus_thumb_ms=%.3f original_full_yuv_readback_ms=%.3f\n",
+   sample,gpu.thumb.setupMs,gpu.thumb.bltMs,gpu.thumb.smallReadbackMs,
+   gpu.thumb.totalMs,gpu.decoderMs,gpu.decoderMs+gpu.thumb.totalMs,gpu.readbackMs);
+ std::puts("HEIC_GPU_THUMB_RESEARCH_ONLY_NOT_PRODUCTION_OR_EXPLORER_APPROVED");
+}
 bool Audit(const char* name,const Measurement& sw,const Measurement& gpu){
  Need(sw.w==gpu.w&&sw.h==gpu.h&&sw.bgra.size()==gpu.bgra.size(),
       "Hardware frame geometry does not match software");
@@ -211,11 +258,13 @@ bool Audit(const char* name,const Measurement& sw,const Measurement& gpu){
 }
 int wmain(int argc,wchar_t** argv){
  try {
-  Need(argc==2,"usage: HeicD3D11PortableProbe.exe --software-selftest | adapter-index [0..9]");
+  Need(argc==2,"usage: HeicD3D11PortableProbe.exe --software-selftest | 0..9 | thumb:0..9");
   const std::wstring arg=argv[1];
   const bool selftest=arg==L"--software-selftest";
-  Need(selftest||(arg.size()==1&&arg[0]>=L'0'&&arg[0]<=L'9'),
-       "Only a single digit DXGI adapter index 0..9 or --software-selftest is accepted");
+  const bool gpuThumbMode=(arg.size()==7&&arg.rfind(L"thumb:",0)==0);
+  const std::wstring indexText=gpuThumbMode?arg.substr(6):arg;
+  Need(selftest||(indexText.size()==1&&indexText[0]>=L'0'&&indexText[0]<=L'9'),
+       "Only DXGI index 0..9, thumb:0..9 or --software-selftest accepted");
   const auto dir=ExecutableFolder();
   const auto fixtureDir=dir+L"\\samples\\";
   const char* names[]={"04","fixture-irot3-exif6-noaux","synthetic12mp_detail"};
@@ -245,7 +294,7 @@ int wmain(int argc,wchar_t** argv){
    std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
    return 0;
   }
-  const int adapter=arg[0]-L'0';
+  const int adapter=indexText[0]-L'0';
   // Important: a D3D11 texture from WARP / Microsoft Basic Render is NOT
   // evidence of hardware HEVC acceleration. Only physically enumerated
   // Intel adapters can be counted by this Intel GPU research diagnostic.
@@ -284,6 +333,7 @@ int wmain(int argc,wchar_t** argv){
    return 0;
   }
   Route hardware;hardware.requestedGpu=true;hardware.device=gpu.ptr;
+  hardware.thumbPilot=gpuThumbMode;
   Route software;software.requestedGpu=false;
   int proven=0;
   for(const char* name:names){
@@ -306,11 +356,14 @@ int wmain(int argc,wchar_t** argv){
       name,sps.generalProfileIdc,sw.profile,sps.spsCount,
       main10?"d3d11_candidate":"software_only");
     if(!main10)continue;
+    Bytes wicReference;
+    if(gpuThumbMode)wicReference=HeicThumbFant::Scale(sw.bgra,sw.w,sw.h);
     hardware.gotD3D11=false;
     const Measurement hw=OneFrame(compressed,hardware);
     Need(hardware.gotD3D11&&hw.hardware,
        "Hardware decode was replaced by software unexpectedly");
     Print(name,"gpu",hw);
+    if(gpuThumbMode)AuditThumbnail(name,hw,wicReference);
     if(!Audit(name,sw,hw)){
      std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s stage=color_audit_fail_closed\n",name);
      continue;
@@ -328,6 +381,7 @@ int wmain(int argc,wchar_t** argv){
      Need(hardware.gotD3D11&&nextGpu.hardware,
          "Repeated Main10 D3D11VA lost hardware device texture");
      Print(name,"gpu-repeat",nextGpu);
+     if(gpuThumbMode)AuditThumbnail(name,nextGpu,wicReference);
      Need(Audit(name,nextCpu,nextGpu),
          "Repeated hardware decode failed pixel/color comparison");
      cpuTotal.push_back(nextCpu.totalMs);
