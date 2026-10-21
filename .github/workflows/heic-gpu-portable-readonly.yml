@@ -144,6 +144,9 @@ jobs:
           if(-not ($sw -match 'HEIC_GPU_MAIN8_SIMULATED_NV12_PLANAR_COLOR_BYTE_EXACT_PASS')) {
             throw 'NV12 GPU-style chroma-only planar repack did not match actual CPU RGB output'
           }
+          if(-not ($sw -match 'HEIC_GPU_MAIN8_PADDED_STRIDE_4096_NV12_BGRA_EXACT_PASS')) {
+            throw 'NV12 padded GPU row stride must not alter resulting BGRA reference'
+          }
           Write-Host 'HEIC_GPU_PORTABLE_BUNDLED_CPU_SELFTEST_PASS'
       - name: Verify hardware probe reports unproven without a real D3D11 Main10 device
         shell: pwsh
