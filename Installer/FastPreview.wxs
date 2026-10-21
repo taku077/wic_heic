@@ -1,10 +1,10 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-<Package Id="taku077.WicHeicFastPreview" Name="WicHeic Fast Thumbnail Preview (Experimental)" Manufacturer="WicHeic Community Experimental" Version="0.2.0" Scope="perMachine">
+<Package Id="taku077.WicHeicFastPreview" Name="WicHeic Fast Thumbnail Preview (Experimental)" Manufacturer="WicHeic Community Experimental" Version="0.3.0" Scope="perMachine">
  <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="Newer preview already installed."/>
  <Media Id="1" Cabinet="FastPreview.cab" EmbedCab="yes"/>
  <Property Id="PRIOR_HEIC_EXT"><RegistrySearch Id="PriorHeicExt" Root="HKCU" Key="Software\Classes\.heic\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}" Type="raw"/></Property>
  <Property Id="PRIOR_HEIC_SYSTEM"><RegistrySearch Id="PriorHeicSystem" Root="HKCU" Key="Software\Classes\SystemFileAssociations\.heic\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}" Type="raw"/></Property>
- <Launch Condition="Installed OR (NOT PRIOR_HEIC_EXT AND NOT PRIOR_HEIC_SYSTEM)" Message="Existing per-user HEIC thumbnail handler: refusing to overwrite."/>
+ <Launch Condition="Installed OR WIX_UPGRADE_DETECTED OR (NOT PRIOR_HEIC_EXT AND NOT PRIOR_HEIC_SYSTEM)" Message="Existing per-user HEIC thumbnail handler: refusing to overwrite."/>
  <Feature Id="Main"><ComponentGroupRef Id="FastThumb"/></Feature>
 </Package>
 <Fragment>
