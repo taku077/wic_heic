@@ -11,6 +11,7 @@ param(
  [Parameter(Mandatory=$true)][string]$FixturePath,
  [string]$PixelParityExePath='',
  [string[]]$ExtraFixturePaths=@(),
+ [switch]$ForceArgbCacheTrial,
  [ValidateSet('User','Machine')][string]$RegistrationScope='User'
 )
 $ErrorActionPreference='Stop'
@@ -222,12 +223,14 @@ try {
  $registered+=('Software\Classes\SystemFileAssociations\'+$extension)
  $key=Open-NewRegistryKey ('Software\WicHeicSyntheticTrial\'+$providerId)
  $key.SetValue('Enable',1,[Microsoft.Win32.RegistryValueKind]::DWord)
+ $key.SetValue('ForceArgb',[int][bool]$ForceArgbCacheTrial,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.SetValue('Calls',0,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.SetValue('Attempts',0,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.SetValue('Activated',0,[Microsoft.Win32.RegistryValueKind]::DWord)
  $key.Close()
  $registered+=('Software\WicHeicSyntheticTrial\'+$providerId)
  Write-Host ('SHELL_TRIAL_CLASS_REGISTRATION_SCOPE='+$RegistrationScope)
+ Write-Host ('SHELL_TRIAL_FORCE_ARGB='+[bool]$ForceArgbCacheTrial)
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
  # Verify the COM class can be instantiated directly before asking the
  # Shell's isolated thumbnail process to activate it.
