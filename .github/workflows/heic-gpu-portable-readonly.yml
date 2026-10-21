@@ -46,6 +46,8 @@ jobs:
           $ErrorActionPreference='Stop'
           msbuild wictest/isolated_shell/HeicD3D11PortableProbe.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Windows x64 HEVC GPU diagnostic build failure'}
+          msbuild wictest/isolated_shell/D3D11HevcCaps.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Read-only D3D11 HEVC capability reporter build failure'}
           Write-Host 'HEIC_GPU_PORTABLE_COMPILED_NO_MSI'
       - name: Stage fixed original-free HEVC fixtures and dynamic LGPL research DLLs
         shell: pwsh
@@ -58,6 +60,8 @@ jobs:
           New-Item -ItemType Directory -Path $samples | Out-Null
           $binary=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicD3D11PortableProbe.exe').Path
           Copy-Item -LiteralPath $binary -Destination $root
+          $caps=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/D3D11HevcCaps.exe').Path
+          Copy-Item -LiteralPath $caps -Destination $root
           foreach($file in @('Run_GPU_ReadOnly.cmd','README_JA.txt','FFMPEG_LICENSE_NOTICE.txt')){
             Copy-Item -LiteralPath "wictest/isolated_shell/gpu_probe_portable/$file" -Destination $root
           }
