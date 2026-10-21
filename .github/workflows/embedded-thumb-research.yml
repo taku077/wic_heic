@@ -122,6 +122,15 @@ jobs:
           if((Get-FileHash -LiteralPath $env:EMBEDDED_BASE -Algorithm SHA256).Hash -ne $env:EMBEDDED_BASE_SHA){throw 'Direct Shell path changed main HEIC'}
           if((Get-FileHash -LiteralPath $env:EMBEDDED_WITH -Algorithm SHA256).Hash -ne $env:EMBEDDED_WITH_SHA){throw 'Direct Shell path changed HEIC with embedded thumbnail'}
           Write-Host 'SHELL_EMBEDDED_DIRECT_SHELL_AND_INPUT_HASHES_PASS'
+      - name: Audit embedded-thumb usefulness on pinned HEIC fixture corpus
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/SurveyEmbeddedCorpus.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Corpus metadata-only audit compilation failed'}
+          $survey=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/SurveyEmbeddedCorpus.exe').Path
+          & $survey
+          if($LASTEXITCODE -ne 0){throw 'Corpus metadata-only audit failed'}
       - name: No MSI or registry modifications were made
         shell: pwsh
         run: |
