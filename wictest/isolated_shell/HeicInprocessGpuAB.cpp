@@ -257,16 +257,18 @@ void PrintSample(const char* mode,const char* file,const Sample& s){
 }
 int wmain(int argc,wchar_t** argv){
  try{
-  Require(argc==2,"usage: HeicInprocessGpuAB.exe software | software12 | gpu:<D3D11 adapter index>");
+  Require(argc==2,"usage: HeicInprocessGpuAB.exe software | software12 | software12detail | gpu:<D3D11 adapter index>");
   Require(Env(L"GITHUB_ACTIONS")==L"true","CI only");
   const std::wstring temp=Env(L"RUNNER_TEMP");
   Require(!temp.empty(),"no disposable runner path");
   const std::wstring selection=argv[1];
   const bool gpu=selection.rfind(L"gpu:",0)==0;
   const bool synthetic12=(selection==L"software12");
-  Require(gpu||selection==L"software"||synthetic12,"unrecognized mode");
+  const bool detail12=(selection==L"software12detail");
+  Require(gpu||selection==L"software"||synthetic12||detail12,"unrecognized mode");
   const std::wstring output=temp+(gpu?L"\\heic_inprocess_gpu":
-     (synthetic12?L"\\heic_inprocess_software12":L"\\heic_inprocess_software"));
+     (synthetic12?L"\\heic_inprocess_software12":
+      (detail12?L"\\heic_inprocess_software12detail":L"\\heic_inprocess_software")));
   const std::wstring bridge=temp+L"\\heic_native_bridge";
   Require(GetFileAttributesW(bridge.c_str())!=INVALID_FILE_ATTRIBUTES,"validated native bridge directory missing");
   Require(GetFileAttributesW(output.c_str())==INVALID_FILE_ATTRIBUTES,
@@ -299,7 +301,8 @@ int wmain(int argc,wchar_t** argv){
   Release release{&route.device};
   const std::vector<std::string> names=synthetic12?
     std::vector<std::string>{"synthetic12mp"}:
-    std::vector<std::string>{"04","fixture-irot3-exif6-noaux"};
+    (detail12?std::vector<std::string>{"synthetic12mp_detail"}:
+    std::vector<std::string>{"04","fixture-irot3-exif6-noaux"});
   int completed=0;
   for(const std::string& name:names){
     const char* stem=name.c_str();
@@ -333,7 +336,7 @@ int wmain(int argc,wchar_t** argv){
   const double batchWall=std::chrono::duration<double,std::milli>(Clock::now()-batchStart).count();
   const double batchCpu=double(ProcessCpuTicks()-batchCpuStart)/10000.0;
   std::printf("HEIC_INPROCESS_SUMMARY mode=%s requested=%u decoded=%d device_reused=%d batch_wall_ms=%.3f batch_cpu_ms=%.3f batch_private_bytes=%llu\n",
-    gpu?"gpu":(synthetic12?"software12":"software"),unsigned(names.size()),completed,int(gpu),
+    gpu?"gpu":(synthetic12?"software12":(detail12?"software12detail":"software")),unsigned(names.size()),completed,int(gpu),
     batchWall,batchCpu,static_cast<unsigned long long>(PrivateBytes()));
   Require(gpu || completed==int(names.size()),"software controls must decode all pinned streams");
   std::puts("HEIC_INPROCESS_RESEARCH_ONLY_NO_REGISTER_NO_MSI_PASS");
