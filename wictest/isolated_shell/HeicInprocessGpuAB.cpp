@@ -104,6 +104,7 @@ enum AVPixelFormat HwFormat(AVCodecContext* context,const enum AVPixelFormat* fo
 }
 struct Sample {
  Bytes bgra;
+ Bytes nativeYuv10; // research diagnostic only, never used by installed WIC
  double wallMs=0, cpuMs=0;
  uint64_t privateBytes=0;
  bool hardwareFrame=false;
@@ -210,6 +211,26 @@ Sample Decode(const Bytes& compressed,Route& route){
  sample.wallMs=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
  sample.cpuMs=double(ProcessCpuTicks()-cpuStart)/10000.0;
  sample.privateBytes=PrivateBytes();
+ // Optional lossless decoder-stage diagnostic. Compare raw 10-bit YUV
+ // before any YCbCr matrix/range conversion, so color and decode mismatches
+ // are not conflated. Keep this allocation outside the benchmark timing.
+ if(!route.requestedHardware && Env(L"HEIC_INPROCESS_DUMP_YUV")==L"1" &&
+    source->format==AV_PIX_FMT_YUV420P10LE){
+  Require(w%2==0 && h%2==0,"odd dimensions rejected by pinned 4:2:0 research corpus");
+  sample.nativeYuv10.reserve(size_t(w)*h*3);
+  for(int plane=0;plane<3;++plane){
+   const int planeW=plane==0?w:w/2,planeH=plane==0?h:h/2;
+   const size_t rowBytes=size_t(planeW)*2;
+   Require(source->data[plane]!=nullptr && source->linesize[plane]>=int(rowBytes),
+           "invalid raw YUV plane stride");
+   for(int row=0;row<planeH;++row){
+    const uint8_t* begin=source->data[plane]+size_t(row)*source->linesize[plane];
+    sample.nativeYuv10.insert(sample.nativeYuv10.end(),begin,begin+rowBytes);
+   }
+  }
+  Require(sample.nativeYuv10.size()==size_t(w)*h*3,
+          "unexpected planar 10-bit source size");
+ }
  return sample;
 }
 void PrintSample(const char* mode,const char* file,const Sample& s){
@@ -275,6 +296,11 @@ int wmain(int argc,wchar_t** argv){
       const Sample sample=Decode(annex,route);
       const std::wstring destination=output+L"\\"+wide+L".bgra";
       SaveNew(destination,sample.bgra);
+      if(!sample.nativeYuv10.empty()){
+        SaveNew(output+L"\\"+wide+L".yuv420p10le",sample.nativeYuv10);
+        std::printf("HEIC_INPROCESS_RAW_YUV_DUMP file=%s bytes=%llu\n",
+          stem,static_cast<unsigned long long>(sample.nativeYuv10.size()));
+      }
       PrintSample(gpu?"gpu":"software",stem,sample);
       Require(!gpu || route.gotHardwareFrame,"hardware frame not produced");
       ++completed;
