@@ -1,0 +1,112 @@
+name: HEIC Intel D3D11VA no-install read-only hardware probe package
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - '.github/workflows/heic-gpu-portable-readonly.yml'
+      - 'wictest/isolated_shell/HeicD3D11PortableProbe.cpp'
+      - 'wictest/isolated_shell/HeicD3D11PortableProbe.vcxproj'
+      - 'wictest/isolated_shell/gpu_probe_portable/**'
+      - 'diagnostics/thumbnail_warmup/Prepare_FFmpeg_Inprocess_GPU_SDK_CI.ps1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Resolve disposable FFmpeg CLI for lossless pinned synthetic image extraction
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)){
+            choco install ffmpeg -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'FFmpeg in CI unavailable'}
+            $env:PATH="C:\ProgramData\chocolatey\bin;$env:PATH"
+            "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          $cli=(Get-Command ffmpeg -ErrorAction Stop).Source
+          "HEIC_CI_FFMPEG=$cli" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Prepare date-pinned verified FFmpeg LGPL shared SDK and MSVC import libraries
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/Prepare_FFmpeg_Inprocess_GPU_SDK_CI.ps1
+          if($LASTEXITCODE -ne 0 -or -not $?){throw 'FFmpeg research SDK verification failure'}
+      - name: Compile standalone no-registration Intel D3D11VA Main10 hardware probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeicD3D11PortableProbe.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Windows x64 HEVC GPU diagnostic build failure'}
+          Write-Host 'HEIC_GPU_PORTABLE_COMPILED_NO_MSI'
+      - name: Stage fixed original-free HEVC fixtures and dynamic LGPL research DLLs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'heic_gpu_readonly_portable'
+          if(Test-Path -LiteralPath $root){throw 'Refusing to reuse diagnostic packaging directory'}
+          New-Item -ItemType Directory -Path $root | Out-Null
+          $samples=Join-Path $root 'samples'
+          New-Item -ItemType Directory -Path $samples | Out-Null
+          $binary=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicD3D11PortableProbe.exe').Path
+          Copy-Item -LiteralPath $binary -Destination $root
+          foreach($file in @('Run_GPU_ReadOnly.cmd','README_JA.txt','FFMPEG_LICENSE_NOTICE.txt')){
+            Copy-Item -LiteralPath "wictest/isolated_shell/gpu_probe_portable/$file" -Destination $root
+          }
+          foreach($name in @('04','fixture-irot3-exif6-noaux')){
+            $src=(Resolve-Path "wictest/samples/$name.heic").Path
+            $shaBefore=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+            $dest=Join-Path $samples "$name.h265"
+            & $env:HEIC_CI_FFMPEG -hide_banner -nostdin -loglevel error -i $src -map 0:v:0 -c:v copy -bsf:v hevc_mp4toannexb -f hevc $dest
+            if($LASTEXITCODE -ne 0 -or -not (Test-Path $dest)){throw "Pinned synthetic HEVC extract failed: $name"}
+            if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne $shaBefore){throw "Source synthetic HEIC modified: $name"}
+            Write-Host "HEIC_GPU_PORTABLE_FIXTURE name=$name bytes=$((Get-Item $dest).Length) sha256=$((Get-FileHash $dest -Algorithm SHA256).Hash)"
+          }
+          $libBin=Join-Path $env:FFMPEG_RESEARCH_ROOT 'bin'
+          $dlls=@(Get-ChildItem -LiteralPath $libBin -Filter '*.dll' -File)
+          if($dlls.Count -lt 3){throw 'LGPL shared FFmpeg runtime DLL files missing'}
+          foreach($dll in $dlls){Copy-Item -LiteralPath $dll.FullName -Destination $root}
+          $manifest=Join-Path $root 'SHA256_MANIFEST.txt'
+          $lines=@(Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName | ForEach-Object {
+            $relative=$_.FullName.Substring($root.Length+1)
+            "$relative SHA256=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+          })
+          [IO.File]::WriteAllLines($manifest,$lines,[Text.Encoding]::UTF8)
+          "HEIC_GPU_PORTABLE_STAGING=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "HEIC_GPU_PORTABLE_BUNDLE_FILES=$($lines.Count) bundle_bytes=$((Get-ChildItem $root -Recurse -File|Measure-Object -Property Length -Sum).Sum)"
+      - name: Actually decode both bundled HEVC Main10 samples in the portable EXE on CI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=Join-Path $env:HEIC_GPU_PORTABLE_STAGING 'HeicD3D11PortableProbe.exe'
+          $sw=@(& $exe --software-selftest 2>&1)
+          $sw | ForEach-Object {Write-Host $_}
+          if($LASTEXITCODE -ne 0){throw 'Packaged software HEVC selftest returned failure'}
+          if(-not ($sw -match 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_2_OF_2_PASS')){
+            throw 'Portability cannot be claimed without 2/2 decoded HEVC fixtures'
+          }
+          Write-Host 'HEIC_GPU_PORTABLE_BUNDLED_CPU_SELFTEST_PASS'
+      - name: Verify hardware probe reports unproven without a real D3D11 Main10 device
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=Join-Path $env:HEIC_GPU_PORTABLE_STAGING 'HeicD3D11PortableProbe.exe'
+          $response=@(& $exe 0 2>&1)
+          $response | ForEach-Object {Write-Host $_}
+          if($LASTEXITCODE -ne 0){throw 'Portable D3D11 research probe unexpectedly crashed'}
+          Write-Host 'HEIC_GPU_PORTABLE_GPU_SUCCESS_UNPROVEN_UNTIL_REAL_INTEL_PC'
+      - name: Upload portable noninstaller diagnostic (research use only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: HEIC_GPU_ReadOnly_Probe_x64_Research
+          path: ${{ runner.temp }}/heic_gpu_readonly_portable/*
+          retention-days: 14
+          if-no-files-found: error
