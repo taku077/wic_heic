@@ -126,6 +126,32 @@ public:
 };
 #endif
 
+#ifdef WIC_HEIC_FAST_PREVIEW
+uint32_t ElapsedMicros(const LARGE_INTEGER& start, const LARGE_INTEGER& end,
+                       const LARGE_INTEGER& frequency) noexcept {
+    if(frequency.QuadPart<=0 || end.QuadPart<start.QuadPart) return 0;
+    const uint64_t ticks=uint64_t(end.QuadPart-start.QuadPart);
+    const uint64_t frequencyTicks=uint64_t(frequency.QuadPart);
+    const uint64_t duration=ticks*1000000ull/frequencyTicks;
+    return uint32_t((std::min)(duration, uint64_t(0xFFFFFFFFu)));
+}
+void RecordTimingForSyntheticCi(const wchar_t* name, uint32_t microseconds) noexcept {
+    // Opt-in synthetic CI marker only; NEVER create a key or write paths/photos.
+    HKEY key=nullptr;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,kCounterKey,0,
+                     KEY_QUERY_VALUE|KEY_SET_VALUE,&key)!=ERROR_SUCCESS) return;
+    DWORD enabled=0,bytes=sizeof(enabled),type=0;
+    const bool approved=RegQueryValueExW(key,L"Enable",nullptr,&type,
+            reinterpret_cast<BYTE*>(&enabled),&bytes)==ERROR_SUCCESS &&
+            type==REG_DWORD && enabled==1;
+    if(approved) {
+        RegSetValueExW(key,name,0,REG_DWORD,
+                      reinterpret_cast<const BYTE*>(&microseconds),sizeof(microseconds));
+    }
+    RegCloseKey(key);
+}
+#endif
+
 class Provider final : public IThumbnailProvider, public IInitializeWithStream {
     std::atomic<ULONG> refs_{1};
     ComPtr<IStream> stream_;
@@ -158,6 +184,11 @@ public:
         if(!stream_)return E_UNEXPECTED;
         if(cx==0 || cx>1024)return E_INVALIDARG;
         CountTestMarker(L"Attempts");
+#ifdef WIC_HEIC_FAST_PREVIEW
+        LARGE_INTEGER t0{},tDecoder{},tFrame{},tPipeline{},tCopy{},frequency{};
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&t0);
+#endif
         ComPtr<IWICImagingFactory> factory;
         HRESULT hr=CoCreateInstance(CLSID_WICImagingFactory,nullptr,
             CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory));
@@ -175,6 +206,9 @@ public:
             &GUID_VendorPrsyahmi,decoder.GetAddressOf());
 #endif
         if(FAILED(hr))return hr;
+#ifdef WIC_HEIC_FAST_PREVIEW
+        QueryPerformanceCounter(&tDecoder);
+#endif
         LARGE_INTEGER start{};
         hr=stream_->Seek(start,STREAM_SEEK_SET,nullptr);
         if(FAILED(hr))return hr;
@@ -187,6 +221,9 @@ public:
         hr=frame->GetSize(&width,&height);
         if(FAILED(hr))return hr;
         if(!width || !height || width>10000 || height>10000)return E_INVALIDARG;
+#ifdef WIC_HEIC_FAST_PREVIEW
+        QueryPerformanceCounter(&tFrame);
+#endif
         const UINT maxSide=(std::max)(width,height);
         const UINT tw=(std::max)(1u,UINT(uint64_t(width)*cx/maxSide));
         const UINT th=(std::max)(1u,UINT(uint64_t(height)*cx/maxSide));
@@ -217,9 +254,15 @@ public:
             if(dib)DeleteObject(dib);
             return E_OUTOFMEMORY;
         }
+#ifdef WIC_HEIC_FAST_PREVIEW
+        QueryPerformanceCounter(&tPipeline);
+#endif
         hr=converter->CopyPixels(nullptr,tw*4u,UINT(bytes),
                                   static_cast<BYTE*>(pixels));
         if(FAILED(hr)){DeleteObject(dib);return hr;}
+#ifdef WIC_HEIC_FAST_PREVIEW
+        QueryPerformanceCounter(&tCopy);
+#endif
         WICPixelFormatGUID sourceFormat{};
         hr=frame->GetPixelFormat(&sourceFormat);
         if(FAILED(hr)){DeleteObject(dib);return hr;}
@@ -232,6 +275,18 @@ public:
         *alpha=(hasAlpha || ForceArgbForCiTrial())?WTSAT_ARGB:WTSAT_RGB;
         *output=dib;
         CountTestMarker(L"Calls");
+#ifdef WIC_HEIC_FAST_PREVIEW
+        RecordTimingForSyntheticCi(L"DecodeCopyPixelsUs",
+            ElapsedMicros(tPipeline,tCopy,frequency));
+        RecordTimingForSyntheticCi(L"DecoderSetupUs",
+            ElapsedMicros(t0,tDecoder,frequency));
+        RecordTimingForSyntheticCi(L"FrameOpenUs",
+            ElapsedMicros(tDecoder,tFrame,frequency));
+        RecordTimingForSyntheticCi(L"ScaleSetupUs",
+            ElapsedMicros(tFrame,tPipeline,frequency));
+        RecordTimingForSyntheticCi(L"AllRenderingUs",
+            ElapsedMicros(t0,tCopy,frequency));
+#endif
         return S_OK;
     }
 };
