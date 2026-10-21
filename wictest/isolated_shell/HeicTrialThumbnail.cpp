@@ -51,6 +51,24 @@ void CountTestMarker(const wchar_t* name) noexcept {
     RegCloseKey(key);
 }
 
+bool ForceArgbForCiTrial() noexcept {
+    // CI test option lives only under the synthetic per-run HKCU marker.
+    // It has no effect without a script-created Enable=1 entry.
+    HKEY key=nullptr;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,kCounterKey,0,KEY_QUERY_VALUE,&key)
+           !=ERROR_SUCCESS)return false;
+    DWORD enabled=0,force=0,bytes=sizeof(DWORD),type=0;
+    bool valid=RegQueryValueExW(key,L"Enable",nullptr,&type,
+             reinterpret_cast<BYTE*>(&enabled),&bytes)==ERROR_SUCCESS &&
+             type==REG_DWORD && enabled==1;
+    type=0;bytes=sizeof(DWORD);
+    bool requested=RegQueryValueExW(key,L"ForceArgb",nullptr,&type,
+             reinterpret_cast<BYTE*>(&force),&bytes)==ERROR_SUCCESS &&
+             type==REG_DWORD && force==1;
+    RegCloseKey(key);
+    return valid && requested;
+}
+
 class Provider final : public IThumbnailProvider, public IInitializeWithStream {
     std::atomic<ULONG> refs_{1};
     ComPtr<IStream> stream_;
@@ -142,7 +160,10 @@ public:
         const bool hasAlpha =
             IsEqualGUID(sourceFormat,GUID_WICPixelFormat32bppRGBA) ||
             IsEqualGUID(sourceFormat,GUID_WICPixelFormat64bppRGBA);
-        *alpha=hasAlpha?WTSAT_ARGB:WTSAT_RGB;
+        // The PBGRA conversion supplies a valid alpha byte even for opaque
+        // RGB fixtures. Experimental ARGB mode can test whether Shell uses a
+        // different cache representation for alpha-labelled thumbnails.
+        *alpha=(hasAlpha || ForceArgbForCiTrial())?WTSAT_ARGB:WTSAT_RGB;
         *output=dib;
         CountTestMarker(L"Calls");
         return S_OK;
