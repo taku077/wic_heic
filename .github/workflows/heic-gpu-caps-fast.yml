@@ -42,6 +42,12 @@ jobs:
           $ErrorActionPreference='Stop'
           & ./diagnostics/thumbnail_warmup/CI_HeicMetadataSignals.ps1
           if(-not $?){throw 'HEIC metadata inventory failed'}
+      - name: Prove mirrors, shear, translation, or conflicting metadata fail closed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/CI_HeicOrientationPolicyTests.ps1
+          if(-not $?){throw 'HEIC orientation safety policy tests failed'}
       - name: Validate metadata-selected HEIC orientation against AnnexB exact pixels
         shell: pwsh
         run: |
