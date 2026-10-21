@@ -15,6 +15,7 @@ foreach($name in @('03.heic','04.heic','05.heic','06.heic','07.heic','fixture-ir
   $sides=@($stream.side_data_list)
   $angles=@($sides|Where-Object {$null -ne $_ -and $_.PSObject.Properties['rotation']}|ForEach-Object { [string]$_.rotation })
   $tag=if($stream.tags -and $stream.tags.PSObject.Properties['rotate']){$stream.tags.rotate}else{'none'}
+  foreach($side in $sides){if($side -and $side.side_data_type -eq 'Display Matrix'){$matrix=([string]$side.displaymatrix) -replace '[\r\n]+',' | ';Write-Host "HEIC_ROTATION_DISPLAY_MATRIX file=$name value=$matrix"}}
   Write-Host "HEIC_ROTATION_METADATA file=$name codec=$($stream.codec_name) size=$($stream.width)x$($stream.height) rotateTag=$tag sideRotations=$($angles -join ',') sideTypes=$((@($sides|ForEach-Object {$_.side_data_type})) -join ',')"
   if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $hash){throw "Modified HEIC $name"}
 }
