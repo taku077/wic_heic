@@ -173,21 +173,22 @@ struct Summary {
     double median=0,p90=0,mean=0,min=0,max=0;
 };
 Summary Summarize(std::vector<double> values) {
-    Require(values.size()==kCases,"missing timing samples");
+    Require(!values.empty(),"missing timing samples");
     std::sort(values.begin(),values.end());
     Summary s;
     s.min=values.front();s.max=values.back();
-    s.median=(values[4]+values[5])/2;
-    s.p90=values[8];
+    const size_t n=values.size();
+    s.median=n%2?values[n/2]:(values[n/2-1]+values[n/2])/2;
+    s.p90=values[size_t(std::ceil(double(n)*0.9))-1];
     for(double value:values)s.mean+=value;
-    s.mean/=double(kCases);
+    s.mean/=double(n);
     return s;
 }
 void PrintSummary(const char* type,const char* phase,
                   const std::vector<double>& values) {
     Summary s=Summarize(values);
-    std::printf("SHELL_JPEG_HEIC_SUMMARY format=%s phase=%s count=10 median_ms=%.2f p90_ms=%.2f mean_ms=%.2f min_ms=%.2f max_ms=%.2f\n",
-        type,phase,s.median,s.p90,s.mean,s.min,s.max);
+    std::printf("SHELL_JPEG_HEIC_SUMMARY format=%s phase=%s count=%zu median_ms=%.2f p90_ms=%.2f mean_ms=%.2f min_ms=%.2f max_ms=%.2f\n",
+        type,phase,values.size(),s.median,s.p90,s.mean,s.min,s.max);
 }
 }
 int wmain(int argc,wchar_t** argv) {
@@ -220,6 +221,9 @@ int wmain(int argc,wchar_t** argv) {
         }
         std::printf("SHELL_JPEG_HEIC_PAIRS_CREATED=%d SOURCE=decoded_checked_in_HEIC JPEG_ENCODING=Windows_WIC_24bppBGR\n",kCases);
         std::vector<double> heicCold,jpegCold,heicWarm,jpegWarm;
+        std::vector<double> matchedHeicCold,matchedJpegCold;
+        std::vector<double> matchedHeicWarm,matchedJpegWarm;
+        std::vector<bool> sameSize(kCases,false);
         for(int i=0;i<kCases;++i) {
             // Alternate which format is asked for first, to limit order bias.
             const bool jpegFirst=(i%2)==0;
@@ -232,6 +236,11 @@ int wmain(int argc,wchar_t** argv) {
                 j=ShellThumbnail(cache.Get(),jpegPaths[i],false);
             }
             heicCold.push_back(h.milliseconds);jpegCold.push_back(j.milliseconds);
+            sameSize[i]=(h.width==j.width && h.height==j.height);
+            if(sameSize[i]){
+                matchedHeicCold.push_back(h.milliseconds);
+                matchedJpegCold.push_back(j.milliseconds);
+            }
             std::printf("SHELL_JPEG_HEIC_SAMPLE index=%d order=%s jpeg_cold_ms=%.2f heic_cold_ms=%.2f jpeg_size=%ux%u heic_size=%ux%u\n",
                 i,jpegFirst?"JPEG_FIRST":"HEIC_FIRST",j.milliseconds,h.milliseconds,
                 j.width,j.height,h.width,h.height);
@@ -242,8 +251,23 @@ int wmain(int argc,wchar_t** argv) {
             auto h=ShellThumbnail(cache.Get(),heicPaths[i],true);
             auto j=ShellThumbnail(cache.Get(),jpegPaths[i],true);
             heicWarm.push_back(h.milliseconds);jpegWarm.push_back(j.milliseconds);
+            if(sameSize[i]){
+                matchedHeicWarm.push_back(h.milliseconds);
+                matchedJpegWarm.push_back(j.milliseconds);
+            }
         }
-        PrintSummary("HEIC","first",heicCold);
+        const size_t matchedCount=matchedHeicCold.size();
+        std::printf("SHELL_JPEG_HEIC_GEOMETRY_FILTER equal_dimensions=%zu unequal_dimensions=%zu\n",
+                    matchedCount,size_t(kCases)-matchedCount);
+        // The 100x100 sources can be enlarged by the experimental HEIC
+        // handler but left at native size by the Windows JPEG handler. Such
+        // pairs cannot support an apples-to-apples thumbnail comparison.
+        Require(matchedCount>=5,"insufficient equal-dimension comparisons");
+        PrintSummary("HEIC","first_matched_geometry",matchedHeicCold);
+        PrintSummary("JPEG","first_matched_geometry",matchedJpegCold);
+        PrintSummary("HEIC","cache_only_matched_geometry",matchedHeicWarm);
+        PrintSummary("JPEG","cache_only_matched_geometry",matchedJpegWarm);
+        PrintSummary("HEIC","first_all_including_unequal_dimensions",heicCold);
         PrintSummary("JPEG","first",jpegCold);
         PrintSummary("HEIC","cache_only",heicWarm);
         PrintSummary("JPEG","cache_only",jpegWarm);
