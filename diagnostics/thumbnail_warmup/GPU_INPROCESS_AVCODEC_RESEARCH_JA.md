@@ -123,3 +123,20 @@
 - GPU側の`setup_ms`、`video_blt_submit_ms`、`small_256px_readback_ms`、`gpu_thumb_total_ms`を分離する。3回反復中央値で比較し、既存フルP010 readback時間も残す。
 - **重要**：実GPUハードウェア上でのVideoProcessor成功、真のreadback速度、WIC Fantとの画質差は未測定。Windows GitHub ActionsはソフトウェアGPUのみで、コンパイルとソフトウェアアダプター拒否／固定3HEVC自己テストしか証明できない。実環境で16:1縮小が処理できないドライバーもありうる。
 - 研究用EXEは比較のため従来のフルP010 CPU readbackも後から行うので、プロセス全体の経過時間やメモリ使用量は現在の性能目標の直接測定ではない。将来の製品候補は**GPU縮小のみを採用可能か**の画質と能力確認後に決める。
+
+## 2026-10-22：実機「GPU Thumbnail Experimental」第1回ログ（匿名化した性能・品質数値のみ）
+
+ユーザーが送付したテストZIPに \`GPU_Thumbnail_Experimental_21120_6299.txt\` があり、搭載ファイル13件の SHA256 は全件マニフェスト一致。オリジナルZIP、マシン固有のフルパス、デバイス識別用ポインタ、生ログはGitHubへ公開しない。
+
+物理アダプター：Intel HD Graphics 620（vendor 8086, device 5916）、非Intelの Microsoft Basic Render は除外。人工4032x3024 HEVC Main10だけGPU復号と縮小成功。2048x2048・1920x1080 は RExt (profile idc 4) でソフトウェアへ戻る。
+
+**3回の中央値（ms; 単一固定人工12MP入力）**：
+- software HEVC復号＋BGRA：741.100
+- GPU HEVC復号＋フルP010 readback＋BGRA：341.922、フルP010 readback：267.055
+- 新D3D11 VideoProcessorの12MP P010→256x192 BGRA縮小/readback：207.498（内GPU処理準備117.525、readback約78.353）；GPU復号23.503 + VP thumbnail処理207.498＝231.001（別系列中央値の合計であり、ペアごとの合計時間中央値ではない）
+- 直接縮小パスは従来341.922msと比較して短時間だが**WIC Fant画質不合格**。正式採用不可。
+- VP→WIC Fant 256pxのRGB MAE=6.529792, PSNR=25.774dB, RGB max error=148, 3回同一; Alpha all opaque. 元解像度のGPU vs software BGRAは3/3完全一致MAE=0。原因はGPU縮小/色変換/補間差分側。
+- setup=159.433/117.525/106.329ms と大きい。これに対し小画像読み戻しは45.885/81.902/78.353ms。小画像readbackにもVideoProcessor GPU同期待ちが含まれ、転送帯域単体の計測値ではない。
+- いずれも初回Explorerでの実時間、WIC Shell統合性能は未測定。新方式で30%以上初回サムネイル改善を達成したとは言えない。
+
+**対策**：D3D11 VideoProcessor のEnumerator、Processor、256px BGRA出力、stagingテクスチャを複数フレーム間で再利用し、高額な準備初期化を毎回行わないよう改修。\`HEIC_GPU_THUMB_TIMES ... reused_processor=0/1\` を実機計測で検証予定。画質不一致が改善しない限り、速度が向上してもExplorerへ導入しない。
