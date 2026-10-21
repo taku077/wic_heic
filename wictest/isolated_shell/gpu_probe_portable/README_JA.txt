@@ -64,3 +64,12 @@ GPUの12MP復号に成功しても製品採用とは扱わない。実際の写�
 結果テキストのHEIC_GPU_THUMB_TIMESに reused_processor=0（初回）/1（再利用）を表示します。再利用時にsetup_msが短縮するかが最初の検証項目です。
 元の縮小後のGPU画像とWindows標準WIC Fantの差が大きかったため、WIC Linear（線形）・Cubic（3次）とも比較します。HEIC_GPU_THUMB_FILTER_DIAGには、GPU対Linear/Cubic・それぞれ対FantのRGB平均誤差（MAE）が出ます。GPUの色変換問題なのか縮小アルゴリズムの違いなのか、原因の切り分け用です。
 この修正はGPU直接縮小の画質改善を保証するものではありません。品質承認は引き続き0のままで、Explorerには一切導入しません。
+
+追加調査：12MP HEVC Main 8bitの実機GPU適用確認
+===============================================================================
+今回のメインの成果は、固定された人工12MP Main10動画から得たBGRA8bit画像を、GPU復号＋CPU WIC Fantで処理した場合、最終256x192 BGRAの196608バイトがCPU方式と完全一致し、3回中央値754.284ms→387.443ms（48.634%）に減ったことです。これはExplorerでの実HEIC表示結果ではありません。
+重要な制約：同梱のHEIC由来2048x2048と1920x1080の2枚はHEVC RExt（profile_idc=4）であり、現行のIntel Main10ハードウェア経路には適合しません。これらの実HEICに48.6%の速度改善が適用できるとは証明できていません。
+また、10bit HEICの現行WICデコーダーは16bitチャネル（48bppRGB、アルファ付きなら64bppRGBA）で出力します。人工Main10→BGRA8bit→Fantの画質完全一致は、現行WICデコーダーが出す10bit画像の色深度完全一致を証明していません。色管理、ICC、向き、メタデータを含む実HEICでの検証が必要です。
+今回追加したsynthetic12mp_8bit_detail.h265は人工12MP HEVC Main（profile_idc=1）、NV12ハードウェア復号候補です。同じ固定サイズの8bit画像で、GPU復号・フル画像転送・WIC Fantの厳密一致と速度を新たに比較します。縮小専用VideoProcessorはMain10だけに限定し、このMain8試験では使用しません。
+4種の固定HEVCストリーム：HEIC由来RExt2、人工Main10 12MP1、人工Main8 12MP1。個人画像はスキャンしません。記録するのは実行フォルダーに新規作成される診断テキストのみ。実HEICへの効果は慎重に区別します。
+現段階でMSIは作成せず、既存フォト・WIC・HEIC Managerは変更しません。
