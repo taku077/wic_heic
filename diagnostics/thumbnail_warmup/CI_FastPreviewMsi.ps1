@@ -96,6 +96,16 @@ try {
      throw 'Artificial HEIC copy modified'
    }
  }
+ $key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($marker)
+ try {
+   $phaseNames=@('DecodeCopyPixelsUs','DecoderSetupUs','FrameOpenUs','ScaleSetupUs','AllRenderingUs')
+   foreach($phase in $phaseNames) {
+     $microseconds=[int]$key.GetValue($phase,-1)
+     if($microseconds -lt 0) {throw ('Missing private HEIC phase: '+$phase)}
+     Write-Host ('PRIVATE_HEIC_PHASE_'+$phase.ToUpperInvariant()+'_LAST_MS='+([math]::Round($microseconds/1000.0,3)))
+   }
+ } finally {$key.Close()}
+ Write-Host 'PRIVATE_HEIC_PHASE_TIMERS_PASSED'
  Write-Host 'FAST_PREVIEW_MSI_REAL_HEIC_FIRST_EXTRACTION_PASSED'
  Write-Host 'FAST_PREVIEW_MSI_REAL_HEIC_CACHE_ONLY_PASSED'
  Write-Host 'FAST_PREVIEW_MSI_SOURCE_HASHES_PASSED'
