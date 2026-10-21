@@ -2,6 +2,14 @@ name: HEIC in-process Main10 HEVC CPU parity fast test (no native library rebuil
 on:
   push:
     branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - '.github/workflows/heic-inprocess-main10-fast.yml'
+      - 'wictest/isolated_shell/HeicInprocessGpuAB.cpp'
+      - 'wictest/isolated_shell/HeicInprocessGpuAB.vcxproj'
+      - 'wictest/isolated_shell/HeicThumbnailScaleAB.cpp'
+      - 'wictest/isolated_shell/HeicThumbnailScaleAB.vcxproj'
+      - 'diagnostics/thumbnail_warmup/Prepare_FFmpeg_Inprocess_GPU_SDK_CI.ps1'
+      - 'wictest/samples/**'
   workflow_dispatch:
 permissions:
   contents: read
