@@ -89,6 +89,8 @@ struct Measurement{
  int profile=AV_PROFILE_UNKNOWN;
  AVColorSpace matrix=AVCOL_SPC_UNSPECIFIED;
  AVColorRange colorRange=AVCOL_RANGE_UNSPECIFIED;
+ bool main8PlanarNormalizedForBgra=false;
+ double main8RepackMs=0;
  double decoderMs=0,readbackMs=0,colorMs=0,totalMs=0;
  bool thumbAttempted=false,thumbProduced=false;
  std::string thumbReason;
@@ -171,8 +173,40 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  m.thumbProduced=thumbOk;
  m.thumbReason=thumbReason;
  if(thumbOk)m.thumb=std::move(gpuThumbResult);
+ // Main8 is decoded as software planar YUV420P and hardware NV12.
+ // Although their Y/U/V samples are byte-identical on the HD620 probe,
+ // swscale's NV12-vs-planar path produces different RGB rounding.
+ // Normalize ONLY the hardware NV12 chroma before swscale, then run the
+ // same YUV420P converter and matrix as the software reference.
+ // This preserves native decoder bytes and fails closed if unexpected.
+ const uint8_t* convertData[4]={source->data[0],source->data[1],
+                                 source->data[2],source->data[3]};
+ int convertStride[4]={source->linesize[0],source->linesize[1],
+                       source->linesize[2],source->linesize[3]};
+ AVPixelFormat converterFormat=m.format;
+ if(ctx->profile==AV_PROFILE_HEVC_MAIN && m.w==HeicNative8::W &&
+    m.h==HeicNative8::H && route.requestedGpu){
+  Need(m.format==AV_PIX_FMT_NV12,
+       "8bit GPU conversion requires native NV12, refuse other formats");
+  const auto repackStart=Clock::now();
+  m.nativeYuv8=HeicNative8::Normalize(source);
+  const auto repackEnd=Clock::now();
+  const size_t luma=size_t(m.w)*m.h;
+  const size_t quarter=luma/4;
+  convertData[0]=m.nativeYuv8.data();
+  convertData[1]=m.nativeYuv8.data()+luma;
+  convertData[2]=m.nativeYuv8.data()+luma+quarter;
+  convertData[3]=nullptr;
+  convertStride[0]=m.w;
+  convertStride[1]=m.w/2;
+  convertStride[2]=m.w/2;
+  convertStride[3]=0;
+  converterFormat=AV_PIX_FMT_YUV420P;
+  m.main8PlanarNormalizedForBgra=true;
+  m.main8RepackMs=std::chrono::duration<double,std::milli>(repackEnd-repackStart).count();
+ }
  m.bgra.resize(size_t(m.w)*m.h*4);
- Sws scaler(sws_getContext(m.w,m.h,m.format,m.w,m.h,
+ Sws scaler(sws_getContext(m.w,m.h,converterFormat,m.w,m.h,
    AV_PIX_FMT_BGRA,SWS_BICUBIC,nullptr,nullptr,nullptr));
  Need(scaler!=nullptr,"YUV to BGRA color converter unavailable");
  const AVColorSpace declared=decoded->colorspace;
@@ -196,7 +230,7 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
    "YUV-to-RGB color matrix refused");
  uint8_t* dest[4]={m.bgra.data(),nullptr,nullptr,nullptr};
  int strides[4]={m.w*4,0,0,0};
- Need(sws_scale(scaler.get(),source->data,source->linesize,0,m.h,dest,strides)==m.h,
+ Need(sws_scale(scaler.get(),convertData,convertStride,0,m.h,dest,strides)==m.h,
    "GPU or CPU BGRA conversion incomplete");
  const auto finished=Clock::now();
  auto ms=[](Clock::duration d){return std::chrono::duration<double,std::milli>(d).count();};
@@ -206,14 +240,16 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  m.totalMs=ms(finished-started);
  // The diagnostic-only 18MiB native YUV normalization is deliberately not
  // counted as HEVC decoding or RGB conversion in the benchmark figures.
- if(ctx->profile==AV_PROFILE_HEVC_MAIN && m.w==HeicNative8::W && m.h==HeicNative8::H)
+ if(m.nativeYuv8.empty() && ctx->profile==AV_PROFILE_HEVC_MAIN &&
+    m.w==HeicNative8::W && m.h==HeicNative8::H)
   m.nativeYuv8=HeicNative8::Normalize(source);
  return m;
 }
 void Print(const char* name,const char* mode,const Measurement& m){
- std::printf("HEIC_GPU_PORTABLE_FRAME sample=%s mode=%s true_hw_d3d11=%u coded_width=%d coded_height=%d hevc_profile=%d cpu_format=%s matrix=%d color_range=%d native_yuv8_bytes=%llu decoder_ms=%.3f readback_ms=%.3f bgra_ms=%.3f total_ms=%.3f\n",
+ std::printf("HEIC_GPU_PORTABLE_FRAME sample=%s mode=%s true_hw_d3d11=%u coded_width=%d coded_height=%d hevc_profile=%d cpu_format=%s matrix=%d color_range=%d native_yuv8_bytes=%llu main8_planar_for_bgra=%d main8_repack_ms=%.3f decoder_ms=%.3f readback_ms=%.3f bgra_ms=%.3f total_ms=%.3f\n",
    name,mode,unsigned(m.hardware),m.w,m.h,m.profile,av_get_pix_fmt_name(m.format),
    int(m.matrix),int(m.colorRange),static_cast<unsigned long long>(m.nativeYuv8.size()),
+   int(m.main8PlanarNormalizedForBgra),m.main8RepackMs,
    m.decoderMs,m.readbackMs,m.colorMs,m.totalMs);
 }
 double Median3(std::vector<double> measurements){
