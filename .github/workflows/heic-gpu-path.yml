@@ -84,8 +84,143 @@ jobs:
           msbuild wictest/isolated_shell/HeifPrimaryTransforms.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'HEIF primary item property audit did not compile'}
           $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifPrimaryTransforms.exe').Path
+          $lines=@(& $exe)
+          $code=$LASTEXITCODE
+          $lines | ForEach-Object {Write-Host $_}
+          if($code -ne 0){throw 'HEIF item property audit failed'}
+          $prechecks=@($lines | Where-Object {$_ -match '^HEIC_GPU_PRECHECK file='})
+          if($prechecks.Count -ne 7){throw 'Incomplete GPU preflight coverage of seven HEIC fixtures'}
+          foreach($record in $prechecks){
+            if($record -notmatch 'bpp=(\\d+)/(\\d+) alpha=(\\d+) rawICCbytes=(\\d+).*candidate=(\\d+) rejection_mask=(\\d+)
+      - name: Compile and run D3D11 HEVC profile capability check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/D3D11HevcCaps.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'D3D11 HEVC capability compile failed'}
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/D3D11HevcCaps.exe').Path
           & $exe
-          if($LASTEXITCODE -ne 0){throw 'HEIF item property audit failed'}
+          if($LASTEXITCODE -ne 0){throw 'D3D11 decoder profile query failed'}
+          Write-Host 'HEIC_GPU_D3D11_READONLY_PROBE_PASSED'
+      - name: Ensure FFmpeg HEIC copy utility in disposable runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $command=Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if(-not $command){
+            choco install ffmpeg -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'FFmpeg CLI installation failed'}
+            $env:PATH="C:\ProgramData\chocolatey\bin;$env:PATH"
+            $command=Get-Command ffmpeg -ErrorAction SilentlyContinue
+          }
+          if(-not $command){throw 'FFmpeg CLI unavailable'}
+          "HEIC_BRIDGE_FFMPEG=$($command.Source)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "HEIC_BRIDGE_FFMPEG_SHA256=$((Get-FileHash $command.Source -Algorithm SHA256).Hash)"
+      - name: Cross-check independent libheif and FFprobe transform metadata before GPU routing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/CI_HeifCrosscheckRotation.ps1
+          if(-not $?){throw 'HEIF versus FFprobe orientation validation failed'}
+      - name: Build direct libheif HEVC AnnexB source parser (no FFmpeg process to extract)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifNativeAnnexB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Direct HEIC encoded-image to HEVC AnnexB bridge failed to compile'}
+          Write-Host 'HEIC_NATIVE_ANNEXB_CPP_COMPILED_NO_REGISTER'
+      - name: Compare native HEIC raw-item AnnexB output against FFmpeg reference pixels
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifNativeAnnexB.exe').Path
+          $ffmpeg=$env:HEIC_BRIDGE_FFMPEG
+          $dest=Join-Path $env:RUNNER_TEMP 'heic_native_bridge'
+          if(Test-Path -LiteralPath $dest){throw 'Refuse to reuse output directory'}
+          New-Item -ItemType Directory -Path $dest | Out-Null
+          $names=@('03.heic','04.heic','05.heic','06.heic','07.heic',
+                   'fixture-irot3-exif6-noaux.heic','fixture-irot3-exif6.heic')
+          $corpus=(Resolve-Path 'wictest/samples').Path
+          $sources=@($names | ForEach-Object {Join-Path $corpus $_}) + @($env:AVX2_INPUT)
+          $count=0
+          foreach($source in $sources) {
+            $name=[IO.Path]::GetFileNameWithoutExtension($source)
+            $result=Join-Path $dest "$name.h265"
+            $reference=Join-Path $dest "$name.heic.bgra"
+            $recreated=Join-Path $dest "$name.native.bgra"
+            $hash=(Get-FileHash $source -Algorithm SHA256).Hash
+            & $exe $source $result
+            if($LASTEXITCODE -ne 0){throw "Native HEIC stream extraction failed for $name"}
+            & $ffmpeg -hide_banner -nostdin -loglevel error -noautorotate -i $source -frames:v 1 -pix_fmt bgra -f rawvideo $reference
+            if($LASTEXITCODE -ne 0){throw "Original HEIC unrotated decode failed for $name"}
+            & $ffmpeg -hide_banner -nostdin -loglevel error -f hevc -i $result -frames:v 1 -pix_fmt bgra -f rawvideo $recreated
+            if($LASTEXITCODE -ne 0){throw "Native HEVC Annex B decode failed for $name"}
+            $left=(Get-FileHash $reference -Algorithm SHA256).Hash
+            $right=(Get-FileHash $recreated -Algorithm SHA256).Hash
+            $exact=$left -eq $right -and ((Get-Item $reference).Length -eq (Get-Item $recreated).Length)
+            Write-Host "HEIC_NATIVE_ANNEXB_COMPARE file=$name exact=$exact output_bytes=$((Get-Item $result).Length)"
+            if(-not $exact){throw "Native HEIC reconstruction pixel mismatch for $name"}
+            if((Get-FileHash $source -Algorithm SHA256).Hash -ne $hash){throw "Source changed: $name"}
+            $count++
+          }
+          if($count -ne 8){throw 'Incomplete reference corpus'}
+          Write-Host 'HEIC_NATIVE_ANNEXB_EIGHT_IMAGES_EXACT_NO_REENCODING_PASSED'
+      - name: Test HEIC frame lossless extraction into HEVC Annex B (no real photos)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $in=$env:AVX2_INPUT
+          $ffmpeg=$env:HEIC_BRIDGE_FFMPEG
+          $temp=$env:RUNNER_TEMP
+          if($in -ne (Join-Path $temp 'wicfast_synthetic_4032x3024.heic')){throw 'Only generated synthetic HEIC allowed'}
+          if((Get-FileHash $in -Algorithm SHA256).Hash -ne $env:AVX2_INPUT_SHA){throw 'Artificial HEIC source hash mismatch'}
+          $annexB=Join-Path $temp 'wicfast_synthetic_4032x3024.h265'
+          $reference=Join-Path $temp 'wicfast_heif_ref_4032x3024.bgra'
+          $recreated=Join-Path $temp 'wicfast_annexb_ref_4032x3024.bgra'
+          foreach($path in @($annexB,$reference,$recreated)){
+            if(Test-Path -LiteralPath $path){throw 'Output already exists; refusing overwrite'}
+          }
+          & $ffmpeg -hide_banner -nostdin -loglevel error -threads 2 -i $in -frames:v 1 -pix_fmt bgra -f rawvideo $reference
+          if($LASTEXITCODE -ne 0){throw 'Baseline FFmpeg BGRA decode failed'}
+          Write-Host "HEIC_BRIDGE_BASE_BGRA_SHA256=$((Get-FileHash $reference -Algorithm SHA256).Hash)"
+          & $ffmpeg -hide_banner -nostdin -loglevel error -i $in -map 0:v:0 -c:v copy -bsf:v hevc_mp4toannexb -f hevc $annexB
+          $copied=($LASTEXITCODE -eq 0) -and (Test-Path $annexB) -and ((Get-Item -LiteralPath $annexB).Length -gt 100)
+          if($copied){
+            Write-Host "HEIC_BRIDGE_ANNEXB_OUTPUT_BYTES=$((Get-Item $annexB).Length)"
+            & $ffmpeg -hide_banner -nostdin -loglevel error -threads 2 -f hevc -i $annexB -frames:v 1 -pix_fmt bgra -f rawvideo $recreated
+            $decoded=($LASTEXITCODE -eq 0) -and (Test-Path $recreated)
+            if($decoded){
+              $originalHash=(Get-FileHash -LiteralPath $reference -Algorithm SHA256).Hash
+              $newHash=(Get-FileHash -LiteralPath $recreated -Algorithm SHA256).Hash
+              $sameBytes=(Get-Item $reference).Length -eq (Get-Item $recreated).Length
+              $exact=$sameBytes -and $originalHash -eq $newHash
+              Write-Host "HEIC_BRIDGE_PIXEL_BYTES_EQUAL=$exact"
+              Write-Host "HEIC_BRIDGE_ANNEXB_BGRA_SHA256=$newHash"
+              if($exact){Write-Host 'HEIC_BRIDGE_ANNEXB_BGRA_EXACT_PARITY_PASSED'}
+              else{Write-Host 'HEIC_BRIDGE_ANNEXB_NOT_PIXEL_EXACT_NEEDS_INVESTIGATION'}
+            } else {Write-Host 'HEIC_BRIDGE_ANNEXB_DECODE_UNAVAILABLE'}
+          } else {Write-Host 'HEIC_BRIDGE_ANNEXB_EXTRACTION_UNAVAILABLE'}
+          if((Get-FileHash -LiteralPath $in -Algorithm SHA256).Hash -ne $env:AVX2_INPUT_SHA){
+            throw 'HEIC original changed during study'
+          }
+          Write-Host 'HEIC_BRIDGE_SYNTHETIC_SOURCE_SHA256_PASSED'
+      - name: Confirm no installer or global system codec registration
+        shell: pwsh
+        run: |
+          Write-Host 'HEIC_GPU_RESEARCH_NO_GPU_DECODE_SUBMISSION_NO_MSI_NO_USER_PHOTOS'
+){
+              throw "Malformed GPU preflight record $record"
+            }
+            $bits=([int]$Matches[1] -eq 8 -and [int]$Matches[2] -eq 8)
+            $opaque=([int]$Matches[3] -eq 0)
+            $noICC=([long]$Matches[4] -eq 0)
+            $accepted=[int]$Matches[5] -eq 1
+            $mask=[int]$Matches[6]
+            if($accepted -ne ($mask -eq 0) -or ($accepted -and (-not $bits -or -not $opaque -or -not $noICC))){
+              throw "Unsafe HEIC selected for provisional GPU decode: $record"
+            }
+          }
+          Write-Host 'HEIC_GPU_PRECHECK_CLASSIFICATION_GUARDS_PASS'
           Write-Host 'HEIC_PRIMARY_ITEM_TRANSFORMS_CI_READONLY_PASSED'
       - name: Compile and run D3D11 HEVC profile capability check
         shell: pwsh
