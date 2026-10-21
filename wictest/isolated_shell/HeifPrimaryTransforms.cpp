@@ -13,6 +13,8 @@
 #include <libheif/heif_context.h>
 #include <libheif/heif_properties.h>
 #include <libheif/heif_items.h>
+#include <libheif/heif_image_handle.h>
+#include <libheif/heif_color.h>
 #pragma comment(lib,"heif.lib")
 #pragma comment(lib,"libde265.lib")
 #pragma comment(lib,"libkvazaar.lib")
@@ -141,6 +143,31 @@ int wmain(){
     // affirmative allow bit can authorize the optional GPU fast path.
     std::printf("HEIC_PRIMARY_ROUTE file=%ls effect=%s allowed=%d\n",
       name,orientation,int(safeOrientation));
+    // Conservative GPU preflight, not an assertion that D3D11 decoding works:
+    // limit research to 8-bit single opaque frames without unhandled raw ICC.
+    // 10-bit Main10, 12-bit, alpha, and ICC paths need separate GPU/color tests.
+    heif_image_handle* primaryHandle=nullptr;
+    const heif_error handleErr=heif_context_get_primary_image_handle(ctx,&primaryHandle);
+    Require(handleErr.code==heif_error_Ok && primaryHandle!=nullptr,
+            "HEIF primary image handle unavailable");
+    const int width=heif_image_handle_get_width(primaryHandle);
+    const int height=heif_image_handle_get_height(primaryHandle);
+    const int lumaBits=heif_image_handle_get_luma_bits_per_pixel(primaryHandle);
+    const int chromaBits=heif_image_handle_get_chroma_bits_per_pixel(primaryHandle);
+    const bool alpha=heif_image_handle_has_alpha_channel(primaryHandle)!=0;
+    const size_t rawICC=heif_image_handle_get_raw_color_profile_size(primaryHandle);
+    const heif_color_profile_type colorType=heif_image_handle_get_color_profile_type(primaryHandle);
+    heif_image_handle_release(primaryHandle);
+    const bool geometry=width>0 && height>0 && width<=8192 && height<=8192;
+    const bool bits=lumaBits==8 && chromaBits==8;
+    const unsigned rejectionReasons=(geometry?0u:1u) | (bits?0u:2u) |
+       (alpha?4u:0u) | (rawICC?8u:0u) | (safeOrientation?0u:16u);
+    const bool provisional=rejectionReasons==0;
+    if(provisional)++gpu8Candidates;
+    std::printf("HEIC_GPU_PRECHECK file=%ls width=%d height=%d bpp=%d/%d alpha=%d rawICCbytes=%llu profile=%d transform_allowed=%d candidate=%d rejection_mask=%u\n",
+      name,width,height,lumaBits,chromaBits,int(alpha),
+      static_cast<unsigned long long>(rawICC),int(colorType),
+      int(safeOrientation),int(provisional),rejectionReasons);
     std::printf("HEIC_PRIMARY_TRANSFORM file=%ls itemId=%u total=%d rotations=%d mirror=%d crops=%d ccw=%d conservative_supported=%d\n",
       name,unsigned(id),fetched,irot,imir,clap,lastCcw,int(safeOrientation));
     heif_context_free(ctx);
@@ -149,6 +176,8 @@ int wmain(){
   std::printf("HEIC_PRIMARY_TRANSFORM_SUMMARY total=%d with_irot=%d with_imir=%d with_clap=%d\n",
     total,withRotation,withMirror,withCrop);
   Require(total==7,"incomplete pinned HEIC corpus");
+  std::printf("HEIC_GPU_PRECHECK_SUMMARY total=%d provisional_8bit_candidates=%d fallback=%d\n",
+    total,gpu8Candidates,total-gpu8Candidates);
   std::puts("HEIC_PRIMARY_TRANSFORM_READONLY_PASS");
   return 0;
  }catch(const std::exception& e){
