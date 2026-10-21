@@ -1,0 +1,26 @@
+name: Fast CI D3D11 HEVC Main/Main10 hardware capability probe
+on:
+  push:
+    branches: [experiment/heic-gpu-caps-ci]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  caps:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compile and run read-only Direct3D HEVC profile probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/D3D11HevcCaps.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'D3D11 HEVC profile probe did not compile'}
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/D3D11HevcCaps.exe').Path
+          & $exe
+          if($LASTEXITCODE -ne 0){throw 'D3D11 capability probe failed'}
+          Write-Host 'HEIC_GPU_CAPS_CI_WIN_SERVER_CHECK_PASSED_NOT_INTEL_USER_PC'
