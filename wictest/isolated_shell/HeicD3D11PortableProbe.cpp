@@ -252,6 +252,35 @@ void AuditThumbnail(const char* sample,const Measurement& gpu,const ThumbReferen
    gpu.thumb.totalMs,gpu.decoderMs,gpu.decoderMs+gpu.thumb.totalMs,gpu.readbackMs,int(gpu.thumb.reusedProcessor));
  std::puts("HEIC_GPU_THUMB_RESEARCH_ONLY_NOT_PRODUCTION_OR_EXPLORER_APPROVED");
 }
+struct FantEndToEnd {
+ double cpuFantMs=0,gpuFantMs=0,cpuTotalMs=0,gpuTotalMs=0;
+};
+FantEndToEnd CompareFullResolutionFant(const char* sample,
+                                       const Measurement& sw,
+                                       const Measurement& gpu){
+ // This preserves the original source pixels, color matrix, and the EXACT
+ // Windows Fant resampler: only HEVC decoding changes CPU -> D3D11VA.
+ Need(sw.w==4032&&sw.h==3024&&gpu.w==sw.w&&gpu.h==sw.h,
+      "WIC Fant direct A/B is constrained to fixed 12MP Main10 fixture");
+ const auto a=Clock::now();
+ const Bytes swWic=HeicThumbFant::Scale(sw.bgra,sw.w,sw.h);
+ const auto b=Clock::now();
+ const Bytes gpuWic=HeicThumbFant::Scale(gpu.bgra,gpu.w,gpu.h);
+ const auto c=Clock::now();
+ Need(swWic.size()==size_t(256)*192*4 && swWic==gpuWic,
+      "GPU-decoded BGRA + WIC Fant DOES NOT MATCH CPU-decoded Fant");
+ const auto ms=[](Clock::duration duration){
+  return std::chrono::duration<double,std::milli>(duration).count();
+ };
+ FantEndToEnd t;
+ t.cpuFantMs=ms(b-a);t.gpuFantMs=ms(c-b);
+ t.cpuTotalMs=sw.totalMs+t.cpuFantMs;
+ t.gpuTotalMs=gpu.totalMs+t.gpuFantMs;
+ std::printf("HEIC_GPU_FANT_END_TO_END sample=%s cpu_hevc_bgra_ms=%.3f gpu_hevc_full_readback_bgra_ms=%.3f cpu_fant_ms=%.3f gpu_fant_ms=%.3f cpu_thumbnail_total_ms=%.3f gpu_thumbnail_total_ms=%.3f exact_bgra_and_fant=1 wic_fant_output_bytes=%llu explorer_tested=0 product_enabled=0\n",
+   sample,sw.totalMs,gpu.totalMs,t.cpuFantMs,t.gpuFantMs,
+   t.cpuTotalMs,t.gpuTotalMs,static_cast<unsigned long long>(gpuWic.size()));
+ return t;
+}
 bool Audit(const char* name,const Measurement& sw,const Measurement& gpu){
  Need(sw.w==gpu.w&&sw.h==gpu.h&&sw.bgra.size()==gpu.bgra.size(),
       "Hardware frame geometry does not match software");
@@ -400,6 +429,13 @@ int wmain(int argc,wchar_t** argv){
      std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s stage=color_audit_fail_closed\n",name);
      continue;
     }
+    // A/B includes the same real Windows WIC Fant filter and demands exact
+    // thumbnail bytes before we count any speedup.
+    const FantEndToEnd firstFant=CompareFullResolutionFant(name,sw,hw);
+    std::vector<double> cpuFantTotals{firstFant.cpuTotalMs};
+    std::vector<double> gpuFantTotals{firstFant.gpuTotalMs};
+    std::vector<double> cpuFantOnly{firstFant.cpuFantMs};
+    std::vector<double> gpuFantOnly{firstFant.gpuFantMs};
     // Cold one-shot timing can misrepresent Intel GPU driver setup.
     // Retest on the SAME GPU device, but with fresh decoders/frames each time.
     // This is bounded at three pairs, so it never becomes an open-ended loop.
@@ -421,6 +457,11 @@ int wmain(int argc,wchar_t** argv){
      if(gpuThumbMode)AuditThumbnail(name,nextGpu,wicReference);
      Need(Audit(name,nextCpu,nextGpu),
          "Repeated hardware decode failed pixel/color comparison");
+     const FantEndToEnd nextFant=CompareFullResolutionFant(name,nextCpu,nextGpu);
+     cpuFantTotals.push_back(nextFant.cpuTotalMs);
+     gpuFantTotals.push_back(nextFant.gpuTotalMs);
+     cpuFantOnly.push_back(nextFant.cpuFantMs);
+     gpuFantOnly.push_back(nextFant.gpuFantMs);
      cpuTotal.push_back(nextCpu.totalMs);
      gpuTotal.push_back(nextGpu.totalMs);
      gpuDecode.push_back(nextGpu.decoderMs);
@@ -435,6 +476,11 @@ int wmain(int argc,wchar_t** argv){
     std::printf("HEIC_GPU_PORTABLE_REPEATED_BENCH sample=%s trials=3 cpu_total_median_ms=%.3f gpu_total_median_ms=%.3f gpu_decoder_median_ms=%.3f gpu_readback_median_ms=%.3f gpu_color_median_ms=%.3f total_improvement_percent=%.2f true_hardware_passes=3 exact_reference_audited=3\n",
        name,cpuMedian,gpuMedian,Median3(gpuDecode),Median3(gpuReadback),
        Median3(gpuColor),100.0*(cpuMedian-gpuMedian)/cpuMedian);
+    const double cFant=Median3(cpuFantTotals),gFant=Median3(gpuFantTotals);
+    std::printf("HEIC_GPU_FANT_3PASS_MEDIAN sample=%s trials=3 cpu_thumbnail_median_ms=%.3f gpu_thumbnail_median_ms=%.3f cpu_fant_only_median_ms=%.3f gpu_fant_only_median_ms=%.3f thumbnail_speedup_percent=%.3f exact_wic_fant_pixels_all_3=1 use_full_p010_readback=1 initial_explorer_gain_unproven=1\n",
+      name,cFant,gFant,Median3(cpuFantOnly),Median3(gpuFantOnly),
+      100.0*(cFant-gFant)/cFant);
+    std::puts("HEIC_GPU_FANT_PIXELS_3_OF_3_IDENTICAL_KEEP_ORIGINAL_WINDOWS_FILTER");
     if(gpuThumbMode){
      if(thumbTotal.size()==3){
       std::printf("HEIC_GPU_THUMB_REPEATED_BENCH sample=%s trials=3 gpu_thumb_median_ms=%.3f small_bgra_readback_median_ms=%.3f hevc_gpu_decode_median_ms=%.3f gpu_decode_plus_thumb_median_ms=%.3f control_full_readback_median_ms=%.3f research_only=1\n",
