@@ -1,5 +1,7 @@
 name: HEIC FFmpeg HEVC software decoder feasibility - no MSI
 on:
+  push:
+    branches: [experiment/hevc-ffmpeg-decoder-feasibility]
   workflow_dispatch:
 permissions:
   contents: read
@@ -65,8 +67,6 @@ jobs:
           "BASELINE_CODEC=$base" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Synthetic12MpHeic compile failed'}
-          msbuild wictest/isolated_shell/AVX2PrivateAB.vcxproj /p:Configuration=Release /p:Platform=x64
-          if($LASTEXITCODE -ne 0){throw 'MSVC AVX2 COM A/B runner compile failed'}
       - name: Generate synthetic 12MP HEIC for equal-input A/B and record SHA
         shell: pwsh
         run: |
@@ -77,7 +77,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Synthetic HEIC creation failed'}
           "AVX2_INPUT=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "AVX2_INPUT_SHA=$((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Profile raw HEVC decode plus colorspace conversion RGB vs YCbCr (no image writes)
+      - name: Establish CPU software decode color-space baseline (no image writes)
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -123,7 +123,7 @@ jobs:
             $samples=New-Object 'System.Collections.Generic.List[double]'
             for($i=0;$i -lt 4;$i++){
               $sw=[Diagnostics.Stopwatch]::StartNew()
-              & $exe -hide_banner -nostdin -loglevel error -threads $workers -i $file -frames:v 1 -vf 'scale=256:192:flags=bicubic' -pix_fmt bgra -f rawvideo -y NUL
+              & $exe -hide_banner -nostdin -loglevel error -threads $workers -i $file -frames:v 1 -vf 'scale=256:192:flags=bicubic' -pix_fmt bgra -f null -
               $code=$LASTEXITCODE
               $sw.Stop()
               if($code -ne 0){
