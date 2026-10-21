@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "HevcAnnexBSpsProfile.h"
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/hwcontext.h>
@@ -224,6 +225,8 @@ int wmain(int argc,wchar_t** argv){
     const char* name=names[i];
     const std::wstring stem(name,name+strlen(name));
     const Bytes input=ReadSafe(fixtureDir+stem+L".h265");
+    const auto sps=HevcSps::ReadAnnexBSpsProfile(input);
+    Need(!sps.malformed && sps.spsCount>0,"Missing/malformed HEVC SPS early profile");
     const Measurement result=OneFrame(input,sw);
     Print(name,"software-selftest",result);
     const int expectedW=i==0?2048:(i==1?1920:4032);
@@ -233,8 +236,10 @@ int wmain(int argc,wchar_t** argv){
          "Packed HEVC fixture decoded with wrong dimensions");
     std::printf("HEIC_GPU_PORTABLE_PROFILE sample=%s got=%d expected=%d\n",
        name,result.profile,expectedProfile);
-    Need(result.profile==expectedProfile,
-         "HEVC profile changed; refuse GPU profile contract until source reviewed");
+    std::printf("HEIC_GPU_PORTABLE_SPS_PROFILE sample=%s idc=%d sps_count=%d\n",
+       name,sps.generalProfileIdc,sps.spsCount);
+    Need(result.profile==expectedProfile && sps.generalProfileIdc==expectedProfile,
+         "HEVC profile changed/mismatched SPS; refuse GPU profile contract");
    }
    std::puts("HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS");
    std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
@@ -285,15 +290,21 @@ int wmain(int argc,wchar_t** argv){
    const std::wstring stem(name,name+strlen(name));
    const Bytes compressed=ReadSafe(fixtureDir+stem+L".h265");
    try{
+    const auto sps=HevcSps::ReadAnnexBSpsProfile(compressed);
+    Need(!sps.malformed && sps.spsCount>0,"Missing/malformed AnnexB HEVC profile");
     const Measurement sw=OneFrame(compressed,software);
+    Need(sps.generalProfileIdc==sw.profile,
+         "SPS profile mismatch versus software decoder: fail closed");
     Print(name,"software",sw);
     // The Intel D3D11 Main10 hardware profile does not imply RExt support.
     // The two smaller samples are HEVC Range Extensions, not HEVC Main10.
     // They demonstrably failed hwaccel initialisation on Intel HD620. Keep
     // them software-only, rather than producing noisy driver errors.
-    const bool main10=(sw.profile==AV_PROFILE_HEVC_MAIN_10);
-    std::printf("HEIC_GPU_PORTABLE_PROFILE_GUARD sample=%s profile=%d route=%s\n",
-      name,sw.profile,main10?"d3d11_candidate":"software_only");
+    const bool main10=(sps.generalProfileIdc==AV_PROFILE_HEVC_MAIN_10 &&
+                       sw.profile==AV_PROFILE_HEVC_MAIN_10);
+    std::printf("HEIC_GPU_PORTABLE_PROFILE_GUARD sample=%s sps_idc=%d decoded_profile=%d sps_count=%d route=%s\n",
+      name,sps.generalProfileIdc,sw.profile,sps.spsCount,
+      main10?"d3d11_candidate":"software_only");
     if(!main10)continue;
     hardware.gotD3D11=false;
     const Measurement hw=OneFrame(compressed,hardware);
