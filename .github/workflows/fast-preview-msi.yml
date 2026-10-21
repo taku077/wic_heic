@@ -15,15 +15,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: microsoft/setup-msbuild@v2
-      - name: Build fast Shell DLL and dedicated per-user MSI
+      - name: Build experimental Shell provider DLL
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           msbuild wictest/isolated_shell/HeicShellFastPreview.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Fast thumbnail DLL build failed'}
-          msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64
-          if($LASTEXITCODE -ne 0){throw 'Fast thumbnail MSI build failed'}
-      - name: Download already CI-tested WIC decoder MSI for isolated runtime test
+      - name: Download pinned tested HEIC WIC codec package
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -32,41 +30,57 @@ jobs:
           $folder=Join-Path $env:RUNNER_TEMP 'pinned-wic-codec'
           New-Item -ItemType Directory -Path $folder | Out-Null
           gh run download 39560736899 -n WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED -D $folder -R taku077/wic_heic
-          if($LASTEXITCODE -ne 0){throw 'Pinned CI-verified decoder MSI unavailable'}
-          $codec=Join-Path $folder 'WicHeic-HEIC-x64.msi'
-          if(-not (Test-Path -LiteralPath $codec)){throw 'Downloaded WIC MSI missing'}
-          "PINNED_WIC_MSI=$codec" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Verify actual .heic Shell extraction and reversible MSI install
+          if($LASTEXITCODE -ne 0){throw 'Pinned tested decoder unavailable'}
+          $msi=Join-Path $folder 'WicHeic-HEIC-x64.msi'
+          if(-not (Test-Path $msi)){throw 'Pinned decoder MSI missing'}
+          $hash=(Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash
+          if($hash -ne 'E0F7F7CDE495535EC3525DF766BCAC5EFDC5EC489DA202856FFBEFD2F85BF51E'){
+            throw "Pinned decoder MSI hash does not match: $hash"
+          }
+          "PINNED_WIC_MSI=$msi" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host 'PRIVATE_DECODER_PINNED_MSI_SHA256_PASS'
+      - name: Extract private codec from approved MSI without WIC registration
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $codec=$env:PINNED_WIC_MSI
+          $image=Join-Path $env:RUNNER_TEMP 'private-heic-admin-image'
+          New-Item -ItemType Directory -Path $image -Force | Out-Null
+          $log=Join-Path $env:RUNNER_TEMP 'private-heic-extract.log'
+          $p=Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/a "{0}" TARGETDIR="{1}" /qn /norestart /l*v "{2}"' -f $env:PINNED_WIC_MSI,$image,$log) -Wait -PassThru
+          if($p.ExitCode -ne 0){throw "Decoder administrative extraction failed, exit=$($p.ExitCode)"}
+          $dlls=@(Get-ChildItem -LiteralPath $image -Filter 'wic_heic.dll' -Recurse -File)
+          if($dlls.Count -ne 1){throw "Expected one extracted codec DLL, got $($dlls.Count)"}
+          Copy-Item -LiteralPath $dlls[0].FullName -Destination 'Installer/WicHeicPrivateCodec.dll'
+          Write-Host ('PRIVATE_DECODER_EXTRACTED_DLL_SHA256='+(Get-FileHash -LiteralPath 'Installer/WicHeicPrivateCodec.dll' -Algorithm SHA256).Hash)
+          $decoder=Get-Item -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{6215667C-74CA-4076-A769-3F834C3F25F5}\InprocServer32' -ErrorAction SilentlyContinue
+          if($decoder){throw 'Private extraction unexpectedly installed the global WIC codec'}
+          Write-Host 'PRIVATE_DECODER_NO_GLOBAL_REGISTRATION_PASS'
+      - name: Build combined fast provider plus private HEIC codec MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Combined private codec MSI build failed'}
+      - name: Verify real HEIC Shell extraction without installed WicHeic decoder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
           $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/en-US/WicHeicFastPreview.msi').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
-          Write-Host 'FAST_PREVIEW_CI_BEFORE_PINNED_WIC_INSTALL'
-          $p=Start-Process msiexec.exe -ArgumentList ('/i "{0}" /qn /norestart' -f $codec) -Wait -PassThru
-          Write-Host ('FAST_PREVIEW_CI_PINNED_WIC_INSTALL_CODE='+$p.ExitCode)
-          if($p.ExitCode -ne 0){throw "Pinned WIC MSI install failed $($p.ExitCode)"}
-          try{
-            Write-Host 'FAST_PREVIEW_CI_BEFORE_SMOKE'
-            & ./diagnostics/thumbnail_warmup/CI_FastPreviewMsi.ps1 -MsiPath $msi -FixturePath $fixture
-            if(-not $?){throw 'Real HEIC fast preview test failed'}
-            Write-Host 'FAST_PREVIEW_CI_SMOKE_RETURNED'
-          }finally{
-            Write-Host 'FAST_PREVIEW_CI_BEFORE_PINNED_WIC_UNINSTALL'
-            $p=$null
-            for($attempt=0;$attempt -lt 8;$attempt++){
-              $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $codec) -Wait -PassThru
-              Write-Host ('FAST_PREVIEW_CI_PINNED_WIC_UNINSTALL_CODE='+$p.ExitCode+' attempt='+$attempt)
-              if($p.ExitCode -ne 1618){break}
-              Start-Sleep -Seconds 2
-            }
-            if($p.ExitCode -ne 0){throw "Pinned WIC MSI uninstall failed $($p.ExitCode)"}
-          }
-      - name: Upload real .heic Fast Thumbnail MSI after all checks pass
+          & ./diagnostics/thumbnail_warmup/CI_FastPreviewMsi.ps1 -MsiPath $msi -FixturePath $fixture
+          if(-not $?){throw 'Self-contained .heic thumbnail MSI smoke test failed'}
+      - name: Assemble one-click MSI preview bundle
+        shell: pwsh
+        run: |
+          $dir='WicHeicFastThumbnail_v0.2.0'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item '(Build)/x64/Release/en-US/WicHeicFastPreview.msi' -Destination $dir
+          Copy-Item 'diagnostics/thumbnail_warmup/FAST_PREVIEW_MSI_JA.md' -Destination (Join-Path $dir 'README_JA.md')
+          Get-FileHash (Join-Path $dir 'WicHeicFastPreview.msi') -Algorithm SHA256 | Format-List
+      - name: Upload self-contained real .heic fast thumbnail MSI
         uses: actions/upload-artifact@v4
         with:
-          name: WicHeic-FastThumbnail-Preview-v0.1-Win10-UNVERIFIED
-          path: (Build)/x64/Release/en-US/WicHeicFastPreview.msi
+          name: WicHeic-FastThumbnail-v0.2.0-PrivateDecoder-Win10-UNVERIFIED
+          path: WicHeicFastThumbnail_v0.2.0/
           if-no-files-found: error
           retention-days: 14
