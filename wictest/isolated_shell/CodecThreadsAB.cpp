@@ -7,6 +7,9 @@
 #include <wrl/client.h>
 #include <psapi.h>
 #include <algorithm>
+#include <array>
+#include <thread>
+#include <exception>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -21,8 +24,9 @@
 using Microsoft::WRL::ComPtr;
 namespace {
 using Clock=std::chrono::steady_clock;
-const int kRuns=8;
-int kModes[kRuns]={0,1,2,4,4,2,1,0};
+using FactoryFn=HRESULT(STDAPICALLTYPE*)(REFCLSID,REFIID,LPVOID*);
+const int kRuns=10;
+int kModes[kRuns]={0,1,2,3,4,4,3,2,1,0};
 void Check(HRESULT hr,const char* step) {
  if(FAILED(hr)) {
    std::printf("CODEC_THREADS_AB_FAILED step=%s hr=0x%08X\n",step,unsigned(hr));
@@ -72,7 +76,10 @@ struct Sample {
  size_t privateBytes=0;
  uint64_t hash=0;
 };
-Sample Test(IClassFactory* component, const std::wstring& fixture,int threads) {
+Sample Test(FactoryFn entry, const std::wstring& fixture,int threads) {
+ ComPtr<IClassFactory> component;
+ Check(entry(CLSID_HEICDecoder,IID_IClassFactory,
+          reinterpret_cast<LPVOID*>(component.GetAddressOf())),"private codec factory");
  const auto v=std::to_wstring(threads);
  Require(SetEnvironmentVariableW(L"WIC_HEIC_PRIVATE_CODEC_THREADS",v.c_str())!=0,
          "failed to set isolated trial mode");
@@ -130,15 +137,11 @@ int wmain(int argc,wchar_t** argv) {
   const HMODULE module=LoadLibraryExW(argv[1],nullptr,
       LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
   Require(module!=nullptr,"private codec DLL not loadable");
-  using FactoryFn=HRESULT(STDAPICALLTYPE*)(REFCLSID,REFIID,LPVOID*);
   auto entry=reinterpret_cast<FactoryFn>(GetProcAddress(module,"DllGetClassObject"));
   Require(entry!=nullptr,"private codec class factory unavailable");
-  ComPtr<IClassFactory> component;
-  Check(entry(CLSID_HEICDecoder,IID_IClassFactory,
-        reinterpret_cast<LPVOID*>(component.GetAddressOf())),"private HEIC factory");
   std::vector<Sample> samples;
   for(int t:kModes) {
-    const auto s=Test(component.Get(),input,t);
+    const auto s=Test(entry,input,t);
     if(!samples.empty())Require(s.hash==samples[0].hash,
           "HEIC thumbnail pixel-by-pixel hash differs across decode threads");
     std::printf("CODEC_THREADS_AB_SAMPLE threads=%d copy_ms=%.2f cpu_ms=%.2f private_mib=%.1f pixel_hash=%016llX\n",
@@ -146,7 +149,7 @@ int wmain(int argc,wchar_t** argv) {
       static_cast<unsigned long long>(s.hash));
     samples.push_back(s);
   }
-  for(int threads:{0,1,2,4}) {
+  for(int threads:{0,1,2,3,4}) {
     std::vector<double> times,cpus;
     for(const auto& s:samples) {
       if(s.threads==threads){times.push_back(s.copyMs);cpus.push_back(s.cpuMs);}
@@ -159,9 +162,65 @@ int wmain(int argc,wchar_t** argv) {
     std::printf("CODEC_THREADS_AB_SUMMARY threads=%d count=2 median_ms=%.2f min_ms=%.2f max_ms=%.2f cpu_median_ms=%.2f\n",
        threads,median,times.front(),times.back(),cpuMedian);
   }
+  // Four simultaneously requested thumbnails approximate one Explorer thumbnail
+  // batch better than a single isolated HEVC frame. Independent COM factories
+  // and WIC streams per thread; only synthetic files from RUNNER_TEMP.
+  struct Batch {int threads; double wallMs; double cpuMs; size_t highWater;};
+  std::vector<Batch> batches;
+  for(int mode:{2,3,4,4,3,2}) {
+    const auto selected=std::to_wstring(mode);
+    Require(SetEnvironmentVariableW(L"WIC_HEIC_PRIVATE_CODEC_THREADS",
+                    selected.c_str())!=0,"cannot set batch mode");
+    std::array<Sample,4> results{};
+    std::array<std::exception_ptr,4> failures{};
+    std::array<std::thread,4> workers;
+    const uint64_t cpuBefore=CpuTime100ns();
+    const auto started=Clock::now();
+    for(int index=0;index<4;++index) {
+      workers[size_t(index)]=std::thread([&,index]() {
+        const HRESULT init=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+        try {
+          Check(init,"concurrent COM init");
+          results[size_t(index)]=Test(entry,input,mode);
+        } catch(...) {
+          failures[size_t(index)]=std::current_exception();
+        }
+        if(SUCCEEDED(init))CoUninitialize();
+      });
+    }
+    for(auto& worker:workers)worker.join();
+    const auto finished=Clock::now();
+    const uint64_t cpuAfter=CpuTime100ns();
+    for(size_t index=0;index<4;++index) {
+      if(failures[index])std::rethrow_exception(failures[index]);
+      Require(results[index].hash==samples.front().hash,
+              "Concurrent HEIC decoded thumbnail pixel parity failed");
+    }
+    size_t highWater=0;
+    for(const auto& sample:results)
+      highWater=(std::max)(highWater,sample.privateBytes);
+    const double wall=std::chrono::duration<double,std::milli>(finished-started).count();
+    const double cpu=double(cpuAfter-cpuBefore)/10000.0;
+    batches.push_back({mode,wall,cpu,highWater});
+    std::printf("CODEC_THREADS_AB_PARALLEL threads=%d count=4 wall_ms=%.2f cpu_ms=%.2f private_mib=%.1f pixel_hash=%016llX\n",
+       mode,wall,cpu,double(highWater)/(1024.0*1024.0),
+       static_cast<unsigned long long>(samples.front().hash));
+  }
+  for(int mode:{2,3,4}) {
+    std::vector<double> ms,cpu;
+    for(const auto& batch:batches)if(batch.threads==mode) {
+      ms.push_back(batch.wallMs);
+      cpu.push_back(batch.cpuMs);
+    }
+    Require(ms.size()==2,"unbalanced parallel throughput comparisons");
+    std::sort(ms.begin(),ms.end());
+    std::sort(cpu.begin(),cpu.end());
+    std::printf("CODEC_THREADS_AB_PARALLEL_SUMMARY threads=%d count=4 rounds=2 median_batch_ms=%.2f cpu_batch_ms=%.2f\n",
+          mode,(ms[0]+ms[1])/2,(cpu[0]+cpu[1])/2);
+  }
+  std::puts("CODEC_THREADS_AB_PARALLEL_PIXEL_PARITY_PASS");
   Require(SetEnvironmentVariableW(L"WIC_HEIC_PRIVATE_CODEC_THREADS",nullptr)!=0,
           "trial env cleanup failed");
-  component.Reset();
   FreeLibrary(module);
   CoUninitialize();
   std::puts("CODEC_THREADS_AB_PIXEL_PARITY_PASS");
