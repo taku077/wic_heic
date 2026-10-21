@@ -1,0 +1,132 @@
+name: HEIC libheif FFmpeg in-process backend A/B CI-only
+on:
+  push:
+    branches: [experiment/hevc-ffmpeg-libheif-inprocess]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  avx2-ab:
+    runs-on: windows-2022
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compute precise dependency cache key
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $hash=[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore baseline native dependencies
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Install NASM on baseline native build cache miss
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM setup failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Compile baseline libheif and libde265 if not cached
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($name in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$name.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Baseline native dependency failed: $name"}
+          }
+      - name: Save baseline native build cache
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build baseline WIC HEIC DLL and test tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CL='/DWIC_HEIC_PRIVATE_FAST_ADAPTIVE'
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Baseline WIC decoder compile failed'}
+          Remove-Item Env:\CL
+          $root=(Resolve-Path $env:RUNNER_TEMP).Path
+          $base=Join-Path $root 'BaselineWicCodec.dll'
+          Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination $base
+          "BASELINE_CODEC=$base" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Synthetic12MpHeic compile failed'}
+      - name: Generate synthetic 12MP HEIC for equal-input A/B and record SHA
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          $tool=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          & $tool $env:BASELINE_CODEC $fixture
+          if($LASTEXITCODE -ne 0){throw 'Synthetic HEIC creation failed'}
+          "AVX2_INPUT=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AVX2_INPUT_SHA=$((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Download verified LGPL FFmpeg dev SDK and prepare Windows import libraries
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/Prepare_FFmpeg_SDK_CI.ps1
+          if(-not $?){throw 'Pinned FFmpeg SDK setup failed'}
+      - name: Build experimental libheif with both software decoder engines
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $source=(Resolve-Path 'wic_heic/3rdparty/libheif').Path
+          $native=(Resolve-Path 'wic_heic/3rdparty/_out/x64').Path
+          $build=Join-Path $env:RUNNER_TEMP 'libheif_ffmpeg_compilation'
+          $out=Join-Path $env:RUNNER_TEMP 'libheif_ffmpeg_install'
+          $avcodec=Join-Path $env:FFMPEG_LIB_DIR 'avcodec.lib'
+          $avutil=Join-Path $env:FFMPEG_LIB_DIR 'avutil.lib'
+          $flags='/DLIBDE265_STATIC_BUILD=1 /DKVZ_STATIC_LIB=1 /MT /O2 /Ob2 /DNDEBUG'
+          cmake --preset release-noplugins -S $source -B $build -G 'Visual Studio 17 2022' -A x64 '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded' "-DCMAKE_CXX_FLAGS_RELEASE=$flags" "-DCMAKE_PREFIX_PATH=$native" "-DCMAKE_INSTALL_PREFIX=$out" -DBUILD_DOCUMENTATION=OFF -DBUILD_SHARED_LIBS=OFF -DWITH_KVAZAAR=ON -DWITH_LIBDE265=ON -DWITH_LIBDE265_PLUGIN=OFF -DWITH_FFMPEG_DECODER=ON -DWITH_FFMPEG_DECODER_PLUGIN=OFF "-DFFMPEG_ROOT=$env:FFMPEG_RESEARCH_ROOT" "-DFFMPEG_avcodec_LIBRARY=$avcodec" "-DFFMPEG_avutil_LIBRARY=$avutil" "-DFFMPEG_avcodec_INCLUDE_DIR=$env:FFMPEG_INCLUDE_DIR" "-DFFMPEG_avutil_INCLUDE_DIR=$env:FFMPEG_INCLUDE_DIR" -DWITH_EXAMPLES=OFF -DBUILD_TESTING=OFF
+          if($LASTEXITCODE -ne 0){throw 'FFmpeg-aware libheif CMake configure failed'}
+          $cache=Get-Content -LiteralPath (Join-Path $build 'CMakeCache.txt') -Raw
+          if($cache -notmatch 'WITH_FFMPEG_DECODER:BOOL=ON'){throw 'FFmpeg decoder not enabled'}
+          cmake --build $build --target install --config Release --parallel 4
+          if($LASTEXITCODE -ne 0){throw 'Libheif with FFmpeg backend build failed'}
+          $newHeif=Join-Path $out 'lib/heif.lib'
+          if(-not (Test-Path $newHeif)){throw 'FFmpeg-enabled libheif static library not installed'}
+          Copy-Item -LiteralPath $newHeif -Destination (Join-Path $native 'lib/heif.lib') -Force
+          Write-Host "HEIF_FFMPEG_LIBHEIF_SHA256=$((Get-FileHash $newHeif -Algorithm SHA256).Hash)"
+          Write-Host 'HEIF_FFMPEG_LIBRARY_BUILT_STAGED_NO_GLOBAL_REGISTRATION'
+      - name: Compile isolated in-process libheif decoder A/B application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifBackendFFmpegAB.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'FFmpeg backend benchmark linking failed'}
+          Write-Host 'HEIF_FFMPEG_LIBHEIF_INPROCESS_BENCH_COMPILED'
+      - name: Compare both HEIC backends in one process and preserve artificial source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $file=$env:AVX2_INPUT
+          $bench=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifBackendFFmpegAB.exe').Path
+          & $bench $file
+          if($LASTEXITCODE -ne 0){throw 'HEIF in-process backend A/B failed'}
+          if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $env:AVX2_INPUT_SHA){
+            throw 'HEIC artificial source modified in backend A/B'
+          }
+          Write-Host 'HEIF_FFMPEG_INPROCESS_AB_SOURCE_SHA256_UNCHANGED'
+      - name: No MSI and no Windows codec registration
+        shell: pwsh
+        run: |
+          Write-Host 'HEIF_FFMPEG_BACKEND_RESEARCH_ONLY_NO_MSI_NO_SYSTEM_REGISTRATION'
