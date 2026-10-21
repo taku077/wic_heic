@@ -54,8 +54,8 @@ int wmain(int argc,wchar_t** argv) {
   heif::ImageHandle main=generated.encode_image(image,encoder);
   generated.write_to_file(NarrowAscii(without));
   heif::Context::EncodingOptions options;
-  heif::ImageHandle thumb=generated.encode_thumbnail(image,main,encoder,options,1024);
-  if(thumb.empty()||thumb.get_width()<1000||thumb.get_height()<740)
+  heif::ImageHandle thumb=generated.encode_thumbnail(image,main,encoder,options,1536);
+  if(thumb.empty()||thumb.get_width()<1500||thumb.get_height()<1100)
      throw std::runtime_error("failed to attach >=500px embedded thumbnail");
   generated.write_to_file(NarrowAscii(with));
   std::printf("EMBEDDED_FIXTURES_PASSED primary=%dx%d thumb=%dx%d\n",

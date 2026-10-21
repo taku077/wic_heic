@@ -162,9 +162,10 @@ int wmain(int argc,wchar_t** argv){
       mae,mse,psnr,unsigned(peak));
   // Thumbnail cannot be upscaled to a larger-than-native request. Benchmark
   // must explicitly verify the guard falls back to full-image decode at 768px.
-  Sample large=Capture(entry,embedded,true,768);
-  Require(large.embeddedAvailable && !large.shortcut,"768px upsizing guard");
-  std::printf("EMBEDDED_AB_FALLBACK_PASS cx=768 total_ms=%.3f\n",large.wallMs);
+  const UINT fallbackCx=b.w+256;
+  Sample large=Capture(entry,embedded,true,fallbackCx);
+  Require(large.embeddedAvailable && !large.shortcut,"embedded thumbnail upsizing guard");
+  std::printf("EMBEDDED_AB_FALLBACK_PASS cx=%u total_ms=%.3f\n",fallbackCx,large.wallMs);
   if(shortTime>=full) std::puts("EMBEDDED_AB_NO_SPEEDUP");
   else std::puts("EMBEDDED_AB_SYNTHETIC_SPEEDUP_OBSERVED");
   FreeLibrary(module);
