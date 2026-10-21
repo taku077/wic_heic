@@ -1,7 +1,8 @@
 #requires -version 5.1
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$MsiPath,
-      [Parameter(Mandatory=$true)][string]$FixturePath)
+      [Parameter(Mandatory=$true)][string]$FixturePath,
+      [string]$LargeFixturePath)
 $ErrorActionPreference='Stop'
 Write-Host 'FAST_PREVIEW_SMOKE_ENTERED'
 if($env:GITHUB_ACTIONS -ne 'true' -or -not $env:RUNNER_TEMP) {
@@ -24,6 +25,16 @@ foreach($key in $keys) {
 $msi=(Resolve-Path -LiteralPath $MsiPath).Path
 $fixture=(Resolve-Path -LiteralPath $FixturePath).Path
 $fixtureHash=(Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash
+$largeFixture=''
+$largeHash=''
+if($LargeFixturePath) {
+ $largeFixture=(Resolve-Path -LiteralPath $LargeFixturePath).Path
+ if(-not $largeFixture.StartsWith($env:RUNNER_TEMP+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or
+    [IO.Path]::GetFileName($largeFixture) -ne 'wicfast_synthetic_4032x3024.heic') {
+   throw '12MP CI fixture must be generated inside RUNNER_TEMP'
+ }
+ $largeHash=(Get-FileHash -LiteralPath $largeFixture -Algorithm SHA256).Hash
+}
 $folder=Join-Path $env:RUNNER_TEMP ('fastpreview_'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $folder | Out-Null
 $installed=$false
@@ -64,11 +75,24 @@ try {
  finally {$testKey.Close()}
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
  $files=@()
+ $expectedByPath=@{}
+ $highResPaths=@()
  for($i=0;$i -lt 10;$i++){
    $copy=Join-Path $folder ('real_extension_{0:D2}.heic' -f $i)
    Copy-Item -LiteralPath $fixture -Destination $copy
    $files+=$copy
+   $expectedByPath[$copy]=$fixtureHash
  }
+ if($largeFixture){
+   for($i=0;$i -lt 4;$i++){
+     $copy=Join-Path $folder ('large_12mp_{0:D2}.heic' -f $i)
+     Copy-Item -LiteralPath $largeFixture -Destination $copy
+     $files+=$copy
+     $highResPaths+=$copy
+     $expectedByPath[$copy]=$largeHash
+   }
+ }
+ $largeColdTimes=New-Object 'System.Collections.Generic.List[double]'
  Write-Host 'FAST_PREVIEW_SMOKE_BEFORE_FIRST_EXTRACTION'
  foreach($file in $files){
    $result=[TrialShell.Shell]::GetSyntheticThumbnail($file,$false,[uint32]256)
@@ -76,11 +100,28 @@ try {
    if($result.HResult -lt 0 -or -not $result.HasBitmap) {
      throw ('Real .heic Shell thumbnail failed: '+$result.HResult)
    }
+   if($highResPaths -contains $file){
+     $phaseKey=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($marker)
+     try {
+       $copyUs=[int]$phaseKey.GetValue('DecodeCopyPixelsUs',-1)
+       $totalUs=[int]$phaseKey.GetValue('AllRenderingUs',-1)
+       if($copyUs -le 0 -or $totalUs -le 0){throw 'Invalid 12MP timing sample'}
+       Write-Host ('PRIVATE_HEIC_12MP_SAMPLE copy_ms='+([math]::Round($copyUs/1000.0,2))+' total_ms='+([math]::Round($totalUs/1000.0,2)))
+       $largeColdTimes.Add($totalUs/1000.0)
+     } finally { $phaseKey.Close() }
+   }
+ }
+ if($largeFixture){
+   if($largeColdTimes.Count -ne 4){throw 'Expected 4 synthetic 12MP measurements'}
+   $values=@($largeColdTimes | Sort-Object)
+   $median=($values[1]+$values[2])/2
+   Write-Host ('PRIVATE_HEIC_12MP_COLD_MEDIAN_MS='+([math]::Round($median,2)))
+   Write-Host 'PRIVATE_HEIC_12MP_SYNTHETIC_BASELINE_PASSED'
  }
  $key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($marker)
  try {$calls=[int]$key.GetValue('Calls',0)}
  finally {$key.Close()}
- if($calls -ne 10){throw ('Fast handler not used for real .heic extraction: '+$calls)}
+ if($calls -ne $files.Count){throw ('Fast handler not used for real .heic extraction: '+$calls)}
  foreach($file in $files){
    $result=[TrialShell.Shell]::GetSyntheticThumbnail($file,$true,[uint32]256)
    if($result.HResult -lt 0 -or -not $result.HasBitmap) {
@@ -92,7 +133,7 @@ try {
  finally {$key.Close()}
  if($later -ne $calls){throw 'Shell cache revisit decoded again'}
  foreach($file in $files){
-   if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $fixtureHash){
+   if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expectedByPath[$file]){
      throw 'Artificial HEIC copy modified'
    }
  }
