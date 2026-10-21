@@ -72,6 +72,16 @@ jobs:
             msbuild "wictest/isolated_shell/$project.vcxproj" /p:Configuration=Release /p:Platform=x64
             if($LASTEXITCODE -ne 0){throw "Test project build failed: $project"}
           }
+      - name: Compile direct Shell COM benchmark without installing thumbnail provider
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/ShellEmbeddedDirect.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Shell direct COM benchmark build failed'}
+          $codec=(Resolve-Path 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $handlerDir='wictest/isolated_shell/(Build)/x64/Release'
+          Copy-Item -LiteralPath $codec -Destination (Join-Path $handlerDir 'WicHeicPrivateCodec.dll') -Force
+          Write-Host 'SHELL_DIRECT_CODEC_COPIED_NO_REGISTRATION'
       - name: Generate paired artificial 12MP HEIC with identical primary bytes
         shell: pwsh
         run: |
@@ -100,6 +110,18 @@ jobs:
           if((Get-FileHash -LiteralPath $env:EMBEDDED_BASE -Algorithm SHA256).Hash -ne $env:EMBEDDED_BASE_SHA){throw 'Original artificial HEIC changed'}
           if((Get-FileHash -LiteralPath $env:EMBEDDED_WITH -Algorithm SHA256).Hash -ne $env:EMBEDDED_WITH_SHA){throw 'Embedded artificial HEIC changed'}
           Write-Host 'EMBEDDED_AB_ARTIFICIAL_FILE_HASHES_PASSED'
+      - name: Test actual Shell IThumbnailProvider direct COM without any registry changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $build='wictest/isolated_shell/(Build)/x64/Release'
+          $program=(Resolve-Path "$build/ShellEmbeddedDirect.exe").Path
+          $handler=(Resolve-Path "$build/WicHeicFastPreview.dll").Path
+          & $program $handler $env:EMBEDDED_BASE $env:EMBEDDED_WITH
+          if($LASTEXITCODE -ne 0){throw 'Direct Shell COM route or fallback failed'}
+          if((Get-FileHash -LiteralPath $env:EMBEDDED_BASE -Algorithm SHA256).Hash -ne $env:EMBEDDED_BASE_SHA){throw 'Direct Shell path changed main HEIC'}
+          if((Get-FileHash -LiteralPath $env:EMBEDDED_WITH -Algorithm SHA256).Hash -ne $env:EMBEDDED_WITH_SHA){throw 'Direct Shell path changed HEIC with embedded thumbnail'}
+          Write-Host 'SHELL_EMBEDDED_DIRECT_SHELL_AND_INPUT_HASHES_PASS'
       - name: No MSI or registry modifications were made
         shell: pwsh
         run: |
