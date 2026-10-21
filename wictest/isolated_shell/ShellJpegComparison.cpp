@@ -186,7 +186,7 @@ WicTiming ProfileWic(IWICImagingFactory* factory,const std::wstring& file,bool h
           WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),
           "timed WIC conversion");
     const auto t3=Clock::now();
-    std::vector<BYTE> pixels(size_t(bytes));
+    std::vector<BYTE> pixels(static_cast<size_t>(bytes));
     Check(converter->CopyPixels(nullptr,tw*4u,UINT(bytes),pixels.data()),
           "timed WIC CopyPixels");
     const auto t4=Clock::now();
