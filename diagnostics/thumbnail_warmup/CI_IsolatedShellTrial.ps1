@@ -12,6 +12,7 @@ param(
  [string]$PixelParityExePath='',
  [string[]]$ExtraFixturePaths=@(),
  [switch]$ForceArgbCacheTrial,
+ [ValidateSet(128,256,512)][int]$ThumbnailSize=256,
  [ValidateSet('User','Machine')][string]$RegistrationScope='User'
 )
 $ErrorActionPreference='Stop'
@@ -158,7 +159,7 @@ namespace TrialShell {
       if(item!=null)Marshal.ReleaseComObject(item);
     }
   }
-  public static ThumbnailStatus GetSyntheticThumbnail(string file,bool cacheOnly) {
+  public static ThumbnailStatus GetSyntheticThumbnail(string file,bool cacheOnly,uint thumbnailSize) {
     Guid clsid=new Guid("50EF4544-AC9F-4A8E-B21B-8A26180DB13F");
     Guid iid=new Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE");
     IThumbnailCache cache=null;
@@ -170,7 +171,7 @@ namespace TrialShell {
       if(hr<0) return new ThumbnailStatus{HResult=hr};
       uint flags=0;
       ThumbId thumbId;
-      hr=cache.GetThumbnail(item,256,cacheOnly?1u:0u,
+      hr=cache.GetThumbnail(item,thumbnailSize,cacheOnly?1u:0u,
                             out bitmap,out flags,out thumbId);
       return new ThumbnailStatus{HResult=hr,HasBitmap=(bitmap!=null),CacheFlags=flags};
     } finally {
@@ -231,6 +232,7 @@ try {
  $registered+=('Software\WicHeicSyntheticTrial\'+$providerId)
  Write-Host ('SHELL_TRIAL_CLASS_REGISTRATION_SCOPE='+$RegistrationScope)
  Write-Host ('SHELL_TRIAL_FORCE_ARGB='+[bool]$ForceArgbCacheTrial)
+ Write-Host ('SHELL_TRIAL_THUMB_SIZE='+$ThumbnailSize)
  [TrialShell.Shell]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
  # Verify the COM class can be instantiated directly before asking the
  # Shell's isolated thumbnail process to activate it.
@@ -243,7 +245,7 @@ try {
  $elapsed=New-Object 'System.Collections.Generic.List[double]'
  foreach($trialFile in $files) {
    $timer=[Diagnostics.Stopwatch]::StartNew()
-   $first=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$false)
+   $first=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$false,[uint32]$ThumbnailSize)
    $timer.Stop()
    if($first.HResult -lt 0 -or -not $first.HasBitmap) {
      $bound=[TrialShell.Shell]::BindThumbnailHandler($trialFile)
@@ -268,11 +270,11 @@ try {
  # against a separate native WIC render. This must never re-extract images.
  if($PixelParityExePath) {
    $parity=(Resolve-Path -LiteralPath $PixelParityExePath -ErrorAction Stop).Path
-   & $parity $work
+   & $parity $work ([string]$ThumbnailSize)
    if($LASTEXITCODE -ne 0){throw ('Independent Shell pixel parity failed: exit='+$LASTEXITCODE)}
  }
  foreach($trialFile in $files) {
-   $again=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$true)
+   $again=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$true,[uint32]$ThumbnailSize)
    if($again.HResult -lt 0 -or -not $again.HasBitmap) {
      throw 'Shell cache-only revisit did not find generated thumbnail'
    }
