@@ -355,7 +355,8 @@ void CHeicBitmapFrameDecode::DecodeImage()
 	const uint64_t pixels = uint64_t(m_Handle.get_width()) * uint64_t(m_Handle.get_height());
 	SYSTEM_INFO sys{};
 	GetSystemInfo(&sys);
-	if (pixels >= 6000000ull && sys.dwNumberOfProcessors >= 2) {
+	if (pixels >= 6000000ull && m_SourceBits == 8 &&
+		!m_Handle.has_alpha_channel() && sys.dwNumberOfProcessors >= 2) {
 		heif_decoding_options* options = heif_decoding_options_alloc();
 		if (!options) throw std::bad_alloc();
 		options->num_codec_threads = 2;
