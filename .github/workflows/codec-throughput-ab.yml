@@ -1,0 +1,103 @@
+name: CI-only HEIC single and four-thumbnail throughput 2-3-4 threads
+on:
+  push:
+    branches: [experiment/12mp-throughput-thread-ab]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  codec-thread-ab:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Resolve exact pinned native dependency cache
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $hash=[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore pinned libheif/libde265/kvazaar native dependencies
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Prepare missing native build tools if required
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM install failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Build native dependencies on cache miss
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($name in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$name.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Native build failed $name"}
+          }
+          if(-not (Test-Path '_out/x64/include') -or -not (Test-Path '_out/x64/lib')) {
+            throw 'Native library installation missing'
+          }
+      - name: Save native dependency cache after successful build
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build unshipped private codec with 2/3/4-thread trial switch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CL='/DWIC_HEIC_PRIVATE_THREAD_EXPERIMENT'
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Experimental private codec build failed'}
+          Remove-Item Env:\CL
+      - name: Build artificial 12MP generator and in-process AB benchmark
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Synthetic HEIC generator compilation failed'}
+          msbuild wictest/isolated_shell/CodecThreadsAB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'CodecThreadsAB compilation failed'}
+      - name: Generate original-safe 4032x3024 HEIC synthetic test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $generator=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          & $generator $codec $fixture
+          if($LASTEXITCODE -ne 0){throw '12MP CI synthetic HEIC generation failed'}
+          $before=(Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash
+          "PRIVATE_12MP_PATH=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PRIVATE_12MP_SHA256=$before" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host 'CODEC_THREADS_AB_ARTIFICIAL_SOURCE_CREATED'
+      - name: Measure single and four-parallel 12MP thumbnails with strict pixel parity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $bench=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/CodecThreadsAB.exe').Path
+          & $bench $codec $env:PRIVATE_12MP_PATH
+          if($LASTEXITCODE -ne 0){throw 'HEIC codec thread A/B benchmark or exact pixel parity failed'}
+          if((Get-FileHash -LiteralPath $env:PRIVATE_12MP_PATH -Algorithm SHA256).Hash -ne $env:PRIVATE_12MP_SHA256){
+            throw 'A/B test modified synthetic HEIC file'
+          }
+          Write-Host 'CODEC_THREADS_AB_ORIGINAL_SHA256_PASS'
+      - name: Summarize artifact-less CI-only experiment
+        shell: pwsh
+        run: |
+          Write-Host 'CODEC_THREADS_AB_NOT_SHIPPED_NO_USER_INSTALLATION'
