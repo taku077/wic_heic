@@ -90,6 +90,13 @@ jobs:
             throw 'Color decomposition changed synthetic source'
           }
           Write-Host 'HEIC_YCBCR_RGB_INTERNAL_COLOR_COST_MEASURED'
+      - name: Compile in-process alternative backend comparison harness (FFmpeg plugin still absent)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifBackendAB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'In-process decoder backend comparison program did not compile'}
+          Write-Host 'HEIF_BACKEND_AB_HARNESS_COMPILED_FFMPEG_LIBHEIF_PLUGIN_NOT_YET_LINKED'
       - name: Find Windows FFmpeg HEIC input support (research, no user files)
         shell: pwsh
         run: |
