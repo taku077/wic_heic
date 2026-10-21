@@ -138,6 +138,69 @@ void MakeJpegFromHeic(IWICImagingFactory* factory,
     Check(checkFrame->GetSize(&jw,&jh),"JPEG dimensions");
     Require(jw==width&&jh==height,"HEIC/JPEG source dimension mismatch");
 }
+// An in-process WIC breakdown (not Shell or Explorer UI time). These timings
+// run only AFTER both Shell first-extraction and cache-only phases, so they
+// cannot warm the code or file system ahead of the Shell comparisons.
+struct WicTiming {
+    double create=0,initialize=0,setup=0,copy=0,total=0;
+};
+WicTiming ProfileWic(IWICImagingFactory* factory,const std::wstring& file,bool heic) {
+    const auto t0=Clock::now();
+    ComPtr<IWICStream> stream;
+    Check(factory->CreateStream(stream.GetAddressOf()),"timed WIC stream");
+    Check(stream->InitializeFromFilename(file.c_str(),GENERIC_READ),
+          "timed WIC open");
+    ComPtr<IWICBitmapDecoder> decoder;
+    if(heic) {
+        Check(factory->CreateDecoder(GUID_ContainerFormatHEIC,
+              &GUID_VendorPrsyahmi,decoder.GetAddressOf()),
+              "timed direct HEIC decoder");
+    } else {
+        Check(factory->CreateDecoder(GUID_ContainerFormatJpeg,nullptr,
+              decoder.GetAddressOf()),"timed direct JPEG decoder");
+    }
+    const auto t1=Clock::now();
+    Check(decoder->Initialize(stream.Get(),WICDecodeMetadataCacheOnDemand),
+          "timed WIC initialize");
+    ComPtr<IWICBitmapFrameDecode> frame;
+    Check(decoder->GetFrame(0,frame.GetAddressOf()),"timed WIC frame");
+    UINT w=0,h=0;
+    Check(frame->GetSize(&w,&h),"timed WIC source bounds");
+    Require(w>0 && h>0 && w<=10000 && h<=10000,
+            "timed WIC unreasonable dimensions");
+    const auto t2=Clock::now();
+    const UINT maxSide=(std::max)(w,h);
+    const UINT tw=(std::max)(1u,UINT(uint64_t(w)*kTarget/maxSide));
+    const UINT th=(std::max)(1u,UINT(uint64_t(h)*kTarget/maxSide));
+    const uint64_t bytes=uint64_t(tw)*th*4u;
+    Require(bytes<=16*1024*1024 && bytes<=UINT_MAX,
+            "timed WIC output too large");
+    ComPtr<IWICBitmapScaler> scaler;
+    Check(factory->CreateBitmapScaler(scaler.GetAddressOf()),"timed WIC scaler");
+    Check(scaler->Initialize(frame.Get(),tw,th,WICBitmapInterpolationModeFant),
+          "timed WIC scaling");
+    ComPtr<IWICFormatConverter> converter;
+    Check(factory->CreateFormatConverter(converter.GetAddressOf()),
+          "timed WIC converter");
+    Check(converter->Initialize(scaler.Get(),GUID_WICPixelFormat32bppPBGRA,
+          WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),
+          "timed WIC conversion");
+    const auto t3=Clock::now();
+    std::vector<BYTE> pixels(size_t(bytes));
+    Check(converter->CopyPixels(nullptr,tw*4u,UINT(bytes),pixels.data()),
+          "timed WIC CopyPixels");
+    const auto t4=Clock::now();
+    auto Ms=[](Clock::time_point start,Clock::time_point end) {
+        return std::chrono::duration<double,std::milli>(end-start).count();
+    };
+    WicTiming result;
+    result.create=Ms(t0,t1);
+    result.initialize=Ms(t1,t2);
+    result.setup=Ms(t2,t3);
+    result.copy=Ms(t3,t4);
+    result.total=Ms(t0,t4);
+    return result;
+}
 struct Extraction {
     double milliseconds=0;
     UINT width=0,height=0;
@@ -271,6 +334,38 @@ int wmain(int argc,wchar_t** argv) {
         PrintSummary("JPEG","first",jpegCold);
         PrintSummary("HEIC","cache_only",heicWarm);
         PrintSummary("JPEG","cache_only",jpegWarm);
+        // Dissect direct WIC overhead in-process, using only pairs where
+        // both Shell routes returned exactly the same bitmap geometry.
+        std::vector<double> hCreate,hInit,hSetup,hCopy,hTotal;
+        std::vector<double> jCreate,jInit,jSetup,jCopy,jTotal;
+        for(int i=0;i<kCases;++i) {
+            if(!sameSize[i])continue;
+            WicTiming ht,jt;
+            if(i%2==0) {
+                jt=ProfileWic(factory.Get(),jpegPaths[i],false);
+                ht=ProfileWic(factory.Get(),heicPaths[i],true);
+            } else {
+                ht=ProfileWic(factory.Get(),heicPaths[i],true);
+                jt=ProfileWic(factory.Get(),jpegPaths[i],false);
+            }
+            hCreate.push_back(ht.create);hInit.push_back(ht.initialize);
+            hSetup.push_back(ht.setup);hCopy.push_back(ht.copy);
+            hTotal.push_back(ht.total);
+            jCreate.push_back(jt.create);jInit.push_back(jt.initialize);
+            jSetup.push_back(jt.setup);jCopy.push_back(jt.copy);
+            jTotal.push_back(jt.total);
+        }
+        PrintSummary("HEIC","direct_wic_stream_decoder_create",hCreate);
+        PrintSummary("JPEG","direct_wic_stream_decoder_create",jCreate);
+        PrintSummary("HEIC","direct_wic_initialize_frame",hInit);
+        PrintSummary("JPEG","direct_wic_initialize_frame",jInit);
+        PrintSummary("HEIC","direct_wic_scaler_converter_setup",hSetup);
+        PrintSummary("JPEG","direct_wic_scaler_converter_setup",jSetup);
+        PrintSummary("HEIC","direct_wic_copy_pixels",hCopy);
+        PrintSummary("JPEG","direct_wic_copy_pixels",jCopy);
+        PrintSummary("HEIC","direct_wic_total",hTotal);
+        PrintSummary("JPEG","direct_wic_total",jTotal);
+        std::puts("SHELL_JPEG_HEIC_WIC_PHASES_PASS");
         std::puts("SHELL_JPEG_HEIC_CACHE_REVISIT_PASS");
         std::puts("SHELL_JPEG_HEIC_FAIR_SOURCE_PROBE_PASS");
         return 0;
