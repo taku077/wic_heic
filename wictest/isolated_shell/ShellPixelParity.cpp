@@ -173,7 +173,7 @@ int wmain(int argc,wchar_t** argv) {
             const std::wstring path=root+L"\\"+filename;
             Required(GetFileAttributesW(path.c_str())!=INVALID_FILE_ATTRIBUTES,
                      "missing synthetic file");
-            Pixels shell=ShellCached(path,cache);
+            Pixels shell=ShellCached(path,cache.Get());
             Pixels reference=WicReference(path,factory.Get());
             if(shell.width!=reference.width || shell.height!=reference.height) {
                 std::printf("SHELL_PIXEL_DIMENSIONS_MISMATCH index=%d shell=%ux%u wic=%ux%u\n",
