@@ -163,11 +163,66 @@ void EncodeImage(const Bytes& item,unsigned bytes,Bytes& out,unsigned& nals){
  }
  Require(nals>0 && p==item.size(),"empty HEVC item stream");
 }
+// New independent malformed-input tests. No files, GPU, or registry needed.
+void RunAnnexBMalformedSelfTests() {
+ auto rejectPicture=[](const char* name,const Bytes& bytes,unsigned prefix){
+   Bytes output;unsigned nalCount=0;bool refused=false;
+   try{EncodeImage(bytes,prefix,output,nalCount);}
+   catch(const std::runtime_error&){refused=true;}
+   if(!refused)throw std::runtime_error("Malformed picture accepted");
+   std::printf("HEIC_NATIVE_ANNEXB_NEGATIVE_TEST name=%s rejected=1\n",name);
+ };
+ {
+   Bytes output;unsigned count=0;
+   EncodeImage(Bytes{0,0,0,2,0x26,0x01},4,output,count);
+   Require(count==1 && output==Bytes({0,0,0,1,0x26,0x01}),
+           "valid four-byte picture NAL reconstruction failed");
+   EncodeImage(Bytes{2,0x26,0x01},1,output,count);
+   Require(count==1 && output.size()==12,
+           "valid one-byte length prefix reconstruction failed");
+ }
+ rejectPicture("truncated_length_prefix",Bytes{0,0,0},4);
+ rejectPicture("zero_length_nal",Bytes{0,0,0,0},4);
+ rejectPicture("single_byte_nal",Bytes{0,0,0,1,0x26},4);
+ rejectPicture("picture_nal_exceeds_buffer",Bytes{0,0,0,8,0x26,0x01},4);
+ rejectPicture("second_nal_truncated",Bytes{0,0,0,2,0x26,0x01,0,0,0,2,0x26},4);
+ {
+   HvcC config;config.lenSize=4;config.contents.assign(23,0);
+   config.contents[0]=1;config.contents[21]=3;config.contents[22]=3;
+   for(const unsigned type:{32u,33u,34u}) {
+     config.contents.push_back(uint8_t(type)); // hvcC NAL array type
+     config.contents.insert(config.contents.end(),{0,1,0,2,uint8_t(type<<1),1});
+   }
+   Bytes output;unsigned nalCount=0;
+   EncodeConfig(config,output,nalCount);
+   Require(nalCount==3 && output.size()==18,
+           "valid synthetic VPS/SPS/PPS config failed");
+   config.contents.pop_back();
+   bool refused=false;
+   try{Bytes broken;unsigned n=0;EncodeConfig(config,broken,n);}
+   catch(const std::runtime_error&){refused=true;}
+   Require(refused,"truncated hvcC NAL payload was accepted");
+   std::puts("HEIC_NATIVE_ANNEXB_NEGATIVE_TEST name=truncated_hvcc_payload rejected=1");
+ }
+ {
+   const Bytes overlong{0,0,0,100,'m','e','t','a'};
+   bool refused=false;
+   try{Parse(overlong,0,overlong.size());}
+   catch(const std::runtime_error&){refused=true;}
+   Require(refused,"ISOBMFF box exceeding input accepted");
+   std::puts("HEIC_NATIVE_ANNEXB_NEGATIVE_TEST name=overlong_box rejected=1");
+ }
+ std::puts("HEIC_NATIVE_ANNEXB_MALFORMED_BOUNDARY_SELFTESTS_PASSED");
+}
 }
 int wmain(int argc,wchar_t** argv) {
  try{
-  Require(argc==3,"usage: pinned repo sample HEIC / runner temp resulting HEVC");
   Require(Env(L"GITHUB_ACTIONS")==L"true","CI only");
+  if(argc==2 && std::wstring(argv[1])==L"--selftest"){
+    RunAnnexBMalformedSelfTests();
+    return 0;
+  }
+  Require(argc==3,"usage: pinned repo sample HEIC / runner temp resulting HEVC");
   const std::wstring original=argv[1],target=argv[2];
   const auto root=Env(L"GITHUB_WORKSPACE");
   const auto temp=Env(L"RUNNER_TEMP");
