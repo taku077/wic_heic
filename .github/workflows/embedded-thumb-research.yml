@@ -85,7 +85,7 @@ jobs:
           & $make $dll $original
           if($LASTEXITCODE -ne 0){throw 'Artificial source generation failed'}
           & $attach $original $base $with
-          if($LASTEXITCODE -ne 0){throw '512px embedded HEIC generation failed'}
+          if($LASTEXITCODE -ne 0){throw '1024px embedded HEIC generation failed'}
           "EMBEDDED_BASE=$base" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "EMBEDDED_WITH=$with" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "EMBEDDED_BASE_SHA=$((Get-FileHash -LiteralPath $base -Algorithm SHA256).Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
