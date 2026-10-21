@@ -210,7 +210,8 @@ int wmain(int argc,wchar_t** argv) {
                 // synthetic image content. Count full BGRA pixels only.
                 uint64_t equalDirect=0,equalH=0,equalV=0,equalHV=0,equalRB=0;
                 uint64_t diffDirect=0,diffH=0,diffV=0,diffHV=0,diffRB=0;
-                uint64_t alphaMismatch=0;
+                uint64_t alphaMismatch=0,over1=0,over2=0,over4=0,over8=0;
+                UINT maxComponentDelta=0;
                 for(UINT y=0;y<shell.height;++y) for(UINT x=0;x<shell.width;++x) {
                     const auto offset=(size_t(y)*shell.width+x)*4;
                     auto equals=[&](UINT sx,UINT sy) {
@@ -240,6 +241,11 @@ int wmain(int argc,wchar_t** argv) {
                     diffHV+=measure(shell.width-1-x,shell.height-1-y);
                     diffRB+=delta(p[0],q[2])+delta(p[1],q[1])+delta(p[2],q[0]);
                     alphaMismatch+=(p[3]!=q[3]);
+                    const UINT peak=UINT((std::max)({delta(p[0],q[0]),
+                        delta(p[1],q[1]),delta(p[2],q[2])}));
+                    maxComponentDelta=(std::max)(maxComponentDelta,peak);
+                    over1+=(peak>1);over2+=(peak>2);
+                    over4+=(peak>4);over8+=(peak>8);
                 }
                 std::printf("SHELL_PIXEL_DIAGNOSTIC index=%d total=%llu same=%llu hflip=%llu vflip=%llu rotated180=%llu swap_rb=%llu\n",
                     i,static_cast<unsigned long long>(shell.width)*shell.height,
@@ -256,6 +262,12 @@ int wmain(int argc,wchar_t** argv) {
                     static_cast<unsigned long long>(diffHV*1000/denom),
                     static_cast<unsigned long long>(diffRB*1000/denom),
                     static_cast<unsigned long long>(alphaMismatch));
+                std::printf("SHELL_PIXEL_COLOR_STAT index=%d max_delta=%u pixels_gt1=%llu pixels_gt2=%llu pixels_gt4=%llu pixels_gt8=%llu\n",
+                    i,maxComponentDelta,
+                    static_cast<unsigned long long>(over1),
+                    static_cast<unsigned long long>(over2),
+                    static_cast<unsigned long long>(over4),
+                    static_cast<unsigned long long>(over8));
                 std::printf("SHELL_PIXEL_BYTES_MISMATCH index=%d byte=%zu shell=%u wic=%u\n",
                    i,at,unsigned(*mismatch.first),unsigned(*mismatch.second));
                 ++parityFailures;
