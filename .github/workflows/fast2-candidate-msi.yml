@@ -101,7 +101,7 @@ jobs:
       - name: Download confirmed v0.2.0 installer to test non-destructive major upgrade
         shell: pwsh
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference='Stop'
           $target=Join-Path $env:RUNNER_TEMP 'existing-v020'
