@@ -1,7 +1,7 @@
 name: HEIC D3D11 GPU feasibility and AnnexB bridge without MSI
 on:
   push:
-    branches: [experiment/heic-gpu-decode-probe, experiment/heic-gpu-d3d11va-firstframe, experiment/heic-gpu-inprocess-avcodec]
+    branches: [experiment/heic-gpu-decode-probe, experiment/heic-gpu-d3d11va-firstframe]
   workflow_dispatch:
 permissions:
   contents: read
