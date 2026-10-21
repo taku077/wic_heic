@@ -111,6 +111,49 @@ jobs:
           if(-not $command){throw 'FFmpeg CLI unavailable'}
           "HEIC_BRIDGE_FFMPEG=$($command.Source)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "HEIC_BRIDGE_FFMPEG_SHA256=$((Get-FileHash $command.Source -Algorithm SHA256).Hash)"
+      - name: Build direct libheif HEVC AnnexB source parser (no FFmpeg process to extract)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifNativeAnnexB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Direct HEIC encoded-image to HEVC AnnexB bridge failed to compile'}
+          Write-Host 'HEIC_NATIVE_ANNEXB_CPP_COMPILED_NO_REGISTER'
+      - name: Compare native HEIC raw-item AnnexB output against FFmpeg reference pixels
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifNativeAnnexB.exe').Path
+          $ffmpeg=$env:HEIC_BRIDGE_FFMPEG
+          $dest=Join-Path $env:RUNNER_TEMP 'heic_native_bridge'
+          if(Test-Path -LiteralPath $dest){throw 'Refuse to reuse output directory'}
+          New-Item -ItemType Directory -Path $dest | Out-Null
+          $names=@('03.heic','04.heic','05.heic','06.heic','07.heic',
+                   'fixture-irot3-exif6-noaux.heic','fixture-irot3-exif6.heic')
+          $corpus=(Resolve-Path 'wictest/samples').Path
+          $sources=@($names | ForEach-Object {Join-Path $corpus $_}) + @($env:AVX2_INPUT)
+          $count=0
+          foreach($source in $sources) {
+            $name=[IO.Path]::GetFileNameWithoutExtension($source)
+            $result=Join-Path $dest "$name.h265"
+            $reference=Join-Path $dest "$name.heic.bgra"
+            $recreated=Join-Path $dest "$name.native.bgra"
+            $hash=(Get-FileHash $source -Algorithm SHA256).Hash
+            & $exe $source $result
+            if($LASTEXITCODE -ne 0){throw "Native HEIC stream extraction failed for $name"}
+            & $ffmpeg -hide_banner -nostdin -loglevel error -noautorotate -i $source -frames:v 1 -pix_fmt bgra -f rawvideo $reference
+            if($LASTEXITCODE -ne 0){throw "Original HEIC unrotated decode failed for $name"}
+            & $ffmpeg -hide_banner -nostdin -loglevel error -f hevc -i $result -frames:v 1 -pix_fmt bgra -f rawvideo $recreated
+            if($LASTEXITCODE -ne 0){throw "Native HEVC Annex B decode failed for $name"}
+            $left=(Get-FileHash $reference -Algorithm SHA256).Hash
+            $right=(Get-FileHash $recreated -Algorithm SHA256).Hash
+            $exact=$left -eq $right -and ((Get-Item $reference).Length -eq (Get-Item $recreated).Length)
+            Write-Host "HEIC_NATIVE_ANNEXB_COMPARE file=$name exact=$exact output_bytes=$((Get-Item $result).Length)"
+            if(-not $exact){throw "Native HEIC reconstruction pixel mismatch for $name"}
+            if((Get-FileHash $source -Algorithm SHA256).Hash -ne $hash){throw "Source changed: $name"}
+            $count++
+          }
+          if($count -ne 8){throw 'Incomplete reference corpus'}
+          Write-Host 'HEIC_NATIVE_ANNEXB_EIGHT_IMAGES_EXACT_NO_REENCODING_PASSED'
       - name: Test HEIC frame lossless extraction into HEVC Annex B (no real photos)
         shell: pwsh
         run: |
