@@ -42,6 +42,9 @@ jobs:
             if($LASTEXITCODE -ne 0){throw "Lossless HEVC extraction failed: $stem"}
             & $env:FFMPEG_CLI -hide_banner -nostdin -loglevel error -f hevc -i $out -frames:v 1 -pix_fmt bgra -f rawvideo $reference
             if($LASTEXITCODE -ne 0){throw "BGRA reference generation failed: $stem"}
+            $referenceYuv=Join-Path $folder "$stem.reference.yuv420p10le"
+            & $env:FFMPEG_CLI -hide_banner -nostdin -loglevel error -f hevc -i $out -frames:v 1 -pix_fmt yuv420p10le -f rawvideo $referenceYuv
+            if($LASTEXITCODE -ne 0){throw "Lossless native 10-bit YUV reference creation failed: $stem"}
             if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne $hashBefore){throw "HEIC original modified: $stem"}
           }
           Write-Host 'HEIC_INPROCESS_PINNED_ANNEXB_INPUTS_READONLY_PASS'
@@ -65,9 +68,17 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicInprocessGpuAB.exe').Path
+          $env:HEIC_INPROCESS_DUMP_YUV='1'
           & $exe software
           if($LASTEXITCODE -ne 0){throw 'In-process software baseline failed'}
           foreach($stem in @('04','fixture-irot3-exif6-noaux')){
+            $rawRef=Join-Path $env:RUNNER_TEMP "heic_native_bridge/$stem.reference.yuv420p10le"
+            $rawActual=Join-Path $env:RUNNER_TEMP "heic_inprocess_software/$stem.yuv420p10le"
+            if(-not (Test-Path -LiteralPath $rawRef) -or -not (Test-Path -LiteralPath $rawActual)){throw "Missing decoder-stage YUV comparison $stem"}
+            $rawExact=((Get-FileHash -LiteralPath $rawRef -Algorithm SHA256).Hash -eq
+                       (Get-FileHash -LiteralPath $rawActual -Algorithm SHA256).Hash)
+            Write-Host "HEIC_INPROCESS_DECODED_YUV10_EXACT file=$stem exact=$rawExact"
+            if(-not $rawExact){throw "Raw 10-bit decoder mismatch (not a color conversion issue): $stem"}
             $ref=Join-Path $env:RUNNER_TEMP "heic_native_bridge/$stem.native.bgra"
             $actual=Join-Path $env:RUNNER_TEMP "heic_inprocess_software/$stem.bgra"
             if(-not (Test-Path $actual)){throw "In-process image not created: $stem"}
