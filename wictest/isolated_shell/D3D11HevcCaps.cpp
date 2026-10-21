@@ -98,6 +98,18 @@ int wmain(){
           index,mode?"hevc_main10":"hevc_main8",int(found),
           int(supportsFormat),int(config));
       if(config)++hevcEligible;
+      // Real Main10 candidate dimensions from pinned HEIC item metadata.
+      // Requiring 4032x3024 support would wrongly exclude smaller HEIC images.
+      if(mode==1){
+        const bool fitsSquare=supportsFormat &&
+           ProbeConfiguration(video.Get(),guid,fmt,2048,2048);
+        const bool fitsPortrait=supportsFormat &&
+           ProbeConfiguration(video.Get(),guid,fmt,1080,1920);
+        std::printf("HEIC_GPU_MAIN10_TARGET adapter=%u width=2048 height=2048 decoder_config=%d\n",
+          index,int(fitsSquare));
+        std::printf("HEIC_GPU_MAIN10_TARGET adapter=%u width=1080 height=1920 decoder_config=%d\n",
+          index,int(fitsPortrait));
+      }
     }
   }
   std::printf("HEIC_GPU_CAPS_SUMMARY hardware_adapters=%d supported_12mp_profiles=%d\n",
