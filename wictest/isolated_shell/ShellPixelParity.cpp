@@ -150,6 +150,27 @@ Pixels ShellCached(const std::wstring& filename,IThumbnailCache* cache) {
         std::memcpy(pixels.bytes.data()+size_t(y)*pixels.width*4,
                     source+srcRow*stride,size_t(pixels.width)*4u);
     }
+    // GDI is responsible for normalizing HBITMAP scanline order. Cross-check
+    // against the raw DIBSECTION interpretation before comparing WIC pixels.
+    BITMAPINFO info{};
+    info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth=LONG(pixels.width);
+    info.bmiHeader.biHeight=-LONG(pixels.height);
+    info.bmiHeader.biPlanes=1;
+    info.bmiHeader.biBitCount=32;
+    info.bmiHeader.biCompression=BI_RGB;
+    std::vector<BYTE> viaGdi(pixels.bytes.size());
+    HDC dc=GetDC(nullptr);
+    Required(dc!=nullptr,"GetDC");
+    const int rows=GetDIBits(dc,bitmap,0,pixels.height,viaGdi.data(),
+                              &info,DIB_RGB_COLORS);
+    ReleaseDC(nullptr,dc);
+    Required(rows==int(pixels.height),"GetDIBits");
+    uint64_t changed=0;
+    for(size_t i=0;i<viaGdi.size();++i)changed+=(viaGdi[i]!=pixels.bytes[i]);
+    std::printf("SHELL_DIB_READ_DIAGNOSTIC signed_height=%ld raw_vs_gdi_byte_diffs=%llu\n",
+         long(dib.dsBmih.biHeight),static_cast<unsigned long long>(changed));
+    pixels.bytes.swap(viaGdi);
     return pixels;
 }
 } // namespace
