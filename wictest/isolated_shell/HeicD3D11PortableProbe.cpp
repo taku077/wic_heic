@@ -353,7 +353,10 @@ int wmain(int argc,wchar_t** argv){
           "8-bit software YUV equal-control selftest failed");
      Bytes changed=result.nativeYuv8;
      changed[0]^=1;
-     Need(!HeicNative8::Audit(result.nativeYuv8,changed,name),
+     const auto difference=HeicNative8::ComparePlane(
+       result.nativeYuv8,changed,0,HeicNative8::W,HeicNative8::H);
+     Need(difference.changed==1 && difference.maxDiff==1 &&
+          difference.xmin==0 && difference.ymin==0,
           "8-bit native YUV comparison failed to detect changed luma");
      std::puts("HEIC_GPU_MAIN8_NATIVE_YUV_POSITIVE_AND_NEGATIVE_SELFTEST_PASS");
     }
