@@ -229,7 +229,9 @@ public:
         const UINT th=(std::max)(1u,UINT(uint64_t(height)*cx/maxSide));
         const uint64_t bytes=uint64_t(tw)*th*4u;
         if(bytes>16ull*1024*1024 || bytes>UINT_MAX)return E_INVALIDARG;
-        ComPtr<IWICBitmapSource> selectedSource=frame;
+        ComPtr<IWICBitmapSource> selectedSource;
+        hr=frame.As(&selectedSource);
+        if(FAILED(hr))return hr;
 #ifdef WIC_HEIC_EMBEDDED_THUMB_TRIAL
         // This is an EXPLORATORY CI-ONLY path. A decoded embedded thumbnail may
         // differ in color, pixels or orientation. Do not enable in MSI releases.
