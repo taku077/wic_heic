@@ -344,7 +344,38 @@ void CHeicBitmapFrameDecode::DecodeImage()
 	// Default decoder scheduling remains in force. A bounded two-codec-thread
 	// experiment regressed 256px thumbnail measurements on the Windows CI
 	// runner; do not increase CPU usage without a repeatable improvement.
+#ifdef WIC_HEIC_PRIVATE_THREAD_EXPERIMENT
+	// Strictly an isolated CI experiment; never compiled into a user MSI.
+	// Baseline uses the identical default libheif C++ decode path.
+	int trialThreads = 0;
+	char ci[6] = {};
+	if (GetEnvironmentVariableA("GITHUB_ACTIONS", ci, DWORD(sizeof(ci))) == 4 &&
+		std::strcmp(ci, "true") == 0) {
+		char value[3] = {};
+		if (GetEnvironmentVariableA("WIC_HEIC_PRIVATE_CODEC_THREADS", value, DWORD(sizeof(value))) == 1) {
+			if (value[0] == '1' || value[0] == '2' || value[0] == '4') trialThreads = value[0] - '0';
+		}
+	}
+	if (trialThreads > 0) {
+		heif_decoding_options* options = heif_decoding_options_alloc();
+		if (!options) throw std::bad_alloc();
+		options->num_codec_threads = trialThreads;
+		heif_image* decoded = nullptr;
+		const heif_error error = heif_decode_image(m_Handle.get_raw_image_handle(),
+			&decoded, heif_colorspace_RGB, m_chroma, options);
+		heif_decoding_options_free(options);
+		if (error.code != heif_error_Ok) {
+			if (decoded) heif_image_release(decoded);
+			throw heif::Error(error);
+		}
+		if (!decoded) throw std::runtime_error("libheif returned no image");
+		m_Image = heif::Image(decoded);
+	} else {
+		m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
+	}
+#else
 	m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
+#endif
 	m_PlaneInterleaved = m_Image.get_plane2(heif_channel_interleaved, &m_Stride);
 
 	DbgLog("Decode: (chroma=%d, bpp=%d, stride=%d)",
