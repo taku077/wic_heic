@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 #include "HevcAnnexBSpsProfile.h"
+#include "HeicMain8NativeYuvAudit.h"
 #include "HeicD3D11GpuThumbnail.h"
 #include "HeicThumbFantReference.h"
 extern "C" {
@@ -81,10 +82,13 @@ AVPixelFormat PickHardware(AVCodecContext* codec,const AVPixelFormat* formats){
 }
 struct Measurement{
  Bytes bgra;
+ Bytes nativeYuv8; // Research only: 12MP Main 8bit, planar YUV420P regardless of GPU NV12 layout.
  bool hardware=false;
  int w=0,h=0;
  AVPixelFormat format=AV_PIX_FMT_NONE;
  int profile=AV_PROFILE_UNKNOWN;
+ AVColorSpace matrix=AVCOL_SPC_UNSPECIFIED;
+ AVColorRange colorRange=AVCOL_RANGE_UNSPECIFIED;
  double decoderMs=0,readbackMs=0,colorMs=0,totalMs=0;
  bool thumbAttempted=false,thumbProduced=false;
  std::string thumbReason;
@@ -161,6 +165,10 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  m.w=source->width;m.h=source->height;
  m.format=static_cast<AVPixelFormat>(source->format);
  m.profile=ctx->profile;
+ m.matrix=decoded->colorspace;
+ m.colorRange=decoded->color_range;
+ if(ctx->profile==AV_PROFILE_HEVC_MAIN && m.w==HeicNative8::W && m.h==HeicNative8::H)
+  m.nativeYuv8=HeicNative8::Normalize(source);
  m.thumbAttempted=route.thumbPilot;
  m.thumbProduced=thumbOk;
  m.thumbReason=thumbReason;
@@ -201,8 +209,9 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  return m;
 }
 void Print(const char* name,const char* mode,const Measurement& m){
- std::printf("HEIC_GPU_PORTABLE_FRAME sample=%s mode=%s true_hw_d3d11=%u coded_width=%d coded_height=%d hevc_profile=%d cpu_format=%s decoder_ms=%.3f readback_ms=%.3f bgra_ms=%.3f total_ms=%.3f\n",
+ std::printf("HEIC_GPU_PORTABLE_FRAME sample=%s mode=%s true_hw_d3d11=%u coded_width=%d coded_height=%d hevc_profile=%d cpu_format=%s matrix=%d color_range=%d native_yuv8_bytes=%llu decoder_ms=%.3f readback_ms=%.3f bgra_ms=%.3f total_ms=%.3f\n",
    name,mode,unsigned(m.hardware),m.w,m.h,m.profile,av_get_pix_fmt_name(m.format),
+   int(m.matrix),int(m.colorRange),static_cast<unsigned long long>(m.nativeYuv8.size()),
    m.decoderMs,m.readbackMs,m.colorMs,m.totalMs);
 }
 double Median3(std::vector<double> measurements){
@@ -434,6 +443,13 @@ int wmain(int argc,wchar_t** argv){
     Need(hardware.gotD3D11&&hw.hardware,
        "Hardware decode was replaced by software unexpectedly");
     Print(name,"gpu",hw);
+    if(main8){
+     const bool nativeExact=HeicNative8::Audit(sw.nativeYuv8,hw.nativeYuv8,name);
+     if(!nativeExact)
+      std::puts("HEIC_GPU_MAIN8_FAILURE_CATEGORY=decoded_native_yuv_differs_before_rgb_conversion");
+     else
+      std::puts("HEIC_GPU_MAIN8_FAILURE_CATEGORY=conversion_or_metadata_if_rgb_differs");
+    }
     if(hardware.thumbPilot)AuditThumbnail(name,hw,wicReference);
     if(!Audit(name,sw,hw)){
      std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s stage=color_audit_fail_closed\n",name);
