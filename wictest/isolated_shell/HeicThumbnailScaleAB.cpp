@@ -188,10 +188,16 @@ void Audit(const char* method,const Bytes& wic,const Bytes& area){
 }
 int wmain(int argc,wchar_t** argv){
  try{
-  Need(argc==2 && std::wstring(argv[1])==L"--synthetic12","CI-only fixed fixture mode");
+  Need(argc==2,"CI-only fixed fixture mode");
+  const std::wstring arg=argv[1];
+  const bool detail=(arg==L"--synthetic12detail");
+  Need(arg==L"--synthetic12"||detail,"only pinned synthetic cases");
   Need(Env(L"GITHUB_ACTIONS")==L"true","CI only, not local test or installer");
   const auto temp=Env(L"RUNNER_TEMP");Need(!temp.empty(),"runner temp missing");
-  const std::wstring base=temp+L"\\heic_inprocess_software12\\synthetic12mp";
+  const std::wstring base=temp+(detail?
+    L"\\heic_inprocess_software12detail\\synthetic12mp_detail":
+    L"\\heic_inprocess_software12\\synthetic12mp");
+  std::printf("HEIC_THUMB_SCALE_FIXTURE detail=%d width=%d height=%d\n",int(detail),W,H);
   const Bytes bgra=ReadExact(base+L".bgra",size_t(W)*H*4);
   const Bytes yuv=ReadExact(base+L".yuv420p10le",size_t(W)*H*3);
   const HRESULT init=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
