@@ -66,7 +66,12 @@ jobs:
           $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $codec)) -Wait -PassThru
           if($reg.ExitCode -ne 0){throw 'Codec COM registration refused on isolated runner'}
           try {
+            # A/B comparison in the SAME disposable Windows runner, with
+            # distinct uncached file names and complete registry rollback.
+            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -ExtraFixturePaths $extraFixtures -RegistrationScope Machine
+            if(-not $?){throw 'RGB baseline trial failed'}
             & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -ExtraFixturePaths $extraFixtures -ForceArgbCacheTrial -RegistrationScope Machine
+            if(-not $?){throw 'ARGB pixel-preserving trial failed'}
           } finally {
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
             if($unreg.ExitCode -ne 0){throw 'Runner codec COM registration cleanup failed'}
