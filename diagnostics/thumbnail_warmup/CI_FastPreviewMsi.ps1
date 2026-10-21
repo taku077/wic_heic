@@ -103,8 +103,13 @@ try {
 } finally {
  if($installed){
    Write-Host 'FAST_PREVIEW_SMOKE_BEFORE_UNINSTALL'
-   $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $msi) -Wait -PassThru
-   Write-Host ('FAST_PREVIEW_SMOKE_UNINSTALL_CODE='+$p.ExitCode)
+   $p=$null
+   for($attempt=0;$attempt -lt 8;$attempt++){
+     $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $msi) -Wait -PassThru
+     Write-Host ('FAST_PREVIEW_SMOKE_UNINSTALL_CODE='+$p.ExitCode+' attempt='+$attempt)
+     if($p.ExitCode -ne 1618){break}
+     Start-Sleep -Seconds 2
+   }
    if($p.ExitCode -ne 0){throw ('MSI uninstall failed: '+$p.ExitCode)}
  }
  foreach($subkey in $keys){
