@@ -181,7 +181,7 @@ void Print(const char* name,const char* mode,const Measurement& m){
    name,mode,unsigned(m.hardware),m.w,m.h,av_get_pix_fmt_name(m.format),
    m.decoderMs,m.readbackMs,m.colorMs,m.totalMs);
 }
-void Audit(const char* name,const Measurement& sw,const Measurement& gpu){
+bool Audit(const char* name,const Measurement& sw,const Measurement& gpu){
  Need(sw.w==gpu.w&&sw.h==gpu.h&&sw.bgra.size()==gpu.bgra.size(),
       "Hardware frame geometry does not match software");
  uint64_t absTotal=0,squares=0;
@@ -193,8 +193,12 @@ void Audit(const char* name,const Measurement& sw,const Measurement& gpu){
  const double n=double(sw.bgra.size());
  const double mae=double(absTotal)/n,mse=double(squares)/n;
  const double psnr=mse==0?99.0:10*std::log10(255.0*255.0/mse);
- std::printf("HEIC_GPU_PORTABLE_COMPARE sample=%s hardware_frame=1 exact=%d mae_rgba=%.6f psnr_db=%.3f max_error=%u\n",
-   name,int(absTotal==0),mae,psnr,peak);
+ const bool preliminaryPass=(peak<=4 && mae<=0.25);
+ std::printf("HEIC_GPU_PORTABLE_COMPARE sample=%s hardware_frame=1 exact=%d mae_rgba=%.6f psnr_db=%.3f max_error=%u preliminary_color_pass=%d\n",
+   name,int(absTotal==0),mae,psnr,peak,int(preliminaryPass));
+ if(!preliminaryPass)
+   std::puts("HEIC_GPU_PORTABLE_COLOR_NOT_PROVEN hardware_frame_exists_but_color_quality_failed");
+ return preliminaryPass;
 }
 }
 int wmain(int argc,wchar_t** argv){
@@ -240,12 +244,12 @@ int wmain(int argc,wchar_t** argv){
   }
   DXGI_ADAPTER_DESC1 info{};
   Need(SUCCEEDED(selected->GetDesc1(&info)),"DXGI adapter metadata query failed");
-  const bool software=(info.Flags&DXGI_ADAPTER_FLAG_SOFTWARE)!=0 ||
+  const bool softwareAdapter=(info.Flags&DXGI_ADAPTER_FLAG_SOFTWARE)!=0 ||
     (info.VendorId==0x1414);
   const bool intel=info.VendorId==0x8086;
   std::printf("HEIC_GPU_PORTABLE_ADAPTER index=%d vendor=0x%04X device=0x%04X software=%d intel=%d description=%ls\n",
-    adapter,info.VendorId,info.DeviceId,int(software),int(intel),info.Description);
-  if(software||!intel){
+    adapter,info.VendorId,info.DeviceId,int(softwareAdapter),int(intel),info.Description);
+  if(softwareAdapter||!intel){
    std::puts("HEIC_GPU_PORTABLE_NOT_PROVEN stage=not_physical_intel_adapter");
    return 0;
   }
@@ -275,7 +279,10 @@ int wmain(int argc,wchar_t** argv){
     Need(hardware.gotD3D11&&hw.hardware,
        "Hardware decode was replaced by software unexpectedly");
     Print(name,"gpu",hw);
-    Audit(name,sw,hw);
+    if(!Audit(name,sw,hw)){
+     std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s stage=color_audit_fail_closed\n",name);
+     continue;
+    }
     ++proven;
    }catch(const std::exception& err){
     std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s reason=%s\n",
