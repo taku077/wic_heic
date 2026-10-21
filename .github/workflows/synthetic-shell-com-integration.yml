@@ -56,10 +56,17 @@ jobs:
           $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
           $parity=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellPixelParity.exe').Path
+          $extraFixtures=@(
+            (Resolve-Path -LiteralPath 'wictest/samples/03.heic').Path
+            (Resolve-Path -LiteralPath 'wictest/samples/04.heic').Path
+            (Resolve-Path -LiteralPath 'wictest/samples/05.heic').Path
+            (Resolve-Path -LiteralPath 'wictest/samples/06.heic').Path
+            (Resolve-Path -LiteralPath 'wictest/samples/07.heic').Path
+          )
           $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $codec)) -Wait -PassThru
           if($reg.ExitCode -ne 0){throw 'Codec COM registration refused on isolated runner'}
           try {
-            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -RegistrationScope Machine
+            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -ExtraFixturePaths $extraFixtures -RegistrationScope Machine
           } finally {
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
             if($unreg.ExitCode -ne 0){throw 'Runner codec COM registration cleanup failed'}
