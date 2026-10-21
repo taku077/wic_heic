@@ -1,7 +1,7 @@
 name: HEIC D3D11 GPU feasibility and AnnexB bridge without MSI
 on:
   push:
-    branches: [experiment/heic-gpu-decode-probe]
+    branches: [experiment/heic-gpu-decode-probe, experiment/heic-gpu-d3d11va-firstframe]
   workflow_dispatch:
 permissions:
   contents: read
@@ -218,6 +218,12 @@ jobs:
             throw 'HEIC original changed during study'
           }
           Write-Host 'HEIC_BRIDGE_SYNTHETIC_SOURCE_SHA256_PASSED'
+      - name: Exercise guarded first-frame D3D11VA path and require CPU readback for any claimed GPU output
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/CI_HeicD3d11vaFirstFrame.ps1
+          if(-not $?){throw 'D3D11VA first frame / fallback probe failed'}
       - name: Confirm no installer or global system codec registration
         shell: pwsh
         run: |
