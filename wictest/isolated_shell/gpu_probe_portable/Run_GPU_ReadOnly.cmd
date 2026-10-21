@@ -5,7 +5,7 @@ cd /d "%~dp0"
 set "LOG=%~dp0GPU_Readonly_Result_%RANDOM%_%RANDOM%.txt"
 if exist "%LOG%" goto NEWLOG
 > "%LOG%" echo HEIC GPU D3D11VA Main10 read-only research diagnostic
->> "%LOG%" echo This tool only opens three bundled synthetic HEVC samples.
+>> "%LOG%" echo This tool only opens four bundled pinned HEVC streams (two HEIC-derived, two synthetic).
 >> "%LOG%" echo No user HEIC photos, no codec installation, no MSI, no registry changes.
 >> "%LOG%" echo === CPU SELFTEST ===
 "%~dp0HeicD3D11PortableProbe.exe" --software-selftest >> "%LOG%" 2>&1
