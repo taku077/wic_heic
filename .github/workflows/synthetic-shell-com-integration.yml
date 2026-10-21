@@ -89,6 +89,15 @@ jobs:
               Write-Host ('SHELL_CROSSOVER_PASSED round='+$ordinal+' mode='+$mode)
             }
             Write-Host 'SHELL_CROSSOVER_ABBA_ALL_PASSED'
+            # Separate clean-cache 128px / 512px quality regressions.
+            # Keep the user's real HEIC and Windows 10 untouched.
+            foreach($thumbSize in @(128,512)) {
+              Write-Host ('SHELL_MULTISIZE_START size='+$thumbSize)
+              & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -ExtraFixturePaths $extraFixtures -ForceArgbCacheTrial -ThumbnailSize $thumbSize -RegistrationScope Machine
+              if(-not $?){throw ('Shell ARGB pixel parity failed at size='+$thumbSize)}
+              Write-Host ('SHELL_MULTISIZE_PASSED size='+$thumbSize)
+            }
+            Write-Host 'SHELL_MULTISIZE_128_256_512_PASSED'
           } finally {
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
             if($unreg.ExitCode -ne 0){throw 'Runner codec COM registration cleanup failed'}
