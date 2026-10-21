@@ -1,0 +1,55 @@
+name: HEIC D3D11VA first-frame fast source guards
+on:
+  push:
+    branches: [experiment/heic-gpu-d3d11va-firstframe]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  syntax-and-failclosed-guards:
+    runs-on: windows-2022
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Parse PowerShell implementation and assert GPU proof boundaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $path=(Resolve-Path 'diagnostics/thumbnail_warmup/CI_HeicD3d11vaFirstFrame.ps1').Path
+          $tokens=$null
+          $errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+          if($errors.Count -ne 0){
+            $errors | ForEach-Object { Write-Host "GPU_FIRSTFRAME_SYNTAX_ERROR $($_.Message) line=$($_.Extent.StartLineNumber)" }
+            throw 'GPU first-frame PowerShell failed to parse'
+          }
+          $body=[IO.File]::ReadAllText($path)
+          $required=@(
+            '-hwaccel_output_format',
+            "hwdownload,format=",
+            '-init_hw_device',
+            'D3D11HevcCaps.exe',
+            'HeifPrimaryTransforms.exe',
+            'heic_native_bridge',
+            'Get-FileHash -LiteralPath $original',
+            'HEIC_GPU_FIRSTFRAME_FALLBACK',
+            "if($env:GITHUB_ACTIONS -ne 'true')",
+            "'-n'"
+          )
+          foreach($str in $required){
+            if(-not $body.Contains($str)){throw "Missing mandatory GPU gating or non-overwrite clause: $str"}
+          }
+          if($body.Contains("'d3d11va=hw:0'")){throw 'Unconditional adapter zero not allowed'}
+          if($body.Contains("'-y'")){throw 'Potential file overwrite argument forbidden'}
+          Write-Host 'HEIC_GPU_FIRSTFRAME_POWERSHELL_SYNTAX_AND_GUARDS_PASSED'
+      - name: Assert research isolation without MSI or global codec changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $modified=@(git diff --name-only HEAD^ HEAD)
+          if($LASTEXITCODE -ne 0){throw 'git changed file inventory unavailable'}
+          $unsafe=@($modified | Where-Object {$_ -like 'Installer/*' -or $_ -like 'wic_heic/Codec*'})
+          if($unsafe.Count){throw 'Research branch unexpectedly modified production or installer code'}
+          Write-Host 'HEIC_GPU_FIRSTFRAME_NO_INSTALLER_OR_SYSTEM_CODEC_CHANGE_PASSED'
