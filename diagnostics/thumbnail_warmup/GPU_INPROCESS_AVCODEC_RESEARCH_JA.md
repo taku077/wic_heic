@@ -71,3 +71,11 @@
 - 実ハードウェアデコードの証拠（DXGI adapterとD3D11 texture、readback成功）なしに速度比較しない。
 - 256px thumbnail画像の向き・サイズ・画質・PBGRA・ICC/色、元HEIC SHA256不変、alpha/10bit/HDR/合成変換fallback、並列10～30件のCPU/メモリ上限。
 - GPU初期化の使い回しによる安全性と、単体の高速化が消える並列過剰負荷に注意。
+
+## 2026-10-22：人工12MP Main10で直接計測（今回の最新実装）
+- `wictest/isolated_shell/HeicInprocessGpuAB.cpp` に隔離モード `software12` を実装。HEIC原本は使わず、GitHub CIの一時領域で `testsrc2`→`libx265` の10bit HEVC Annex B 1フレームを生成し、同じ入力からFFmpeg CLIとC++インプロセスAVCodecを復号してSHA256比較。
+- [CI #39626938390](https://github.com/taku077/wic_heic/actions/runs/39626938390)：成功。4032x3024 10bit（48,771,072 BGRA bytes）が完全一致。HEVC入力は460,190 bytesでかなり圧縮容易な人工画像。
+- 1回だけのタイミング：codec open約0.374ms、HEVC decode約70.857ms、BGRA変換約26.704ms、合計約97.938ms。プロセス全体バッチのwall約136.657ms。GPU使用なし。Explorer初回表示やオリジナルiPhone実写の測定ではない。
+- **過去の人工12MP（HEVC抽出約4.65MB）の約400–500msと比較して「4x高速」と認定しない**。圧縮内容・素材・CPU負荷条件が異なり、改善率として無効。
+- GPU実ハードウェアに関する試験はまだ0件。第7世代CoreのHEVCハードウェア対応は公式仕様から可能性があるものの、対象PCでのD3D11VA Main10デコード・P010転送・色管理は未確認。
+- 次の研究で重要なのは、高複雑度12MPの同一フレームでSW/GPUのdecode + readback + BGRA + WIC Fant thumbnailまで含む同一PC実測、iPhone実写真への適用可能性、10～30件並列時のCPU/メモリ。
