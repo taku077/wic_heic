@@ -201,6 +201,36 @@ WicTiming ProfileWic(IWICImagingFactory* factory,const std::wstring& file,bool h
     result.total=Ms(t0,t4);
     return result;
 }
+// Read-only availability probe. Never substitute these embedded thumbnails
+// for the main image until orientation/color/quality parity is demonstrated.
+bool ReportEmbeddedThumbnail(IWICImagingFactory* factory,
+                             const std::wstring& path,int index) {
+    ComPtr<IWICStream> stream;
+    Check(factory->CreateStream(stream.GetAddressOf()),"embedded stream");
+    Check(stream->InitializeFromFilename(path.c_str(),GENERIC_READ),
+          "embedded stream open");
+    ComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoder(GUID_ContainerFormatHEIC,
+          &GUID_VendorPrsyahmi,decoder.GetAddressOf()),
+          "embedded decoder creation");
+    Check(decoder->Initialize(stream.Get(),WICDecodeMetadataCacheOnDemand),
+          "embedded decoder initialization");
+    ComPtr<IWICBitmapSource> thumb;
+    const auto start=Clock::now();
+    const HRESULT hr=decoder->GetThumbnail(thumb.GetAddressOf());
+    UINT width=0,height=0;
+    if(SUCCEEDED(hr)) {
+        Require(thumb!=nullptr,"embedded thumbnail success without source");
+        Check(thumb->GetSize(&width,&height),"embedded thumbnail dimensions");
+        Require(width>0&&height>0&&width<=10000&&height<=10000,
+                "embedded thumbnail invalid dimensions");
+    }
+    const auto end=Clock::now();
+    const double ms=std::chrono::duration<double,std::milli>(end-start).count();
+    std::printf("SHELL_JPEG_HEIC_EMBEDDED_PROBE index=%d available=%u width=%u height=%u hr=0x%08X lookup_ms=%.2f\n",
+          index,SUCCEEDED(hr)?1u:0u,width,height,unsigned(hr),ms);
+    return SUCCEEDED(hr);
+}
 struct Extraction {
     double milliseconds=0;
     UINT width=0,height=0;
@@ -366,6 +396,12 @@ int wmain(int argc,wchar_t** argv) {
         PrintSummary("HEIC","direct_wic_total",hTotal);
         PrintSummary("JPEG","direct_wic_total",jTotal);
         std::puts("SHELL_JPEG_HEIC_WIC_PHASES_PASS");
+        UINT embeddedCount=0;
+        for(int i=0;i<kCases;++i) {
+            embeddedCount+=ReportEmbeddedThumbnail(factory.Get(),heicPaths[i],i)?1u:0u;
+        }
+        std::printf("SHELL_JPEG_HEIC_EMBEDDED_COUNT=%u OF=%d\n",embeddedCount,kCases);
+        std::puts("SHELL_JPEG_HEIC_EMBEDDED_AVAILABILITY_PROBE_PASS");
         std::puts("SHELL_JPEG_HEIC_CACHE_REVISIT_PASS");
         std::puts("SHELL_JPEG_HEIC_FAIR_SOURCE_PROBE_PASS");
         return 0;
