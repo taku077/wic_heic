@@ -106,6 +106,7 @@ struct Sample {
  Bytes bgra;
  Bytes nativeYuv10; // research diagnostic only, never used by installed WIC
  double wallMs=0, cpuMs=0;
+ double codecOpenMs=0, decodeMs=0, gpuReadbackMs=0, colorMs=0;
  uint64_t privateBytes=0;
  bool hardwareFrame=false;
  int width=0,height=0;
@@ -144,6 +145,7 @@ Sample Decode(const Bytes& compressed,Route& route){
  const uint64_t cpuStart=ProcessCpuTicks();
  const auto start=Clock::now();
  Require(avcodec_open2(context.get(),decoder,nullptr)>=0,"HEVC decoder open failed");
+ const auto afterOpen=Clock::now();
  Require(avcodec_send_packet(context.get(),packet.get())>=0,"HEVC packet submission failed");
  int result=avcodec_receive_frame(context.get(),decoded.get());
  if(result==AVERROR(EAGAIN)){
@@ -151,6 +153,7 @@ Sample Decode(const Bytes& compressed,Route& route){
   result=avcodec_receive_frame(context.get(),decoded.get());
  }
  Require(result>=0,"HEVC 1-frame decoder produced no image");
+ const auto afterDecode=Clock::now();
  if(route.requestedHardware){
   Require(decoded->format==AV_PIX_FMT_D3D11,"no D3D11 texture: hardware fallback forbidden");
   route.gotHardwareFrame=true;
@@ -164,6 +167,7 @@ Sample Decode(const Bytes& compressed,Route& route){
   Require(source->format==AV_PIX_FMT_NV12 || source->format==AV_PIX_FMT_P010LE,
     "D3D11 transfer format not NV12/P010 (unsafe for current path)");
  }
+ const auto afterReadback=Clock::now();
  Require(source->width>0 && source->height>0 &&
    source->width<=8192 && source->height<=8192,"decoded geometry unsafe");
  Require(source->format!=AV_PIX_FMT_NONE,"unknown source pixel format");
@@ -208,6 +212,14 @@ Sample Decode(const Bytes& compressed,Route& route){
  int dstStride[4]={pitch,0,0,0};
  Require(sws_scale(convert.get(),source->data,source->linesize,0,h,dst,dstStride)==h,
    "BGRA conversion incomplete");
+ const auto afterColor=Clock::now();
+ const auto ms=[](Clock::duration elapsed){
+   return std::chrono::duration<double,std::milli>(elapsed).count();
+ };
+ sample.codecOpenMs=ms(afterOpen-start);
+ sample.decodeMs=ms(afterDecode-afterOpen);
+ sample.gpuReadbackMs=ms(afterReadback-afterDecode);
+ sample.colorMs=ms(afterColor-afterReadback);
  sample.wallMs=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
  sample.cpuMs=double(ProcessCpuTicks()-cpuStart)/10000.0;
  sample.privateBytes=PrivateBytes();
@@ -239,6 +251,8 @@ void PrintSample(const char* mode,const char* file,const Sample& s){
  av_get_pix_fmt_name(s.decodedFormat),s.wallMs,s.cpuMs,
  static_cast<unsigned long long>(s.privateBytes),
  static_cast<unsigned long long>(s.bgra.size()));
+ std::printf("HEIC_INPROCESS_PHASES file=%s mode=%s codec_open_ms=%.3f hevc_decode_ms=%.3f gpu_readback_ms=%.3f bgra_convert_ms=%.3f total_ms=%.3f\n",
+   file,mode,s.codecOpenMs,s.decodeMs,s.gpuReadbackMs,s.colorMs,s.wallMs);
 }
 }
 int wmain(int argc,wchar_t** argv){
