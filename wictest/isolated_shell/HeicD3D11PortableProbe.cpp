@@ -184,23 +184,18 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  int convertStride[4]={source->linesize[0],source->linesize[1],
                        source->linesize[2],source->linesize[3]};
  AVPixelFormat converterFormat=m.format;
+ HeicNative8::PlanarNv12View planar8;
  if(ctx->profile==AV_PROFILE_HEVC_MAIN && m.w==HeicNative8::W &&
     m.h==HeicNative8::H && route.requestedGpu){
   Need(m.format==AV_PIX_FMT_NV12,
        "8bit GPU conversion requires native NV12, refuse other formats");
   const auto repackStart=Clock::now();
-  m.nativeYuv8=HeicNative8::Normalize(source);
+  HeicNative8::BuildPlanarNv12View(source,planar8);
   const auto repackEnd=Clock::now();
-  const size_t luma=size_t(m.w)*m.h;
-  const size_t quarter=luma/4;
-  convertData[0]=m.nativeYuv8.data();
-  convertData[1]=m.nativeYuv8.data()+luma;
-  convertData[2]=m.nativeYuv8.data()+luma+quarter;
-  convertData[3]=nullptr;
-  convertStride[0]=m.w;
-  convertStride[1]=m.w/2;
-  convertStride[2]=m.w/2;
-  convertStride[3]=0;
+  for(int ch=0;ch<4;++ch){
+   convertData[ch]=planar8.data[ch];
+   convertStride[ch]=planar8.linesize[ch];
+  }
   converterFormat=AV_PIX_FMT_YUV420P;
   m.main8PlanarNormalizedForBgra=true;
   m.main8RepackMs=std::chrono::duration<double,std::milli>(repackEnd-repackStart).count();
