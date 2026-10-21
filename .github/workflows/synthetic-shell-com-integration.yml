@@ -66,12 +66,29 @@ jobs:
           $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $codec)) -Wait -PassThru
           if($reg.ExitCode -ne 0){throw 'Codec COM registration refused on isolated runner'}
           try {
-            # A/B comparison in the SAME disposable Windows runner, with
-            # distinct uncached file names and complete registry rollback.
-            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -ExtraFixturePaths $extraFixtures -RegistrationScope Machine
-            if(-not $?){throw 'RGB baseline trial failed'}
-            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -ExtraFixturePaths $extraFixtures -ForceArgbCacheTrial -RegistrationScope Machine
-            if(-not $?){throw 'ARGB pixel-preserving trial failed'}
+            # Balanced crossover: RGB/ARGB/ARGB/RGB. Each trial uses a
+            # new randomly named temp folder and proves registry rollback.
+            # Never register real .heic/.heif handlers.
+            $sequence=@('RGB','ARGB','ARGB','RGB')
+            $ordinal=0
+            foreach($mode in $sequence) {
+              $ordinal++
+              Write-Host ('SHELL_CROSSOVER_START round='+$ordinal+' mode='+$mode)
+              $common=@{
+                TrialDllPath=$provider
+                FixturePath=$fixture
+                ExtraFixturePaths=$extraFixtures
+                RegistrationScope='Machine'
+              }
+              if($mode -eq 'ARGB') {
+                & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 @common -PixelParityExePath $parity -ForceArgbCacheTrial
+              } else {
+                & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 @common
+              }
+              if(-not $?){throw ('Shell crossover trial failed round='+$ordinal+' mode='+$mode)}
+              Write-Host ('SHELL_CROSSOVER_PASSED round='+$ordinal+' mode='+$mode)
+            }
+            Write-Host 'SHELL_CROSSOVER_ABBA_ALL_PASSED'
           } finally {
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
             if($unreg.ExitCode -ne 0){throw 'Runner codec COM registration cleanup failed'}
