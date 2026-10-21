@@ -35,7 +35,7 @@ jobs:
             'heic_native_bridge',
             'Get-FileHash -LiteralPath $original',
             'HEIC_GPU_FIRSTFRAME_FALLBACK',
-            "if($env:GITHUB_ACTIONS -ne 'true')",
+            'if($env:GITHUB_ACTIONS -ne ''true'')',
             "'-n'"
           )
           foreach($str in $required){
