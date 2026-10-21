@@ -1,0 +1,67 @@
+name: HEIC real-extension fast thumbnail preview MSI
+on:
+  push:
+    branches: [preview/fast-heic-thumbnail-msi-v0.1]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fast-preview:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Restore native codec dependencies
+        uses: actions/cache/restore@v4
+        id: deps
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-fixed-v1
+          restore-keys: |
+            wic-repair-x64-
+      - name: Build pinned dependencies if cache is absent
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          foreach($name in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$name.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Dependency build failed: $name"}
+          }
+      - name: Compile WIC codec, fast Shell DLL and dedicated MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Native WIC decoder build failed'}
+          msbuild wictest/isolated_shell/HeicShellFastPreview.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Fast thumbnail DLL build failed'}
+          msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Fast thumbnail MSI build failed'}
+      - name: Validate real .heic extension Shell extraction and MSI cleanup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/WicHeicFastPreview.msi').Path
+          $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          $p=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $codec)) -Wait -PassThru
+          if($p.ExitCode -ne 0){throw 'Test codec COM registration failed'}
+          try{
+            & ./diagnostics/thumbnail_warmup/CI_FastPreviewMsi.ps1 -MsiPath $msi -FixturePath $fixture
+            if(-not $?){throw 'Real HEIC fast preview test failed'}
+          }finally{
+            $p=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
+            if($p.ExitCode -ne 0){throw 'Test codec COM cleanup failed'}
+          }
+      - name: Upload real .heic Fast Thumbnail MSI after all checks pass
+        uses: actions/upload-artifact@v4
+        with:
+          name: WicHeic-FastThumbnail-Preview-v0.1-Win10-UNVERIFIED
+          path: (Build)/x64/Release/WicHeicFastPreview.msi
+          if-no-files-found: error
+          retention-days: 14
