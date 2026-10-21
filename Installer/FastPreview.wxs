@@ -1,10 +1,10 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-<Package Id="taku077.WicHeicFastPreview" Name="WicHeic Fast Thumbnail Preview (Experimental)" Manufacturer="WicHeic Community Experimental" Version="0.1.1" Scope="perMachine">
+<Package Id="taku077.WicHeicFastPreview" Name="WicHeic Fast Thumbnail Preview (Experimental)" Manufacturer="WicHeic Community Experimental" Version="0.1.2" Scope="perMachine">
  <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="Newer preview already installed."/>
  <Media Id="1" Cabinet="FastPreview.cab" EmbedCab="yes"/>
  <Property Id="PRIOR_HEIC_EXT"><RegistrySearch Id="PriorHeicExt" Root="HKCU" Key="Software\Classes\.heic\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}" Type="raw"/></Property>
  <Property Id="PRIOR_HEIC_SYSTEM"><RegistrySearch Id="PriorHeicSystem" Root="HKCU" Key="Software\Classes\SystemFileAssociations\.heic\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}" Type="raw"/></Property>
- <Property Id="PRIOR_HEIC_WIC"><RegistrySearch Id="PriorHeicWic" Root="HKLM" Key="Software\Classes\CLSID\{0E8AB687-73A5-455B-8C19-B93CA9AC0EEB}\InprocServer32" Type="raw"/></Property>
+ <Property Id="PRIOR_HEIC_WIC"><RegistrySearch Id="PriorHeicWic" Root="HKLM" Key="Software\Classes\CLSID\{6215667C-74CA-4076-A769-3F834C3F25F5}\InprocServer32" Type="raw"/></Property>
  <Launch Condition="Installed OR (NOT PRIOR_HEIC_EXT AND NOT PRIOR_HEIC_SYSTEM)" Message="Existing per-user HEIC thumbnail handler: refusing to overwrite."/>
  <Launch Condition="Installed OR PRIOR_HEIC_WIC" Message="WicHeic WIC decoder must already be installed."/>
  <Feature Id="Main"><ComponentGroupRef Id="FastThumb"/></Feature>
