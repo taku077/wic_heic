@@ -72,7 +72,7 @@ Bytes ReadSafe(const std::wstring& file){
  Need(fread(out.data(),1,out.size(),input.get())==out.size(),"Fixture incomplete");
  return out;
 }
-struct Route {bool requestedGpu=false;bool gotD3D11=false;bool thumbPilot=false;AVBufferRef* device=nullptr;};
+struct Route {bool requestedGpu=false;bool gotD3D11=false;bool thumbPilot=false;AVBufferRef* device=nullptr;HeicGpuThumb::Cache* thumbCache=nullptr;};
 AVPixelFormat PickHardware(AVCodecContext* codec,const AVPixelFormat* formats){
  const auto* route=static_cast<Route*>(codec->opaque);
  if(!route||!route->requestedGpu)return AV_PIX_FMT_NONE;
@@ -141,7 +141,8 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
   route.gotD3D11=true;
   if(route.thumbPilot){
    try{
-    gpuThumbResult=HeicGpuThumb::Render(decoded.get(),route.device);
+    Need(route.thumbCache!=nullptr,"GPU thumbnail cache must be supplied explicitly");
+    gpuThumbResult=HeicGpuThumb::Render(decoded.get(),route.device,*route.thumbCache);
     thumbOk=true;
    }catch(const std::exception& e){thumbReason=e.what();}
   }
@@ -231,9 +232,9 @@ void AuditThumbnail(const char* sample,const Measurement& gpu,const Bytes& refer
  const double psnr=mse==0?99.0:10.0*std::log10(65025.0/mse);
  std::printf("HEIC_GPU_THUMB_COMPARE sample=%s vs_wic_fant_mae=%.6f psnr_db=%.3f max_rgb_error=%u nonopaque_pixels=%u quality_approved=0\n",
    sample,mae,psnr,maxerr,nonopaque);
- std::printf("HEIC_GPU_THUMB_TIMES sample=%s setup_ms=%.3f video_blt_submit_ms=%.3f small_256px_readback_ms=%.3f gpu_thumb_total_ms=%.3f hevc_gpu_decode_ms=%.3f hevc_plus_thumb_ms=%.3f original_full_yuv_readback_ms=%.3f\n",
+ std::printf("HEIC_GPU_THUMB_TIMES sample=%s setup_ms=%.3f video_blt_submit_ms=%.3f small_256px_readback_ms=%.3f gpu_thumb_total_ms=%.3f hevc_gpu_decode_ms=%.3f hevc_plus_thumb_ms=%.3f original_full_yuv_readback_ms=%.3f reused_processor=%d\n",
    sample,gpu.thumb.setupMs,gpu.thumb.bltMs,gpu.thumb.smallReadbackMs,
-   gpu.thumb.totalMs,gpu.decoderMs,gpu.decoderMs+gpu.thumb.totalMs,gpu.readbackMs);
+   gpu.thumb.totalMs,gpu.decoderMs,gpu.decoderMs+gpu.thumb.totalMs,gpu.readbackMs,int(gpu.thumb.reusedProcessor));
  std::puts("HEIC_GPU_THUMB_RESEARCH_ONLY_NOT_PRODUCTION_OR_EXPLORER_APPROVED");
 }
 bool Audit(const char* name,const Measurement& sw,const Measurement& gpu){
@@ -342,8 +343,10 @@ int wmain(int argc,wchar_t** argv){
    std::puts("HEIC_GPU_PORTABLE_NOT_PROVEN stage=create_device");
    return 0;
   }
+  HeicGpuThumb::Cache thumbCache;
   Route hardware;hardware.requestedGpu=true;hardware.device=gpu.ptr;
   hardware.thumbPilot=gpuThumbMode;
+  hardware.thumbCache=gpuThumbMode?&thumbCache:nullptr;
   Route software;software.requestedGpu=false;
   int proven=0;
   for(const char* name:names){
