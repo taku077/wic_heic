@@ -1,0 +1,18 @@
+Research diagnostics include dynamically linked FFmpeg libraries:
+avcodec, avutil, swscale and supporting LGPL shared DLLs.
+
+Upstream: https://ffmpeg.org/
+Windows research distribution: https://github.com/BtbN/FFmpeg-Builds
+Pinned tag: autobuild-2026-10-21-13-06
+Asset: ffmpeg-n8.1.3-20-gc8de997cb1-win64-lgpl-shared-8.1.zip
+SHA-256: 2eec333253518c6deb0a8b6dff6d615e03f254baa1b04f44356de2725e5fb60f
+
+FFmpeg and dependencies are copyright their respective authors and
+distributed under the licenses supplied with the original distribution.
+The original shared FFmpeg libraries remain separately replaceable.
+This software does not modify the libraries or statically link FFmpeg.
+FFmpeg and relevant LGPL source and license terms are available at
+https://ffmpeg.org/legal.html and the distributor upstream above.
+
+This unsigned executable is a local, read-only research diagnostic,
+not a registered codec, driver, installer, or supported production build.
