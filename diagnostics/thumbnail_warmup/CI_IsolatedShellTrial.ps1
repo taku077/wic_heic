@@ -9,6 +9,7 @@ Never modifies .heic, .heif, real-photo files or their associations.
 param(
  [Parameter(Mandatory=$true)][string]$TrialDllPath,
  [Parameter(Mandatory=$true)][string]$FixturePath,
+ [string]$PixelParityExePath='',
  [ValidateSet('User','Machine')][string]$RegistrationScope='User'
 )
 $ErrorActionPreference='Stop'
@@ -237,6 +238,13 @@ try {
  Write-Host ('HEIC_SHELL_ISOLATED_PROVIDER_CALLED='+$calls)
  if($calls -ne $files.Count -or $attempts -ne $files.Count) {
    throw ('Shell provider call-count mismatch: expected='+$files.Count+' calls='+$calls+' attempts='+$attempts)
+ }
+ # Read the actual cached Shell HBITMAPs, then compare every PBGRA byte
+ # against a separate native WIC render. This must never re-extract images.
+ if($PixelParityExePath) {
+   $parity=(Resolve-Path -LiteralPath $PixelParityExePath -ErrorAction Stop).Path
+   & $parity $work
+   if($LASTEXITCODE -ne 0){throw ('Independent Shell pixel parity failed: exit='+$LASTEXITCODE)}
  }
  foreach($trialFile in $files) {
    $again=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$true)
