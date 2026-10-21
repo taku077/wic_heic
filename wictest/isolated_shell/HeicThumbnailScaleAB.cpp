@@ -3,6 +3,7 @@
 // Fixed synthetic HEVC test input only; no registration, MSI, HEIC writes,
 // external picture upload, or change to Windows Photos/Explorer/HEIC Manager.
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <wincodec.h>
 #include <wrl/client.h>
