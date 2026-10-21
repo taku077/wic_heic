@@ -159,3 +159,24 @@
 高品質の目的には、失敗しているGPU直接256px縮小を製品に採用しない。すでに3/3画素完全一致したGPU HEVC→フルP010 CPU readback→フルBGRAへ切り替える**復号だけのGPU化**を優先。最終縮小には元のWindows WIC Fantをそのまま使用し、従来CPU BGRA→WIC Fant出力とバイト完全一致するか実測する。
 
 研究ソース HeicD3D11PortableProbe.cpp に3反復HEIC_GPU_FANT_END_TO_END / HEIC_GPU_FANT_3PASS_MEDIANを追加。CPU/GPUのHEVC復号+BGRA変換+WIC Fantの全工程時間と、最終256x192 BGRA画像196,608バイトの一致を検査する。完全一致しない場合はfail closed。Intel実機の新テスト結果はまだ取得前で、Explorer初回表示30%以上の短縮も引き続き未実証。管理者権限・写真の書換え・WIC COM/Photosへのインストールを要しない。
+
+## 2026-10-22：第3回HD620実機結果：GPU復号＋WIC Fantの「最終サムネイル完全一致」
+
+ユーザーからの最新研究用ZIPはファイル13件すべてが同梱SHA256マニフェストと一致。生ログ、デバイスポインタ等は公開せず、以下の集計値のみ残す。
+
+- 実GPU：Intel HD Graphics 620, 8086:5916、D3D11VA実ハードウェアフレームを3回取得。**人工12MP HEVC Main10 4032x3024** が対象。
+- CPUフル画像BGRAとGPU復号→フルP010 readback→BGRAは3回とも全画素完全一致（MAE=0, max=0）。その画像をWindows WIC Fant 256x192 BGRAで縮小した**最終196,608バイト**も3/3バイト完全一致した。
+- 画像復号+BGRA+WIC Fant最終縮小までの3回計測（単位ms）：
+  - CPU 754.284 / 786.059 / 749.868；中央値754.284
+  - D3D11 GPU 397.476 / 353.172 / 387.443；中央値387.443
+  - 中央値差366.841ms、短縮48.634%。これは同一人工12MP入力についてWindows Explorer/UI時間を含めず、アダプター初期化46.209msも含めない。
+- CPU側WIC Fant縮小単体39.633/43.686/52.568ms、GPU側38.260/40.213/51.662ms。品質を落とす縮小最適化は不要な方向性が強い。
+- 一方D3D11 VP直接縮小256pxは最初Fant MAE6.529792、反復後6.905884、品質不合格。GPU VP再利用自体は成功（setup146.786→0.029→0.026ms）、品質改善には寄与していない。製品導入禁止。
+- HEIC由来の同梱2画像は両方HEVC RExt（general_profile_idc=4）で、Main10 GPUドライバーでは初期化できずCPUに戻る。**現時点で実HEIC由来画像のGPU高速化候補は2枚中0枚**。Main10 12MPは人工HEVC AnnexBであり、実HEICコンテナーからのGPU復号と同一視できない。
+- Windows 10の既存HEIC WICデコーダーは、10bit HEICに対して48bppRGB（アルファ付き64bppRGBA）を公開する。人工Main10のBGRA8bit画像でWIC Fantが完全一致したことは、**WICの16bit出力／ICC・色管理の完全互換を証明していない**。10bit HEICを8bitに落とすような製品経路は許さない。
+
+### 次段階：8bit Main/NV12を別ルートで検証
+
+人工HEVC 12MP 8bit Main（general_profile_idc=1）をCIで追加生成。Intel D3D11 Mainを使ってGPU復号→NV12フル画像readback→BGRA→元のWIC Fantへ入力し、CPU基準と最終BGRA 256x192の全バイト一致・3回中央値を記録。Main10とMain8の成功件数は個別に出力し、2件の実HEIC由来RExtは引き続き拒否する。GPU直接縮小VPはP010限定のため8bitでは起動しない。
+
+この研究は実機用の人工4番目の固定HEVCを追加しただけで、実HEIC画像の変換・上書き・私有写真の読込みはない。追加Main8研究でも本物のHEICサムネイル30%短縮はまだ未証明。現行WIC・フォト・HEIC ManagerとWindows Shellのインストールを変更しない。
