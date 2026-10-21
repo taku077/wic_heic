@@ -12,8 +12,9 @@
 namespace HeicThumbFant {
 using Microsoft::WRL::ComPtr;
 constexpr unsigned TargetW=256,TargetH=192;
-inline std::vector<uint8_t> Scale(const std::vector<uint8_t>& bgra,
-                                int fullWidth,int fullHeight){
+inline std::vector<uint8_t> ScaleWithMode(const std::vector<uint8_t>& bgra,
+                                int fullWidth,int fullHeight,
+                                WICBitmapInterpolationMode mode){
  if(fullWidth!=4032||fullHeight!=3024||
     bgra.size()!=size_t(fullWidth)*size_t(fullHeight)*4)
   throw std::runtime_error("WIC Fant control is fixed to 12MP pilot sample");
@@ -31,12 +32,20 @@ inline std::vector<uint8_t> Scale(const std::vector<uint8_t>& bgra,
   throw std::runtime_error("WIC full BGRA input refused");
  ComPtr<IWICBitmapScaler> scaler;
  if(FAILED(factory->CreateBitmapScaler(scaler.GetAddressOf())) ||
-    FAILED(scaler->Initialize(image.Get(),TargetW,TargetH,
-          WICBitmapInterpolationModeFant)))
+    FAILED(scaler->Initialize(image.Get(),TargetW,TargetH,mode)))
   throw std::runtime_error("WIC Fant scaler unavailable");
  std::vector<uint8_t> out(size_t(TargetW)*TargetH*4);
  if(FAILED(scaler->CopyPixels(nullptr,TargetW*4,unsigned(out.size()),out.data())))
   throw std::runtime_error("WIC Fant thumbnail CopyPixels failed");
  return out;
+}
+inline std::vector<uint8_t> Scale(const std::vector<uint8_t>& bgra,int w,int h){
+ return ScaleWithMode(bgra,w,h,WICBitmapInterpolationModeFant);
+}
+inline std::vector<uint8_t> ScaleLinear(const std::vector<uint8_t>& bgra,int w,int h){
+ return ScaleWithMode(bgra,w,h,WICBitmapInterpolationModeLinear);
+}
+inline std::vector<uint8_t> ScaleCubic(const std::vector<uint8_t>& bgra,int w,int h){
+ return ScaleWithMode(bgra,w,h,WICBitmapInterpolationModeCubic);
 }
 } // namespace HeicThumbFant
