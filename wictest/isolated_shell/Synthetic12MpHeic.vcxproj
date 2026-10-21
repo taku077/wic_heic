@@ -9,7 +9,7 @@
  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props"/>
  <ImportGroup Label="ExtensionSettings"/><ImportGroup Label="Shared"/>
  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-  <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props)" Label="LocalAppDataPlatform"/>
+  <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform"/>
  </ImportGroup>
  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
   <OutDir>$(ProjectDir)(Build)\x64\Release\</OutDir>
