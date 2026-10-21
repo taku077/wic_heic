@@ -46,6 +46,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'WIC codec failed to build'}
           msbuild wictest/isolated_shell/HeicShellTrial.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Shell COM trial failed to build'}
+          msbuild wictest/isolated_shell/ShellPixelParity.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Shell parity probe failed to build'}
       - name: Verify actual IThumbnailCache extraction through synthetic .wictrial
         shell: pwsh
         run: |
@@ -53,10 +55,11 @@ jobs:
           $provider=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/WicHeicIsolatedThumbTrial.dll').Path
           $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          $parity=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellPixelParity.exe').Path
           $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $codec)) -Wait -PassThru
           if($reg.ExitCode -ne 0){throw 'Codec COM registration refused on isolated runner'}
           try {
-            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -RegistrationScope Machine
+            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -RegistrationScope Machine
           } finally {
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $codec)) -Wait -PassThru
             if($unreg.ExitCode -ne 0){throw 'Runner codec COM registration cleanup failed'}
