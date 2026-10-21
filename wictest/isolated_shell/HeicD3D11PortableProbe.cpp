@@ -210,20 +210,21 @@ int wmain(int argc,wchar_t** argv){
        "Only a single digit DXGI adapter index 0..9 or --software-selftest is accepted");
   const auto dir=ExecutableFolder();
   const auto fixtureDir=dir+L"\\samples\\";
-  const char* names[]={"04","fixture-irot3-exif6-noaux"};
+  const char* names[]={"04","fixture-irot3-exif6-noaux","synthetic12mp_detail"};
   if(selftest){
    Route sw;sw.requestedGpu=false;
-   for(int i=0;i<2;++i){
+   for(int i=0;i<3;++i){
     const char* name=names[i];
     const std::wstring stem(name,name+strlen(name));
     const Bytes input=ReadSafe(fixtureDir+stem+L".h265");
     const Measurement result=OneFrame(input,sw);
     Print(name,"software-selftest",result);
-    const int expectedW=i==0?2048:1920,expectedH=i==0?2048:1080;
+    const int expectedW=i==0?2048:(i==1?1920:4032);
+    const int expectedH=i==0?2048:(i==1?1080:3024);
     Need(result.w==expectedW&&result.h==expectedH,
          "Packed HEVC fixture decoded with wrong dimensions");
    }
-   std::puts("HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_2_OF_2_PASS");
+   std::puts("HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS");
    std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
    return 0;
   }
@@ -289,8 +290,8 @@ int wmain(int argc,wchar_t** argv){
       name,err.what());
    }
   }
-  std::printf("HEIC_GPU_PORTABLE_SUMMARY proven=%d total=2 device_reused=1 product_enabled=0\n",proven);
-  if(proven==2)std::puts("HEIC_GPU_PORTABLE_MAIN10_HARDWARE_DECODE_AND_CPU_READBACK_PROVEN");
+  std::printf("HEIC_GPU_PORTABLE_SUMMARY proven=%d total=3 device_reused=1 product_enabled=0\n",proven);
+  if(proven==3)std::puts("HEIC_GPU_PORTABLE_MAIN10_HARDWARE_12MP_DECODE_AND_CPU_READBACK_PROVEN");
   else std::puts("HEIC_GPU_PORTABLE_GPU_PATH_NOT_PROVEN_KEEP_SOFTWARE_FALLBACK");
   std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
   return 0;
