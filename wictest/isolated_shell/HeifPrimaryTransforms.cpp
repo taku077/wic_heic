@@ -49,6 +49,7 @@ int wmain(){
     L"fixture-irot3-exif6-noaux.heic",L"fixture-irot3-exif6.heic"
   };
   int total=0,withRotation=0,withMirror=0,withCrop=0;
+  int gpu8Candidates=0;
   for(const wchar_t* name:names){
     std::wstring path=root+L"\\wictest\\samples\\"+name;
     Require(GetFileAttributesW(path.c_str())!=INVALID_FILE_ATTRIBUTES,"missing pinned sample");
