@@ -82,6 +82,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicInprocessGpuAB.exe').Path
+          $env:HEIC_INPROCESS_DUMP_YUV='1'
           & $exe software12
           if($LASTEXITCODE -ne 0){throw '12MP in-process HEVC decode failed'}
           $a=Join-Path $env:RUNNER_TEMP 'heic_native_bridge/synthetic12mp.native.bgra'
@@ -91,6 +92,21 @@ jobs:
           Write-Host "HEIC_INPROCESS_SYNTHETIC12_MAIN10_BGRA_EXACT=$same"
           if(-not $same){throw '12MP HEVC color or decoder parity failed'}
           Write-Host 'HEIC_INPROCESS_SYNTHETIC12_MAIN10_STAGE_TIMING_PASS'
+      - name: Build no-install Windows Fant versus direct YUV thumbnail scaler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeicThumbnailScaleAB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Research-only WIC Fant versus YUV scale application compile failed'}
+          Write-Host 'HEIC_THUMB_SCALE_RESEARCH_CPP_COMPILED'
+      - name: Compare 12MP->256px WIC Fant vs direct YUV area scaling (8 ABBA repetitions)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicThumbnailScaleAB.exe').Path
+          & $exe --synthetic12
+          if($LASTEXITCODE -ne 0){throw 'Thumbnail quality/speed A/B test failed'}
+          Write-Host 'HEIC_THUMB_SCALE_ABBA_RESULTS_RECORDED_RESEARCH_ONLY'
       - name: Assert byte-exact BGRA from both in-process Main10 decodes
         shell: pwsh
         run: |
