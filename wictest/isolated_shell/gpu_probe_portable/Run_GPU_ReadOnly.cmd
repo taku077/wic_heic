@@ -28,5 +28,5 @@ echo.
 echo Diagnostic complete. Upload only the generated GPU_Readonly_Result_*.txt to this chat.
 echo Saved log: "%LOG%"
 echo The diagnostic changes no Windows codec or user HEIC files.
-pause
+if /I not "%HEIC_GPU_PROBE_CI%"=="1" pause
 endlocal
