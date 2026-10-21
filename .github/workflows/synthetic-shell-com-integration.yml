@@ -48,6 +48,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Shell COM trial failed to build'}
           msbuild wictest/isolated_shell/ShellPixelParity.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Shell parity probe failed to build'}
+          msbuild wictest/isolated_shell/ShellJpegComparison.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Matched JPEG/HEIC comparator failed to build'}
       - name: Verify actual IThumbnailCache extraction through synthetic .wictrial
         shell: pwsh
         run: |
@@ -56,6 +58,7 @@ jobs:
           $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
           $parity=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellPixelParity.exe').Path
+          $comparison=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellJpegComparison.exe').Path
           $extraFixtures=@(
             (Resolve-Path -LiteralPath 'wictest/samples/03.heic').Path
             (Resolve-Path -LiteralPath 'wictest/samples/04.heic').Path
@@ -81,7 +84,7 @@ jobs:
                 RegistrationScope='Machine'
               }
               if($mode -eq 'ARGB') {
-                & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 @common -PixelParityExePath $parity -ForceArgbCacheTrial
+                & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 @common -PixelParityExePath $parity -JpegComparisonExePath $comparison -ForceArgbCacheTrial
               } else {
                 & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 @common
               }
