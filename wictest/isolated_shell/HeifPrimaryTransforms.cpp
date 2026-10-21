@@ -49,7 +49,7 @@ int wmain(){
     L"fixture-irot3-exif6-noaux.heic",L"fixture-irot3-exif6.heic"
   };
   int total=0,withRotation=0,withMirror=0,withCrop=0;
-  int gpu8Candidates=0;
+  int gpu8Candidates=0, gpu10Candidates=0;
   for(const wchar_t* name:names){
     std::wstring path=root+L"\\wictest\\samples\\"+name;
     Require(GetFileAttributesW(path.c_str())!=INVALID_FILE_ATTRIBUTES,"missing pinned sample");
@@ -160,15 +160,19 @@ int wmain(){
     const heif_color_profile_type colorType=heif_image_handle_get_color_profile_type(primaryHandle);
     heif_image_handle_release(primaryHandle);
     const bool geometry=width>0 && height>0 && width<=8192 && height<=8192;
-    const bool bits=lumaBits==8 && chromaBits==8;
+    const bool main8=lumaBits==8 && chromaBits==8;
+    const bool main10=lumaBits==10 && chromaBits==10;
+    const bool bits=main8 || main10;
     const unsigned rejectionReasons=(geometry?0u:1u) | (bits?0u:2u) |
        (alpha?4u:0u) | (rawICC?8u:0u) | (safeOrientation?0u:16u);
     const bool provisional=rejectionReasons==0;
-    if(provisional)++gpu8Candidates;
-    std::printf("HEIC_GPU_PRECHECK file=%ls width=%d height=%d bpp=%d/%d alpha=%d rawICCbytes=%llu profile=%d transform_allowed=%d candidate=%d rejection_mask=%u\n",
+    if(provisional && main8)++gpu8Candidates;
+    if(provisional && main10)++gpu10Candidates;
+    const char* profileName=provisional?(main10?"main10":"main8"):"fallback";
+    std::printf("HEIC_GPU_PRECHECK file=%ls width=%d height=%d bpp=%d/%d alpha=%d rawICCbytes=%llu profile=%d transform_allowed=%d route=%s candidate=%d rejection_mask=%u\n",
       name,width,height,lumaBits,chromaBits,int(alpha),
       static_cast<unsigned long long>(rawICC),int(colorType),
-      int(safeOrientation),int(provisional),rejectionReasons);
+      int(safeOrientation),profileName,int(provisional),rejectionReasons);
     std::printf("HEIC_PRIMARY_TRANSFORM file=%ls itemId=%u total=%d rotations=%d mirror=%d crops=%d ccw=%d conservative_supported=%d\n",
       name,unsigned(id),fetched,irot,imir,clap,lastCcw,int(safeOrientation));
     heif_context_free(ctx);
@@ -177,8 +181,8 @@ int wmain(){
   std::printf("HEIC_PRIMARY_TRANSFORM_SUMMARY total=%d with_irot=%d with_imir=%d with_clap=%d\n",
     total,withRotation,withMirror,withCrop);
   Require(total==7,"incomplete pinned HEIC corpus");
-  std::printf("HEIC_GPU_PRECHECK_SUMMARY total=%d provisional_8bit_candidates=%d fallback=%d\n",
-    total,gpu8Candidates,total-gpu8Candidates);
+  std::printf("HEIC_GPU_PRECHECK_SUMMARY total=%d provisional_main8=%d provisional_main10=%d fallback=%d\n",
+    total,gpu8Candidates,gpu10Candidates,total-gpu8Candidates-gpu10Candidates);
   std::puts("HEIC_PRIMARY_TRANSFORM_READONLY_PASS");
   return 0;
  }catch(const std::exception& e){

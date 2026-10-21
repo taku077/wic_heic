@@ -98,10 +98,13 @@ jobs:
           if($pre.Count -ne 7){throw 'Incomplete GPU preflight'}
           foreach($line in $pre){
             $isCandidate=$line.EndsWith('candidate=1 rejection_mask=0')
-            $isSafe=($line -like '*bpp=8/8 alpha=0 rawICCbytes=0 *')
+            $isSafe=(($line -like '*bpp=8/8 alpha=0 rawICCbytes=0 *') -or ($line -like '*bpp=10/10 alpha=0 rawICCbytes=0 *'))
             if($isCandidate -and -not $isSafe){throw "Unsafe GPU candidate: $line"}
             if($line -notmatch 'candidate=[01] rejection_mask=[0-9]+$'){throw "Invalid GPU record: $line"}
           }
+          $safeMain10=@($pre | Where-Object {$_ -like '*route=main10 candidate=1 rejection_mask=0'})
+          if($safeMain10.Count -ne 2){throw 'Pinned two 10-bit opaque HEIC examples were not preserved as Main10 candidates'}
+          Write-Host 'HEIC_GPU_PRECHECK_MAIN10_TWO_OPAQUE_FIXTURES_PASSED'
           Write-Host 'HEIC_GPU_PRECHECK_CLASSIFICATION_GUARDS_PASS'
       - name: Compile and run D3D11 HEVC profile capability check
         shell: pwsh
