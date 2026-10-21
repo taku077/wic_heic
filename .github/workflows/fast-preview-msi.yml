@@ -43,13 +43,19 @@ jobs:
           $codec=$env:PINNED_WIC_MSI
           $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/en-US/WicHeicFastPreview.msi').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          Write-Host 'FAST_PREVIEW_CI_BEFORE_PINNED_WIC_INSTALL'
           $p=Start-Process msiexec.exe -ArgumentList ('/i "{0}" /qn /norestart' -f $codec) -Wait -PassThru
+          Write-Host ('FAST_PREVIEW_CI_PINNED_WIC_INSTALL_CODE='+$p.ExitCode)
           if($p.ExitCode -ne 0){throw "Pinned WIC MSI install failed $($p.ExitCode)"}
           try{
+            Write-Host 'FAST_PREVIEW_CI_BEFORE_SMOKE'
             & ./diagnostics/thumbnail_warmup/CI_FastPreviewMsi.ps1 -MsiPath $msi -FixturePath $fixture
             if(-not $?){throw 'Real HEIC fast preview test failed'}
+            Write-Host 'FAST_PREVIEW_CI_SMOKE_RETURNED'
           }finally{
+            Write-Host 'FAST_PREVIEW_CI_BEFORE_PINNED_WIC_UNINSTALL'
             $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $codec) -Wait -PassThru
+            Write-Host ('FAST_PREVIEW_CI_PINNED_WIC_UNINSTALL_CODE='+$p.ExitCode)
             if($p.ExitCode -ne 0){throw "Pinned WIC MSI uninstall failed $($p.ExitCode)"}
           }
       - name: Upload real .heic Fast Thumbnail MSI after all checks pass
