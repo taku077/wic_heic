@@ -229,10 +229,46 @@ public:
         const UINT th=(std::max)(1u,UINT(uint64_t(height)*cx/maxSide));
         const uint64_t bytes=uint64_t(tw)*th*4u;
         if(bytes>16ull*1024*1024 || bytes>UINT_MAX)return E_INVALIDARG;
+        ComPtr<IWICBitmapSource> selectedSource=frame;
+#ifdef WIC_HEIC_EMBEDDED_THUMB_TRIAL
+        // This is an EXPLORATORY CI-ONLY path. A decoded embedded thumbnail may
+        // differ in color, pixels or orientation. Do not enable in MSI releases.
+        if(cx <= 512 && width >= 1024 && height >= 1024) {
+            ComPtr<IWICBitmapSource> embedded;
+            const HRESULT thumbHr=frame->GetThumbnail(embedded.GetAddressOf());
+            if(SUCCEEDED(thumbHr) && embedded) {
+                UINT ew=0,eh=0;
+                WICPixelFormatGUID primaryFormat{},embeddedFormat{};
+                const HRESULT dimensions=embedded->GetSize(&ew,&eh);
+                const HRESULT primaryFormatHr=frame->GetPixelFormat(&primaryFormat);
+                const HRESULT embeddedFormatHr=embedded->GetPixelFormat(&embeddedFormat);
+                const uint64_t lhs=uint64_t(ew)*height;
+                const uint64_t rhs=uint64_t(eh)*width;
+                const uint64_t difference=(lhs>rhs)?(lhs-rhs):(rhs-lhs);
+                const bool adequate=SUCCEEDED(dimensions) && ew>=tw && eh>=th &&
+                    ew<=width && eh<=height && ew<=10000 && eh<=10000 &&
+                    difference*100u<=uint64_t(width)*uint64_t(eh);
+                const bool pixelFormatSafe=SUCCEEDED(primaryFormatHr) &&
+                    SUCCEEDED(embeddedFormatHr) &&
+                    IsEqualGUID(primaryFormat,GUID_WICPixelFormat24bppRGB) &&
+                    IsEqualGUID(embeddedFormat,primaryFormat);
+                UINT profileCount=0;
+                const HRESULT colorHr=frame->GetColorContexts(0,nullptr,&profileCount);
+                if(adequate && pixelFormatSafe && SUCCEEDED(colorHr) && profileCount==0) {
+                    selectedSource=embedded;
+                    CountTestMarker(L"EmbeddedThumbUsed");
+                } else {
+                    CountTestMarker(L"EmbeddedThumbRejected");
+                }
+            } else {
+                CountTestMarker(L"EmbeddedThumbUnavailable");
+            }
+        }
+#endif
         ComPtr<IWICBitmapScaler> scaler;
         hr=factory->CreateBitmapScaler(scaler.GetAddressOf());
         if(FAILED(hr))return hr;
-        hr=scaler->Initialize(frame.Get(),tw,th,WICBitmapInterpolationModeFant);
+        hr=scaler->Initialize(selectedSource.Get(),tw,th,WICBitmapInterpolationModeFant);
         if(FAILED(hr))return hr;
         ComPtr<IWICFormatConverter> converter;
         hr=factory->CreateFormatConverter(converter.GetAddressOf());
