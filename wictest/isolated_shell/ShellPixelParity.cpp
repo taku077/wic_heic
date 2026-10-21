@@ -187,6 +187,8 @@ int wmain(int argc,wchar_t** argv) {
                 // Diagnose bitmap row order / Shell transform without logging any
                 // synthetic image content. Count full BGRA pixels only.
                 uint64_t equalDirect=0,equalH=0,equalV=0,equalHV=0,equalRB=0;
+                uint64_t diffDirect=0,diffH=0,diffV=0,diffHV=0,diffRB=0;
+                uint64_t alphaMismatch=0;
                 for(UINT y=0;y<shell.height;++y) for(UINT x=0;x<shell.width;++x) {
                     const auto offset=(size_t(y)*shell.width+x)*4;
                     auto equals=[&](UINT sx,UINT sy) {
@@ -202,6 +204,20 @@ int wmain(int argc,wchar_t** argv) {
                     const BYTE* q=reference.bytes.data()+offset;
                     equalRB+=(p[0]==q[2] && p[1]==q[1] &&
                               p[2]==q[0] && p[3]==q[3]);
+                    auto delta=[](BYTE a,BYTE b)->uint64_t {
+                        return (a>b)?uint64_t(a-b):uint64_t(b-a);
+                    };
+                    auto measure=[&](UINT sx,UINT sy)->uint64_t {
+                        const BYTE* c=shell.bytes.data()+
+                           (size_t(sy)*shell.width+sx)*4;
+                        return delta(c[0],q[0])+delta(c[1],q[1])+delta(c[2],q[2]);
+                    };
+                    diffDirect+=measure(x,y);
+                    diffH+=measure(shell.width-1-x,y);
+                    diffV+=measure(x,shell.height-1-y);
+                    diffHV+=measure(shell.width-1-x,shell.height-1-y);
+                    diffRB+=delta(p[0],q[2])+delta(p[1],q[1])+delta(p[2],q[0]);
+                    alphaMismatch+=(p[3]!=q[3]);
                 }
                 std::printf("SHELL_PIXEL_DIAGNOSTIC index=%d total=%llu same=%llu hflip=%llu vflip=%llu rotated180=%llu swap_rb=%llu\n",
                     i,static_cast<unsigned long long>(shell.width)*shell.height,
@@ -210,6 +226,14 @@ int wmain(int argc,wchar_t** argv) {
                     static_cast<unsigned long long>(equalV),
                     static_cast<unsigned long long>(equalHV),
                     static_cast<unsigned long long>(equalRB));
+                const uint64_t denom=uint64_t(shell.width)*shell.height*3u;
+                std::printf("SHELL_PIXEL_MAE_X1000 index=%d direct=%llu hflip=%llu vflip=%llu rotate180=%llu swap_rb=%llu alpha_mismatch=%llu\n",
+                    i,static_cast<unsigned long long>(diffDirect*1000/denom),
+                    static_cast<unsigned long long>(diffH*1000/denom),
+                    static_cast<unsigned long long>(diffV*1000/denom),
+                    static_cast<unsigned long long>(diffHV*1000/denom),
+                    static_cast<unsigned long long>(diffRB*1000/denom),
+                    static_cast<unsigned long long>(alphaMismatch));
                 std::printf("SHELL_PIXEL_BYTES_MISMATCH index=%d byte=%zu shell=%u wic=%u\n",
                    i,at,unsigned(*mismatch.first),unsigned(*mismatch.second));
                 throw std::runtime_error("Shell pixels do not match WIC");
