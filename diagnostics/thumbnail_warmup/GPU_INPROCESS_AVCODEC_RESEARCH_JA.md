@@ -180,3 +180,16 @@
 人工HEVC 12MP 8bit Main（general_profile_idc=1）をCIで追加生成。Intel D3D11 Mainを使ってGPU復号→NV12フル画像readback→BGRA→元のWIC Fantへ入力し、CPU基準と最終BGRA 256x192の全バイト一致・3回中央値を記録。Main10とMain8の成功件数は個別に出力し、2件の実HEIC由来RExtは引き続き拒否する。GPU直接縮小VPはP010限定のため8bitでは起動しない。
 
 この研究は実機用の人工4番目の固定HEVCを追加しただけで、実HEIC画像の変換・上書き・私有写真の読込みはない。追加Main8研究でも本物のHEICサムネイル30%短縮はまだ未証明。現行WIC・フォト・HEIC ManagerとWindows Shellのインストールを変更しない。
+
+## 2026-10-22：第4回実機ログ：8bit HEVC MainはGPU復号したがBGRAに不一致
+
+受領した実機ZIPのマニフェスト記載の**13ファイルはSHA256全件一致**。生ログ、個人のファイルパス等は公開しない。
+
+- 物理 GPU は Intel HD Graphics 620 (vendor 8086, device 5916)。CPU用ソフトウェアデコーダーの Main8 出力形式は YUV420P、D3D11VAハードウェアの Main8 出力形式は NV12。人工12MP HEVC Main8 1枚は実GPUハードウェア復号に成功。
+- 人工12MP Main8 の1回目CPU HEVC復号→BGRA: 715.476ms。GPU復号→フルNV12 readback→BGRA: 209.132ms。しかしRGB完全一致しないため採用不可。**MAE_RGBA=1.104363、PSNR=38.898dB、最大チャネル誤差=82**。Main8 GPUを `proven_main8=0` とし、従来ソフトウェアへフォールバック。現段階でMain8の高速化率は製品成果として数えない。
+- 人工12MP Main10は引き続き復号後BGRA完全一致3/3、Windows WIC Fant 256x192の最終196,608バイト完全一致3/3。3回中央値CPU=812.622ms、GPU=368.162ms、画像処理工程 **54.695%短縮**。アダプター初期化46.206ms、実HEICコンテナ処理、ICC/Exif/irot、Explorer初回表示を含まない。
+- 2枚のHEIC由来RExt画像は未だCPU経路のみ。実HEICでGPU加速が成立した例はゼロである。
+
+**次の対策**：BGRA不一致はNV12→RGB色変換の最適化経路差によるものか、Intel D3D11VAが返すNV12のY/U/Vピクセルが元々違っているのか未確定。研究用 `HeicMain8NativeYuvAudit.h` でCPU側YUV420PとGPU側NV12をそれぞれ **同一 planar YUV420P配列に正規化**し、Y/U/V成分別の不一致画素数・平均誤差・最大誤差・画像上の誤差発生矩形をログ記録。RGB変換前に差があればハードウェア復号側、YUVが一致しRGBだけ違えば変換／色属性側を疑う。生の画像画素はディスク保存しない。18MBの診断コピーは復号時間・変換時間の計測区間から外し、CPUの自己テストには単一画素をわざと変更して検出できることも確認する（故意変更はRAM内のコピーだけ）。
+
+**安全条件**：画質不一致のままMain8に成功判定を与えない。非対応RExt/カラー／サムネイル品質不合格パスも製品へ組み込まない。MSIを作らない。最新人工サンプル結果から本物のExplorerの30%短縮を主張しない。
