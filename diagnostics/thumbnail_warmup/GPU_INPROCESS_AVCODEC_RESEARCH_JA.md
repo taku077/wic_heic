@@ -79,3 +79,13 @@
 - **過去の人工12MP（HEVC抽出約4.65MB）の約400–500msと比較して「4x高速」と認定しない**。圧縮内容・素材・CPU負荷条件が異なり、改善率として無効。
 - GPU実ハードウェアに関する試験はまだ0件。第7世代CoreのHEVCハードウェア対応は公式仕様から可能性があるものの、対象PCでのD3D11VA Main10デコード・P010転送・色管理は未確認。
 - 次の研究で重要なのは、高複雑度12MPの同一フレームでSW/GPUのdecode + readback + BGRA + WIC Fant thumbnailまで含む同一PC実測、iPhone実写真への適用可能性、10～30件並列時のCPU/メモリ。
+
+## 2026-10-22：WIC Fantと10bit YUV直接縮小を分離した12MP A/B研究
+- Windows標準WICの`WICBitmapInterpolationModeFant`（4032x3024の全BGRA → 256x192）を参照。別研究器`HeicThumbnailScaleAB.cpp`で、元HEVCから復号済みの同一BGRA/YUV420P10LEを使用。CIテストは研究ソフトだけでありWIC製品DLL未変更、MSIなし。
+- [CI #39628670883](https://github.com/taku077/wic_heic/actions/runs/39628670883)：Fant中央値25.128ms、YUV→BGRA直接Area縮小4.013ms。縮小工程のみ約84%短縮だが、RGB MAE2.625787、PSNR27.556dB、最大誤差119で**不採用**。
+- [CI #39629229826](https://github.com/taku077/wic_heic/actions/runs/39629229826)：フルBGRA→swscale Area はMAE0.010844、PSNR67.541dB、最大誤差4。したがって大差の主因はFantとAreaの縮小フィルタ差ではなく、縮小をRGBへの色変換／クリッピングより前に実施する計算順序。
+- [CI #39629683463](https://github.com/taku077/wic_heic/actions/runs/39629683463)：同じ人工12MP Main10でYUV→中間BGRA→WIC Fantに分割すると、512px→256は中央値6.246ms、MAE0.478509／PSNR45.800dB／最大13。1024px→256は10.294ms、MAE0.323778／PSNR49.967dB／最大12。2048px→256は24.216ms、MAE0.311822／PSNR51.770dB／最大10。比較時のWIC Fant中央値27.811ms。いずれも画素完全一致ではないが、1024px経由が品質・時間のバランスがよく、**製品不採用の研究候補**。
+- 同CIの単発12MP HEVCデコード88.163ms、全BGRA変換43.723ms、デコーダ初期化0.441ms。WIC Fant 27.811msを合算した画像処理時間約160msと、同じ復号88.163ms／初期化0.441ms／1024ハイブリッド10.294msを合算した約99msを比較すると、**この素材の画像処理部分のみ約38%削減する可能性**。別プログラム間の独立測定の加算であり厳密な一体測定でも、エクスプローラー初回表示時間でもない。GPU未使用。
+- ハイブリッドの「約38%」をユーザー実機の初回サムネイル表示の改善率として使わない。HEIC解析、サムネイルCOM起動、回転、ICC、PBGRA、Fant、メモリ転送、保存などは別検証。
+- 高解像度でも全BGRA約49MBを回避できる設計上の可能性あり。ただし今回のA/B計測器は比較用にフルBGRAとYUVの双方をメモリへ保持するので、プロセスメモリ削減を証明していない。
+- 詳細ノイズを加えた別の4032x3024 Main10人工フレームで同じA/Bを行う`software12detail` CIを追加。**この別素材の結果はCIを確認するまでは未確定**。
