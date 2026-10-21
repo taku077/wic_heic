@@ -99,3 +99,17 @@
 - 検証済み成果物：Actions artifact名`HEIC_GPU_ReadOnly_Probe_x64_Research`、Run `39634317181`、artifact id `12360632681`、ZIP `49,551,139`バイト（2026-11-04 期限）。ユーザーの元HEICには触れず、固定3ファイル以外を読まず、コーデックと関連付けを変更しない。署名なしのexeのため配布先とコードの確認が必要。
 - 実機確認が成立した場合のみ、Intel GPU初期化時間/HEVC復号/CPU転送/色変換を評価し、12MPのWIC/FantやExif/ICC/回転と結合する。50%以上のGPUハードウェア単体加速を確認しても、初回Explorer表示の改善率とは別に扱う。
 - 高負荷人工12MPのCPU参考：過去の別CIでHEVCソフト復号約421.6ms、BGRA約24.5ms、Fant約18.1ms。**同じ第7世代Intel実機の測定ではないため、GPU改善率を断定しない**。
+
+## 2026-10-22：Intel HD Graphics 620実機における初めての12MP Main10 GPU復号成功
+
+提供された研究用診断テキストを手元で閲覧し、**生ログやパソコンのファイルパスはGitHubへ掲載しない**。以下は技術的集計のみに限定する。
+
+- DXGI 実アダプター `vendor=8086 device=5916`、Intel HD Graphics 620（非WARP）。HEVC Main 10/DXGI P010の4032x3024 D3D11デコーダー設定数5。2048x2048と1920x1080でもP010 decoder_configが存在。
+- 実GPUで4032x3024 10bit HEVC Main 10固定人工画像を`AV_PIX_FMT_D3D11`として取得できた。P010 CPU readback成立、ソフトウェア復号とのBGRA全48,771,072バイト完全一致、MAE 0.000、最大誤差 0。初回の実Intel GPUハードウェア成功確定（画像品質はこの1枚のみ）。
+- 同一試行のCPU全画像処理806.409ms（HEVCデコード754.168ms、BGRA52.241ms）に対してGPU経路367.036ms（デコード36.126ms、readback同期/転送268.289ms、BGRA62.620ms）。`1-367.036/806.409 = 54.5%`短縮（**単発・この固定サンプルの処理工程のみ**）。GPUデバイス初期化42.429msを含めると参考値409.465msで約49.2%減。HEICメタデータ解析、Fantサムネイル縮小、Explorer初回表示時間は含まれない。
+- 2048x2048と1920x1080の別固定サンプルはCPU復号成功だが、実GPUではFFmpegの`Failed setup for format d3d11: hwaccel initialisation returned error`により失敗。外部のffprobeでビットストリームを再調査したところ、両者のHEVC general_profile_idcは`4 = RExt`（Range Extensions）。成功した12MPは`2 = Main 10`。**10bit=Main 10プロファイルとは限らない**。サイズが原因と断定した従前の見立ては棄却。
+- RExt自体のどの制約（SPS・OSドライバー・FFmpeg D3D11VAプロファイル対応など）が初期化不可の直接原因かは未確定。今回のIntel GPU向け研究ではRExtをソフトウェアへfail-closedとする。
+- `HevcAnnexBSpsProfile.h`追加：HEVC SPSの`general_profile_idc`を元データを変更せず事前読取りし、`AVCodecContext.profile`と照合。CIの3件：RExt=4, RExt=4, Main10=2を確認。GPU判定はMain10のみ候補として許可し、D3D11実フレーム＋画素を追加検証。
+- 別の大きなボトルネックはGPU→CPU P010の同期／転送操作で約268ms。これは転送待ちに含まれるGPU実復号完了の同期待ちを分離したものではない。単純なメモリ転送帯域値と誤解しない。今後はGPU側で縮小・色変換を済ませて小さい結果だけをreadbackするD3D11 VideoProcessor方式を研究する。ただしWIC Fantとの画質一致はまだ不明。
+- 3回CPU/GPUを繰り返して中央値を出す研究版も追加し、単発54.5%という数字の再現性を次の実機診断で確認する。配布前にCIで元ZIPのHEVC固定3件と自己テストを再検証する。
+- **実写真の初回サムネイル30%以上の高速化はまだ未実証**。写真のHEVCプロファイル・ICC・HDR・aux alpha・回転などによる候補割合は未測定。
