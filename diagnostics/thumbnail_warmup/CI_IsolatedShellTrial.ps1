@@ -10,6 +10,7 @@ param(
  [Parameter(Mandatory=$true)][string]$TrialDllPath,
  [Parameter(Mandatory=$true)][string]$FixturePath,
  [string]$PixelParityExePath='',
+ [string]$JpegComparisonExePath='',
  [string[]]$ExtraFixturePaths=@(),
  [switch]$ForceArgbCacheTrial,
  [ValidateSet(128,256,512)][int]$ThumbnailSize=256,
@@ -272,6 +273,16 @@ try {
    $parity=(Resolve-Path -LiteralPath $PixelParityExePath -ErrorAction Stop).Path
    & $parity $work ([string]$ThumbnailSize)
    if($LASTEXITCODE -ne 0){throw ('Independent Shell pixel parity failed: exit='+$LASTEXITCODE)}
+ }
+ if($JpegComparisonExePath) {
+   if(-not $ForceArgbCacheTrial -or $ThumbnailSize -ne 256) {
+     throw 'JPEG comparison requires explicit CI ARGB 256px trial'
+   }
+   $jpegBenchmark=(Resolve-Path -LiteralPath $JpegComparisonExePath -ErrorAction Stop).Path
+   & $jpegBenchmark $work
+   if($LASTEXITCODE -ne 0) {
+     throw ('Same-source Shell JPEG/HEIC benchmark failed: '+$LASTEXITCODE)
+   }
  }
  foreach($trialFile in $files) {
    $again=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$true,[uint32]$ThumbnailSize)
