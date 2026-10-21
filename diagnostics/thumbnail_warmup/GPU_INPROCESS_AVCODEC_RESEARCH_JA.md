@@ -140,3 +140,22 @@
 - いずれも初回Explorerでの実時間、WIC Shell統合性能は未測定。新方式で30%以上初回サムネイル改善を達成したとは言えない。
 
 **対策**：D3D11 VideoProcessor のEnumerator、Processor、256px BGRA出力、stagingテクスチャを複数フレーム間で再利用し、高額な準備初期化を毎回行わないよう改修。\`HEIC_GPU_THUMB_TIMES ... reused_processor=0/1\` を実機計測で検証予定。画質不一致が改善しない限り、速度が向上してもExplorerへ導入しない。
+
+## 2026-10-22：HD620第2回実機ログと品質優先方式の変更
+
+ユーザーが提出したZIP内の同梱ファイル13件すべてでSHA256マニフェスト一致。生ログ、フルパス、ユーザー個別情報はGitHubへ公開しない。物理GPU Intel HD Graphics 620、固定人工12MP HEVC Main10プロファイル (4032x3024)。
+
+実機3回の中央値（単位ms）：
+- CPU HEVC復号→フルBGRA：833.529
+- D3D11VA GPU復号→フルP010読み戻し→フルBGRA：316.505（この工程で約62.0%短縮）
+- GPU復号の中央値24.288 + VideoProcessor 256x192縮小・小型読み戻し中央値187.458 = 211.746（独立中央値の加算であり厳密な各回総時間中央値ではない）
+- VP Processor準備時間：初回139.592、再利用後0.023/0.027。キャッシュが実Intel GPUで成功したことを実証。
+- ただしVP出力のWIC FantとのRGB MAE：初回6.529792、その後6.905884が2回。RGB最大誤差148〜152、PSNR25.634〜25.774dB。画質基準不合格を維持。
+- WIC LinearとのRGB MAE：初回1.939412、後2回は3.213386。CubicとのRGB MAE：初回2.202901、後2回は3.353841。Linear/Fant自身のRGB MAEは6.405796。GPU VPの画質差は縮小フィルターの違いが有力だが、色変換・サンプル位相の寄与は未確定。
+- フルBGRAにおけるGPUとCPUの画素完全一致は3/3。フルP010読み戻し時間の中央値243.606ms。GPU小画像readbackは97.311msだが、GPU演算との同期待ちを含む。PCIe転送のみの時間ではない。
+
+### 画質優先の研究本命：GPU HEVC + 元どおりのWindows WIC Fant
+
+高品質の目的には、失敗しているGPU直接256px縮小を製品に採用しない。すでに3/3画素完全一致したGPU HEVC→フルP010 CPU readback→フルBGRAへ切り替える**復号だけのGPU化**を優先。最終縮小には元のWindows WIC Fantをそのまま使用し、従来CPU BGRA→WIC Fant出力とバイト完全一致するか実測する。
+
+研究ソース HeicD3D11PortableProbe.cpp に3反復HEIC_GPU_FANT_END_TO_END / HEIC_GPU_FANT_3PASS_MEDIANを追加。CPU/GPUのHEVC復号+BGRA変換+WIC Fantの全工程時間と、最終256x192 BGRA画像196,608バイトの一致を検査する。完全一致しない場合はfail closed。Intel実機の新テスト結果はまだ取得前で、Explorer初回表示30%以上の短縮も引き続き未実証。管理者権限・写真の書換え・WIC COM/Photosへのインストールを要しない。
