@@ -77,6 +77,16 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Synthetic HEIC creation failed'}
           "AVX2_INPUT=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "AVX2_INPUT_SHA=$((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Read ordered HEIF irot imir clap properties on pinned samples
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifPrimaryTransforms.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'HEIF primary item property audit did not compile'}
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifPrimaryTransforms.exe').Path
+          & $exe
+          if($LASTEXITCODE -ne 0){throw 'HEIF item property audit failed'}
+          Write-Host 'HEIC_PRIMARY_ITEM_TRANSFORMS_CI_READONLY_PASSED'
       - name: Compile and run D3D11 HEVC profile capability check
         shell: pwsh
         run: |
