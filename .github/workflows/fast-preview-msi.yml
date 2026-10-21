@@ -55,6 +55,19 @@ jobs:
           $decoder=Get-Item -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{6215667C-74CA-4076-A769-3F834C3F25F5}\InprocServer32' -ErrorAction SilentlyContinue
           if($decoder){throw 'Private extraction unexpectedly installed the global WIC codec'}
           Write-Host 'PRIVATE_DECODER_NO_GLOBAL_REGISTRATION_PASS'
+      - name: Generate reproducible synthetic 12MP HEIC for cold decode measurements
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Synthetic 12MP generator build failed'}
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          $codec=(Resolve-Path 'Installer/WicHeicPrivateCodec.dll').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          & $exe $codec $fixture
+          if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $fixture)){throw 'Synthetic 12MP HEIC generation failed'}
+          "PRIVATE_LARGE_FIXTURE=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host 'SYNTHETIC_12MP_GENERATION_PASS'
       - name: Build combined fast provider plus private HEIC codec MSI
         shell: pwsh
         run: |
@@ -67,7 +80,7 @@ jobs:
           $ErrorActionPreference='Stop'
           $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/en-US/WicHeicFastPreview.msi').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
-          & ./diagnostics/thumbnail_warmup/CI_FastPreviewMsi.ps1 -MsiPath $msi -FixturePath $fixture
+          & ./diagnostics/thumbnail_warmup/CI_FastPreviewMsi.ps1 -MsiPath $msi -FixturePath $fixture -LargeFixturePath $env:PRIVATE_LARGE_FIXTURE
           if(-not $?){throw 'Self-contained .heic thumbnail MSI smoke test failed'}
       - name: Assemble one-click MSI preview bundle
         shell: pwsh
