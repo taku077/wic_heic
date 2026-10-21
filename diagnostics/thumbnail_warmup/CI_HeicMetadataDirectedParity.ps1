@@ -35,10 +35,10 @@ foreach($file in $files){
     }
   }
   $effect=$null
-  if([math]::Abs($rotation)<0.1) { $effect='identity' }
-  elseif([math]::Abs($rotation+90)<0.1) { $effect='clockwise90' }
-  elseif([math]::Abs($rotation-90)<0.1) { $effect='counterclockwise90' }
-  elseif([math]::Abs([math]::Abs($rotation)-180)<0.1){$effect='rotate180'}
+  if([math]::Abs($rotation) -lt 0.1) { $effect='identity' }
+  elseif([math]::Abs($rotation+90) -lt 0.1) { $effect='clockwise90' }
+  elseif([math]::Abs($rotation-90) -lt 0.1) { $effect='counterclockwise90' }
+  elseif([math]::Abs([math]::Abs($rotation)-180) -lt 0.1){$effect='rotate180'}
   else{
     $rejected++;Write-Host "HEIC_METADATA_ROUTE_REJECT file=$file reason=unsupported_angle angle=$rotation";continue
   }
