@@ -4,12 +4,14 @@ if($env:GITHUB_ACTIONS -ne 'true'){throw 'Only allowed in disposable GitHub Acti
 $path='wic_heic/3rdparty/libde265/libde265/x86/sse.cc'
 $source=Get-Content -LiteralPath $path -Raw
 $source=$source -replace '\r\n',[string][char]10
-$anchor=@'
-void init_acceleration_functions_avx2(struct acceleration_functions* accel)
-{
-#if HAVE_AVX2
-'@
-if(-not $source.Contains($anchor)){throw 'Pinned libde265 dispatch anchor changed: no patch'}
+$method=$source.IndexOf('void init_acceleration_functions_avx2(')
+if($method -lt 0){throw 'Pinned libde265 dispatch method missing'}
+$brace=$source.IndexOf('{',$method)
+$feature=$source.IndexOf('#if HAVE_AVX2',$method)
+if($brace -lt 0 -or $feature -lt $brace -or ($feature-$brace) -gt 40){
+  throw 'Unexpected AVX2 compile-time guard in pinned libde265'
+}
+$insertAt=$feature+'#if HAVE_AVX2'.Length
 if($source.Contains('WIC_HEIC_CI_AVX2_MSVC_DISPATCH')){throw 'CI patch already applied'}
 $insertion=@'
 
@@ -32,7 +34,7 @@ $insertion=@'
   }
 #endif
 '@
-$patched=$source.Replace($anchor,($anchor+$insertion))
+$patched=$source.Insert($insertAt,$insertion)
 if($patched -eq $source){throw 'No patch change'}
 [IO.File]::WriteAllText((Resolve-Path $path).Path,$patched,[Text.UTF8Encoding]::new($false))
 Write-Host 'WIC_HEIC_CI_AVX2_DISPATCH_PATCH_APPLIED_RUNTIME_GUARDED'
