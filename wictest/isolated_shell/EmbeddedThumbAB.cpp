@@ -140,6 +140,10 @@ int wmain(int argc,wchar_t** argv){
   // Pixel difference is a required report, *not* a parity claim. The embedded
   // image is re-encoded and can have a different transfer curve or scaling.
   Sample a=Capture(entry,base,false,256);
+  Sample untouched=Capture(entry,embedded,false,256);
+  Require(a.pixels==untouched.pixels,
+          "paired synthetic HEIC PRIMARY pixels changed after thumbnail attachment");
+  std::puts("EMBEDDED_AB_IDENTICAL_PRIMARY_PIXELS_PASS");
   Sample b=Capture(entry,embedded,true,256);
   Require(b.shortcut && a.pixels.size()==b.pixels.size(),"sample geometry or eligibility");
   uint64_t sum=0,square=0;
