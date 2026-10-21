@@ -267,6 +267,8 @@ jobs:
           $ErrorActionPreference='Stop'
           msbuild wictest/isolated_shell/HeicShellTrial.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'Synthetic Shell handler COM DLL build failed'}
+          msbuild wictest/isolated_shell/ShellPixelParity.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Shell pixel parity x64 probe build failed'}
 
       - name: Verify synthetic-only Shell COM registration and rollback
         shell: pwsh
@@ -275,10 +277,11 @@ jobs:
           $provider=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/WicHeicIsolatedThumbTrial.dll').Path
           $codec=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          $parity=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellPixelParity.exe').Path
           $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s', ('"{0}"' -f $codec)) -Wait -PassThru
           if($reg.ExitCode -ne 0){throw 'WIC HEIC codec not registered for isolated Shell experiment'}
           try {
-            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -RegistrationScope Machine
+            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -RegistrationScope Machine
             # This is a PowerShell script, not a native EXE. LASTEXITCODE can
             # remain $null even on success; terminating errors propagate.
             if(-not $?){throw 'Isolated Shell test failed'}
