@@ -1,9 +1,13 @@
-# HEIC Fast Thumbnail Preview MSI v0.1.2 (Windows 10 x64 trial)
+# WicHeic Fast Thumbnail Preview v0.2.0 (Windows 10 x64 trial)
 
-- This version **installs the actual .heic Shell thumbnail provider**, not merely the old WIC decoder.
-- Version 0.1.2 fixes the prerequisite registry check: the WIC HEIC **decoder** CLSID is {6215667C-74CA-4076-A769-3F834C3F25F5}; v0.1.1 incorrectly checked the **encoder** CLSID {0E8AB687-73A5-455B-8C19-B93CA9AC0EEB}.
-- If the user already has a per-user .heic Shell thumbnail handler installed, the MSI refuses to replace it. Do not delete any registry values or uninstall HEIC Manager just to satisfy the check. See the read-only preflight report tool.
-- The MSI installs a separate native Shell thumbnail COM server machine-wide and a per-user .heic override (HKCU); it requires an installed WIC HEIC decoder and must be installed by the current Windows account.
-- Uninstall removes the preview-owned override and DLL (verified on Windows Server 2022 synthetic samples). The pre-existing machine-wide Shell handler remains.
-- Test ONLY copies of actual HEIC photos, never rotate/save original HEIC with Photos during this experiment. GUI initial paint on user's Windows 10 remains unverified.
-- Only .heic is handled; .heif not included. No codec or Photos replacement.
+This experimental MSI installs two DLLs together: WicHeicFastPreview.dll (the actual .heic Shell IThumbnailProvider) and WicHeicPrivateCodec.dll (a pinned existing WIC HEIC decoder, loaded privately by the handler).
+
+**A separately installed WicHeic decoder is NOT REQUIRED.** The v0.1.1/v0.1.2 prerequisite-registry check was invalid for PCs with other HEIC software or a differently registered codec; the v0.2.0 MSI removes that condition and privately loads its included decoder.
+
+Important safety boundaries:
+- The private decoder is NEVER registered as a system WIC codec. The MSI leaves existing Windows Photos, HEIC Manager, and installed WIC registrations untouched.
+- The provider's own COM class is registered in HKLM; the .heic thumbnail override is recorded under HKCU for the installing account. No .heif association.
+- If an HKCU .heic handler already exists, installation refuses to overwrite it. Do not manually delete registry values to bypass this.
+- The original Windows-wide HEIC association remains; uninstall removes only the preview's own DLLs and registry entries.
+- Test COPIES of real HEIC photos, not originals. Do not rotate/save HEIC using Photos while testing.
+- Windows Server 2022 Shell synthetic CI results do not guarantee Windows 10 GUI paint speed or parity across iPhone HEIC orientations, ICC, HDR, or embedded metadata.

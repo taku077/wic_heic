@@ -1,5 +1,5 @@
-// Isolated Shell provider built twice: .wictrial CI or opt-in .heic preview MSI.
-// The preview is a separate per-user install, never silently added to WIC.
+// Shell IThumbnailProvider: .wictrial synthetic CI or .heic preview MSI.
+// The .heic version loads a private decoder and does not alter global WIC.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <wincodec.h>
@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include "../../wic_heic/wic_heic.h"
 
 #pragma comment(lib,"ole32.lib")
@@ -78,6 +79,53 @@ bool ForceArgbForCiTrial() noexcept {
 #endif
 }
 
+#ifdef WIC_HEIC_FAST_PREVIEW
+// Private WIC HEIC decoder, copied into the same installation directory.
+// Do not register this codec globally: leave Windows Photos, HEIC Manager,
+// and the user's installed WIC codec registrations entirely unchanged.
+class ScopedPrivateCodec final {
+    HMODULE module_ = nullptr;
+public:
+    ScopedPrivateCodec() = default;
+    ScopedPrivateCodec(const ScopedPrivateCodec&) = delete;
+    ScopedPrivateCodec& operator=(const ScopedPrivateCodec&) = delete;
+    ~ScopedPrivateCodec() { if(module_) FreeLibrary(module_); }
+
+    HRESULT CreateDecoder(IWICBitmapDecoder** result) noexcept {
+        if(!result) return E_POINTER;
+        *result = nullptr;
+        HMODULE self = nullptr;
+        const DWORD flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+        if(!GetModuleHandleExW(flags,
+                reinterpret_cast<LPCWSTR>(&g_objects), &self))
+            return HRESULT_FROM_WIN32(GetLastError());
+
+        wchar_t path[MAX_PATH] = {};
+        const DWORD size = GetModuleFileNameW(self, path, MAX_PATH);
+        if(!size || size >= MAX_PATH)
+            return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+        std::wstring filepath(path, size);
+        const auto slash = filepath.find_last_of(L"\\/");
+        if(slash == std::wstring::npos) return E_UNEXPECTED;
+        filepath.erase(slash + 1);
+        filepath += L"WicHeicPrivateCodec.dll";
+        module_ = LoadLibraryExW(filepath.c_str(), nullptr,
+                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        if(!module_) return HRESULT_FROM_WIN32(GetLastError());
+        using GetFactory = HRESULT (STDAPICALLTYPE *)(REFCLSID, REFIID, LPVOID*);
+        const auto entry = reinterpret_cast<GetFactory>(
+                 GetProcAddress(module_, "DllGetClassObject"));
+        if(!entry) return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+        ComPtr<IClassFactory> factory;
+        const HRESULT hr = entry(CLSID_HEICDecoder, IID_IClassFactory,
+                                 reinterpret_cast<void**>(factory.GetAddressOf()));
+        if(FAILED(hr)) return hr;
+        return factory->CreateInstance(nullptr, IID_PPV_ARGS(result));
+    }
+};
+#endif
+
 class Provider final : public IThumbnailProvider, public IInitializeWithStream {
     std::atomic<ULONG> refs_{1};
     ComPtr<IStream> stream_;
@@ -114,9 +162,18 @@ public:
         HRESULT hr=CoCreateInstance(CLSID_WICImagingFactory,nullptr,
             CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory));
         if(FAILED(hr))return hr;
+        // The preview MSI carries its own *unregistered* decoder.  The
+        // synthetic .wictrial CI variant still uses the original WIC path.
+#ifdef WIC_HEIC_FAST_PREVIEW
+        ScopedPrivateCodec privateCodec; // must outlive all WIC decode objects
+#endif
         ComPtr<IWICBitmapDecoder> decoder;
+#ifdef WIC_HEIC_FAST_PREVIEW
+        hr=privateCodec.CreateDecoder(decoder.GetAddressOf());
+#else
         hr=factory->CreateDecoder(GUID_ContainerFormatHEIC,
             &GUID_VendorPrsyahmi,decoder.GetAddressOf());
+#endif
         if(FAILED(hr))return hr;
         LARGE_INTEGER start{};
         hr=stream_->Seek(start,STREAM_SEEK_SET,nullptr);
