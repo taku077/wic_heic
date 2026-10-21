@@ -1,7 +1,7 @@
 name: HEIC D3D11 GPU feasibility and AnnexB bridge without MSI
 on:
   push:
-    branches: [experiment/heic-gpu-decode-probe, experiment/heic-gpu-d3d11va-firstframe]
+    branches: [experiment/heic-gpu-decode-probe, experiment/heic-gpu-d3d11va-firstframe, experiment/heic-gpu-inprocess-avcodec]
   workflow_dispatch:
 permissions:
   contents: read
@@ -232,6 +232,72 @@ jobs:
           $ErrorActionPreference='Stop'
           & ./diagnostics/thumbnail_warmup/CI_HeicD3d11vaFirstFrame.ps1
           if(-not $?){throw 'D3D11VA first frame / fallback probe failed'}
+      - name: Prepare pinned LGPL FFmpeg SDK for single-process CPU/GPU test
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/Prepare_FFmpeg_Inprocess_GPU_SDK_CI.ps1
+          if($LASTEXITCODE -ne 0 -or -not $?){throw 'FFmpeg SDK headers/libraries unavailable'}
+      - name: Build C++ one-process Annex B AVCodec D3D11VA test harness
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeicInprocessGpuAB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'In-process HEVC A/B native build failed'}
+          Write-Host 'HEIC_INPROCESS_NATIVE_COMPILED_NO_MSI'
+      - name: Verify in-process HEVC software pixels without ffmpeg.exe startup per image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicInprocessGpuAB.exe').Path
+          & $exe software
+          if($LASTEXITCODE -ne 0){throw 'Software in-process baseline failed'}
+          foreach($stem in @('04','fixture-irot3-exif6-noaux')){
+            $reference=Join-Path $env:RUNNER_TEMP "heic_native_bridge/$stem.native.bgra"
+            $actual=Join-Path $env:RUNNER_TEMP "heic_inprocess_software/$stem.bgra"
+            if(-not (Test-Path $reference) -or -not (Test-Path $actual)){throw "Missing in-process comparison file $stem"}
+            $hashA=(Get-FileHash -LiteralPath $reference -Algorithm SHA256).Hash
+            $hashB=(Get-FileHash -LiteralPath $actual -Algorithm SHA256).Hash
+            $lengthA=(Get-Item -LiteralPath $reference).Length
+            $lengthB=(Get-Item -LiteralPath $actual).Length
+            $exact=($hashA -eq $hashB) -and ($lengthA -eq $lengthB)
+            Write-Host "HEIC_INPROCESS_VS_REFERENCE file=$stem exact=$exact reference_bytes=$lengthA output_bytes=$lengthB"
+            if(-not $exact){throw "In-process HEVC software baseline not pixel-identical: $stem"}
+          }
+          Write-Host 'HEIC_INPROCESS_SOFTWARE_TWO_MAIN10_EXACT_NO_FFMPEG_PROCESS_PASS'
+      - name: Attempt D3D11VA only if a genuine hardware adapter exposes a Main10 12MP config
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeicInprocessGpuAB.exe').Path
+          $caps=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/D3D11HevcCaps.exe').Path
+          $lines=@(& $caps)
+          if($LASTEXITCODE -ne 0){throw 'Native D3D11 capability probe failed'}
+          $eligible=@($lines | ForEach-Object {
+            if($_ -match '^HEIC_GPU_PROFILE adapter=(\d+) profile=hevc_main10 exposed=1 output_format=1 decoder_config12mp=1$'){
+              [int]$Matches[1]
+            }
+          })
+          if($eligible.Count -eq 0){
+            Write-Host 'HEIC_INPROCESS_GPU_NOT_PROVEN reason=runner_has_no_main10_hw_adapter'
+          } else {
+            $adapter=$eligible[0]
+            & $exe "gpu:$adapter"
+            if($LASTEXITCODE -ne 0){throw 'GPU path crashed or violated input safety contract'}
+            foreach($stem in @('04','fixture-irot3-exif6-noaux')){
+              $sw=Join-Path $env:RUNNER_TEMP "heic_inprocess_software/$stem.bgra"
+              $gpu=Join-Path $env:RUNNER_TEMP "heic_inprocess_gpu/$stem.bgra"
+              if(Test-Path $gpu){
+                $exact=(Get-FileHash $sw -Algorithm SHA256).Hash -eq (Get-FileHash $gpu -Algorithm SHA256).Hash
+                Write-Host "HEIC_INPROCESS_GPU_PIXEL_AUDIT file=$stem exact=$exact product_enabled=0"
+              }else{
+                Write-Host "HEIC_INPROCESS_GPU_NOT_PROVEN file=$stem gpu_output_missing=1 product_enabled=0"
+              }
+            }
+          }
+          Write-Host 'HEIC_INPROCESS_NO_EXPLORER_INTEGRATION_NO_GLOBAL_CODEC_PASS'
       - name: Confirm no installer or global system codec registration
         shell: pwsh
         run: |
