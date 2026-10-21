@@ -167,6 +167,7 @@ int wmain(int argc,wchar_t** argv) {
         Checked(CoCreateInstance(kCacheClsid,nullptr,CLSCTX_INPROC_SERVER,
                 IID_PPV_ARGS(cache.GetAddressOf())),"Shell cache");
         uint64_t compared=0;
+        UINT parityFailures=0;
         for(int i=0;i<10;++i) {
             wchar_t filename[64]{};
             swprintf_s(filename,L"synthetic_%02d.wictrial",i);
@@ -236,11 +237,18 @@ int wmain(int argc,wchar_t** argv) {
                     static_cast<unsigned long long>(alphaMismatch));
                 std::printf("SHELL_PIXEL_BYTES_MISMATCH index=%d byte=%zu shell=%u wic=%u\n",
                    i,at,unsigned(*mismatch.first),unsigned(*mismatch.second));
-                throw std::runtime_error("Shell pixels do not match WIC");
+                ++parityFailures;
+                continue;
             }
             compared+=shell.bytes.size();
             std::printf("SHELL_PIXEL_PARITY_FILE_PASS index=%d pixels=%u dimensions=%ux%u\n",
                 i,shell.width*shell.height,shell.width,shell.height);
+        }
+        if(parityFailures) {
+            std::printf("SHELL_PIXEL_PARITY_SUMMARY cases=10 exact=%u mismatch=%u compared_exact_bytes=%llu\n",
+                10u-parityFailures,parityFailures,
+                static_cast<unsigned long long>(compared));
+            return 1;
         }
         std::printf("SHELL_PIXEL_PARITY_PASS cases=10 compared_bytes=%llu\n",
                     static_cast<unsigned long long>(compared));
