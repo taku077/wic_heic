@@ -184,6 +184,32 @@ int wmain(int argc,wchar_t** argv) {
                                                reference.bytes.begin());
             if(mismatch.first!=shell.bytes.end()) {
                 const auto at=size_t(mismatch.first-shell.bytes.begin());
+                // Diagnose bitmap row order / Shell transform without logging any
+                // synthetic image content. Count full BGRA pixels only.
+                uint64_t equalDirect=0,equalH=0,equalV=0,equalHV=0,equalRB=0;
+                for(UINT y=0;y<shell.height;++y) for(UINT x=0;x<shell.width;++x) {
+                    const auto offset=(size_t(y)*shell.width+x)*4;
+                    auto equals=[&](UINT sx,UINT sy) {
+                        const auto base=(size_t(sy)*shell.width+sx)*4;
+                        return std::memcmp(shell.bytes.data()+base,
+                                reference.bytes.data()+offset,4)==0;
+                    };
+                    equalDirect+=equals(x,y);
+                    equalH+=equals(shell.width-1-x,y);
+                    equalV+=equals(x,shell.height-1-y);
+                    equalHV+=equals(shell.width-1-x,shell.height-1-y);
+                    const BYTE* p=shell.bytes.data()+offset;
+                    const BYTE* q=reference.bytes.data()+offset;
+                    equalRB+=(p[0]==q[2] && p[1]==q[1] &&
+                              p[2]==q[0] && p[3]==q[3]);
+                }
+                std::printf("SHELL_PIXEL_DIAGNOSTIC index=%d total=%llu same=%llu hflip=%llu vflip=%llu rotated180=%llu swap_rb=%llu\n",
+                    i,static_cast<unsigned long long>(shell.width)*shell.height,
+                    static_cast<unsigned long long>(equalDirect),
+                    static_cast<unsigned long long>(equalH),
+                    static_cast<unsigned long long>(equalV),
+                    static_cast<unsigned long long>(equalHV),
+                    static_cast<unsigned long long>(equalRB));
                 std::printf("SHELL_PIXEL_BYTES_MISMATCH index=%d byte=%zu shell=%u wic=%u\n",
                    i,at,unsigned(*mismatch.first),unsigned(*mismatch.second));
                 throw std::runtime_error("Shell pixels do not match WIC");
