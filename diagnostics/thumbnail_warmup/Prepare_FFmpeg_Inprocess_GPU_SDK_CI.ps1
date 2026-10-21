@@ -1,12 +1,13 @@
 # Disposable GitHub Actions only; never installs codecs or edits system registry.
-# Pinned LGPL shared FFmpeg 8.1 archive provides C development headers and DLLs.
+# Immutable dated LGPL shared FFmpeg 8.1 release tag plus GitHub asset digest.
+# A moving 'latest' tag must never authorize a research dependency.
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'CI ONLY'}
-$asset='ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip'
-$sha='3a584c6017cd9c43716d13bb244e77cd7c89a71e1395bb244f7751a405e3b3fc'
+$asset='ffmpeg-n8.1.3-20-gc8de997cb1-win64-lgpl-shared-8.1.zip'
+$sha='2eec333253518c6deb0a8b6dff6d615e03f254baa1b04f44356de2725e5fb60f'
 $download=Join-Path $env:RUNNER_TEMP 'heic_ffmpeg_sdk_download'
 New-Item -ItemType Directory -Force -Path $download|Out-Null
-gh release download latest -R BtbN/FFmpeg-Builds --pattern $asset --dir $download --clobber
+gh release download autobuild-2026-10-21-13-06 -R BtbN/FFmpeg-Builds --pattern $asset --dir $download --clobber
 if($LASTEXITCODE -ne 0){throw 'Pinned FFmpeg research asset download failed'}
 $zip=Join-Path $download $asset
 $actual=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
