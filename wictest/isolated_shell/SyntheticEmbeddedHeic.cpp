@@ -22,11 +22,13 @@ std::wstring Env(const wchar_t* name){
  if(!read||read>=n)return {};
  s.resize(read);return s;
 }
-void GuardPath(const std::wstring& path,const std::wstring& expected){
+void GuardPath(const std::wstring& path,const std::wstring& expected,bool input=false){
  if(Env(L"GITHUB_ACTIONS")!=L"true")throw std::runtime_error("CI ONLY");
  const std::wstring root=Env(L"RUNNER_TEMP");
  if(root.empty()||path!=root+L"\\"+expected)throw std::runtime_error("NOT SYNTHETIC RUNNER PATH");
- if(GetFileAttributesW(path.c_str())!=INVALID_FILE_ATTRIBUTES)throw std::runtime_error("WOULD OVERWRITE FILE");
+ const bool exists=GetFileAttributesW(path.c_str())!=INVALID_FILE_ATTRIBUTES;
+ if(input && !exists)throw std::runtime_error("SYNTHETIC INPUT MISSING");
+ if(!input && exists)throw std::runtime_error("WOULD OVERWRITE FILE");
 }
 std::string NarrowAscii(const std::wstring& text) {
  std::string out;
@@ -41,7 +43,7 @@ int wmain(int argc,wchar_t** argv) {
  try {
   if(argc!=4)throw std::runtime_error("expected original_synthetic.heic main_only.heic with_thumb.heic");
   const std::wstring input=argv[1],without=argv[2],with=argv[3];
-  GuardPath(input,L"wicfast_synthetic_4032x3024.heic");
+  GuardPath(input,L"wicfast_synthetic_4032x3024.heic",true);
   GuardPath(without,L"wicfast_baseline_4032x3024.heic");
   GuardPath(with,L"wicfast_embedded_4032x3024.heic");
   heif::Context original;
