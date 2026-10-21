@@ -288,7 +288,7 @@ jobs:
           $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s', ('"{0}"' -f $codec)) -Wait -PassThru
           if($reg.ExitCode -ne 0){throw 'WIC HEIC codec not registered for isolated Shell experiment'}
           try {
-            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -ExtraFixturePaths $extraFixtures -RegistrationScope Machine
+            & ./diagnostics/thumbnail_warmup/CI_IsolatedShellTrial.ps1 -TrialDllPath $provider -FixturePath $fixture -PixelParityExePath $parity -ExtraFixturePaths $extraFixtures -ForceArgbCacheTrial -RegistrationScope Machine
             # This is a PowerShell script, not a native EXE. LASTEXITCODE can
             # remain $null even on success; terminating errors propagate.
             if(-not $?){throw 'Isolated Shell test failed'}
