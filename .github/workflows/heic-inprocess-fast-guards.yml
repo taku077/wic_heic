@@ -1,0 +1,47 @@
+name: HEIC in-process GPU path source and safety checks
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-check:
+    runs-on: windows-2022
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Assert isolated C++ path only and no software-to-GPU success claim
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $src='wictest/isolated_shell/HeicInprocessGpuAB.cpp'
+          $proj='wictest/isolated_shell/HeicInprocessGpuAB.vcxproj'
+          $sdk='diagnostics/thumbnail_warmup/Prepare_FFmpeg_Inprocess_GPU_SDK_CI.ps1'
+          foreach($path in @($src,$proj,$sdk)){
+            if(-not (Test-Path $path)){throw "Missing native component: $path"}
+          }
+          $body=[IO.File]::ReadAllText((Resolve-Path $src).Path)
+          foreach($token in @('AV_PIX_FMT_D3D11','av_hwframe_transfer_data','av_hwdevice_ctx_create',
+            'AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX','route.gotHardwareFrame','HEIC_INPROCESS_GPU_NOT_PROVEN',
+            'GITHUB_ACTIONS','RUNNER_TEMP','CREATE_NEW','AV_CODEC_ID_HEVC')){
+            if(-not $body.Contains($token)){throw "Missing fail-closed hardware token: $token"}
+          }
+          $changes=@(git diff --name-only HEAD^ HEAD)
+          if($LASTEXITCODE -ne 0){throw 'Commit diff failed'}
+          if(@($changes|Where-Object {$_ -match '^Installer/' -or $_ -match '^wic_heic/[^3]'}).Count){
+            throw 'Unexpected installer or production decoder modification'
+          }
+          Write-Host 'HEIC_INPROCESS_SOURCE_BOUNDARIES_SAFE_PASS'
+      - name: Parse in-process PowerShell SDK preparation script
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $path=(Resolve-Path 'diagnostics/thumbnail_warmup/Prepare_FFmpeg_Inprocess_GPU_SDK_CI.ps1').Path
+          $tokens=$null;$errors=$null
+          $null=[System.Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+          if($errors.Count -ne 0){$errors|ForEach-Object{Write-Host $_.Message};throw 'FFmpeg SDK script malformed'}
+          Write-Host 'HEIC_INPROCESS_SDK_SCRIPT_PARSE_PASS'
