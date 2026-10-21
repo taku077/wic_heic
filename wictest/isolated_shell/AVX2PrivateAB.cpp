@@ -96,19 +96,23 @@ double Median(std::vector<double> a){
 }
 int wmain(int argc,wchar_t** argv){
  try{
-  Require(argc==4,"usage: privateDLL syntheticHEIC label");
+  Require(argc==4,"usage: baselinePrivateDLL optimizedPrivateDLL generatedSyntheticHEIC");
   const auto work=Env(L"RUNNER_TEMP");
-  const std::wstring input=argv[2];
+  const std::wstring input=argv[3];
   Require(Env(L"GITHUB_ACTIONS")==L"true" && !work.empty() &&
        input==work+L"\\wicfast_synthetic_4032x3024.heic",
        "only RUNNER_TEMP artificial input allowed");
   Require(GetFileAttributesW(input.c_str())!=INVALID_FILE_ATTRIBUTES,"input missing");
   Check(CoInitializeEx(nullptr,COINIT_MULTITHREADED),"COM initialize");
-  HMODULE dll=LoadLibraryExW(argv[1],nullptr,
+  HMODULE baseline=LoadLibraryExW(argv[1],nullptr,
       LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-  Require(dll!=nullptr,"private DLL load");
-  const auto entry=reinterpret_cast<Entry>(GetProcAddress(dll,"DllGetClassObject"));
-  Require(entry!=nullptr,"private COM export");
+  Require(baseline!=nullptr,"baseline private DLL load");
+  HMODULE optimized=LoadLibraryExW(argv[2],nullptr,
+      LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+  Require(optimized!=nullptr,"optimized private DLL load");
+  const auto baseEntry=reinterpret_cast<Entry>(GetProcAddress(baseline,"DllGetClassObject"));
+  const auto avxEntry=reinterpret_cast<Entry>(GetProcAddress(optimized,"DllGetClassObject"));
+  Require(baseEntry && avxEntry,"one of two COM factories missing");
   int cpuInfo[4]={};__cpuid(cpuInfo,1);
   const bool osxsave=(cpuInfo[2]&(1<<27))!=0;
   const bool avx=(cpuInfo[2]&(1<<28))!=0;
@@ -118,21 +122,29 @@ int wmain(int argc,wchar_t** argv){
     avx2=(cpuInfo[1]&(1<<5))!=0;
   }
   std::printf("AVX2_BENCH_CPU_AVAILABLE=%d\n",int(avx2));
-  std::vector<double> elapsed,cpuTimes;
-  uint64_t hash=0;
-  for(int i=0;i<8;++i){
-    Sample s=Run(entry,input);
-    if(i==0)hash=s.hash;
-    Require(s.hash==hash,"pixel hash differs between repeated decodes");
-    elapsed.push_back(s.ms);
-    cpuTimes.push_back(s.cpu);
-    std::printf("AVX2_BENCH_SAMPLE label=%ls count=%d copy_ms=%.2f cpu_ms=%.2f private_mib=%.2f pixel_hash=%016llX\n",
-        argv[3],i,s.ms,s.cpu,double(s.privateUse)/(1024*1024),
-        static_cast<unsigned long long>(s.hash));
+  const int order[]={0,1,1,0,1,0,0,1,0,1,1,0};
+  std::vector<double> elapsed[2],cpuTime[2];
+  uint64_t reference=0;
+  for(int i=0;i<12;++i){
+    const int mode=order[i];
+    Sample sample=Run(mode?avxEntry:baseEntry,input);
+    if(i==0)reference=sample.hash;
+    Require(sample.hash==reference,"AVX2 pixel parity failure against baseline");
+    elapsed[mode].push_back(sample.ms);
+    cpuTime[mode].push_back(sample.cpu);
+    std::printf("AVX2_BENCH_SAMPLE mode=%s index=%d copy_ms=%.2f cpu_ms=%.2f private_mib=%.2f pixel_hash=%016llX\n",
+        mode?"avx2":"baseline",i,sample.ms,sample.cpu,
+        double(sample.privateUse)/(1024*1024),
+        static_cast<unsigned long long>(sample.hash));
   }
-  std::printf("AVX2_BENCH_SUMMARY label=%ls median_ms=%.2f cpu_median_ms=%.2f pixel_hash=%016llX\n",
-        argv[3],Median(elapsed),Median(cpuTimes),static_cast<unsigned long long>(hash));
-  FreeLibrary(dll);CoUninitialize();
+  Require(elapsed[0].size()==6&&elapsed[1].size()==6,"unbalanced A/B trials");
+  const double baseWall=Median(elapsed[0]),optWall=Median(elapsed[1]);
+  const double baseCpu=Median(cpuTime[0]),optCpu=Median(cpuTime[1]);
+  std::printf("AVX2_BENCH_MEDIAN baseline_ms=%.2f avx2_ms=%.2f improvement_pct=%.2f baseline_cpu_ms=%.2f avx2_cpu_ms=%.2f\n",
+       baseWall,optWall,100.0*(baseWall-optWall)/baseWall,baseCpu,optCpu);
+  std::printf("AVX2_BENCH_PIXEL_PARITY_PASSED pixel_hash=%016llX\n",
+       static_cast<unsigned long long>(reference));
+  FreeLibrary(optimized);FreeLibrary(baseline);CoUninitialize();
   std::puts("AVX2_BENCH_SYNTHETIC_READONLY_PASS");
   return 0;
  }catch(const std::exception& e){
