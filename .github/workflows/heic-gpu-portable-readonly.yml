@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/heic-gpu-portable-readonly.yml'
       - 'wictest/isolated_shell/HeicD3D11PortableProbe.cpp'
+      - 'wictest/isolated_shell/HeicMain8NativeYuvAudit.h'
       - 'wictest/isolated_shell/HeicD3D11PortableProbe.vcxproj'
       - 'wictest/isolated_shell/gpu_probe_portable/**'
       - 'diagnostics/thumbnail_warmup/Prepare_FFmpeg_Inprocess_GPU_SDK_CI.ps1'
@@ -136,6 +137,9 @@ jobs:
              -not ($sw -match 'sample=04 got=4 expected=4') -or
              -not ($sw -match 'sample=fixture-irot3-exif6-noaux got=4 expected=4')){
             throw 'Native 8bit/10bit synthetic and RExt HEIC-derived profile gates are not verified'
+          }
+          if(-not ($sw -match 'HEIC_GPU_MAIN8_NATIVE_YUV_POSITIVE_AND_NEGATIVE_SELFTEST_PASS')) {
+            throw 'Main8 native YUV positive/negative control did not execute'
           }
           Write-Host 'HEIC_GPU_PORTABLE_BUNDLED_CPU_SELFTEST_PASS'
       - name: Verify hardware probe reports unproven without a real D3D11 Main10 device
