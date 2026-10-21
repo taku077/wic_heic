@@ -79,6 +79,19 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Synthetic HEIC creation failed'}
           "AVX2_INPUT=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "AVX2_INPUT_SHA=$((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Profile raw HEVC decode plus colorspace conversion RGB vs YCbCr (no image writes)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifColorAB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'HEIF color decode decomposition compilation failed'}
+          $bench=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifColorAB.exe').Path
+          & $bench $env:AVX2_INPUT
+          if($LASTEXITCODE -ne 0){throw 'Raw YCbCr-vs-RGB HEIF cost benchmark failed'}
+          if((Get-FileHash -LiteralPath $env:AVX2_INPUT -Algorithm SHA256).Hash -ne $env:AVX2_INPUT_SHA) {
+            throw 'Color decomposition changed synthetic source'
+          }
+          Write-Host 'HEIC_YCBCR_RGB_INTERNAL_COLOR_COST_MEASURED'
       - name: Patch only disposable libde265 working tree with runtime-safe MSVC AVX2
         shell: pwsh
         run: |
