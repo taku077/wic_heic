@@ -12,6 +12,7 @@
 #include <libheif/heif.h>
 #include <libheif/heif_context.h>
 #include <libheif/heif_properties.h>
+#include <libheif/heif_items.h>
 #pragma comment(lib,"heif.lib")
 #pragma comment(lib,"libde265.lib")
 #pragma comment(lib,"libkvazaar.lib")
@@ -62,6 +63,39 @@ int wmain(){
     const heif_error primary=heif_context_get_primary_image_ID(ctx,&id);
     if(primary.code!=heif_error_Ok || !id){
       heif_context_free(ctx);throw std::runtime_error("HEIF primary id missing");
+    }
+    // Research next-step: can libheif expose the compressed HEVC primary item
+    // without an ffmpeg.exe subprocess? Inspect only, do not write bytes.
+    uint8_t* raw=nullptr;
+    size_t itemBytes=0;
+    heif_metadata_compression compression{};
+    const heif_error itemResult=heif_item_get_item_data(ctx,id,&compression,&raw,&itemBytes);
+    if(itemResult.code==heif_error_Ok && raw && itemBytes>=4) {
+      const uint32_t firstNAL=(uint32_t(raw[0])<<24)|(uint32_t(raw[1])<<16)|
+                               (uint32_t(raw[2])<<8)|raw[3];
+      const bool prefixLikely=firstNAL>0 && size_t(firstNAL)+4<=itemBytes;
+      std::printf("HEIC_PRIMARY_RAW_ITEM file=%ls dataBytes=%llu firstNAL_length=%u lengthPrefixPlausible=%d compression=%d\n",
+        name,static_cast<unsigned long long>(itemBytes),firstNAL,int(prefixLikely),int(compression));
+    }else{
+      std::printf("HEIC_PRIMARY_RAW_ITEM_UNAVAILABLE file=%ls code=%d message=%s\n",
+        name,int(itemResult.code),itemResult.message?itemResult.message:"unknown");
+    }
+    if(raw)heif_release_item_data(ctx,&raw);
+    const int configCount=heif_item_get_properties_of_type(ctx,id,
+      static_cast<heif_item_property_type>(heif_fourcc('h','v','c','C')),nullptr,0);
+    std::printf("HEIC_PRIMARY_CODEC_CONFIGURATION file=%ls hvcC_property_count=%d\n",name,configCount);
+    if(configCount>0 && configCount<4){
+      std::vector<heif_property_id> configIds(size_t(configCount),0);
+      const int actual=heif_item_get_properties_of_type(ctx,id,
+        static_cast<heif_item_property_type>(heif_fourcc('h','v','c','C')),
+        configIds.data(),configCount);
+      for(int entry=0;entry<actual;++entry){
+        size_t bytes=0;
+        const heif_error sizeResult=heif_item_get_property_raw_size(ctx,id,configIds[size_t(entry)],&bytes);
+        std::printf("HEIC_PRIMARY_HVCC file=%ls property=%u code=%d payloadBytes=%llu\n",
+          name,unsigned(configIds[size_t(entry)]),int(sizeResult.code),
+          static_cast<unsigned long long>(bytes));
+      }
     }
     const int count=heif_item_get_transformation_properties(ctx,id,nullptr,0);
     Require(count>=0 && count<64,"bad count of primary image transforms");
