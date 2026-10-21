@@ -284,6 +284,21 @@ try {
      throw ('Same-source Shell JPEG/HEIC benchmark failed: '+$LASTEXITCODE)
    }
  }
+ # The optional JPEG/HEIC comparator deliberately extracts ten additional
+ # *newly named* HEIC files. Its provider calls are expected, not cache misses.
+ # Take the marker after the comparator, then require all revisits to leave
+ # that marker unchanged.
+ $preRevisitMarker=$registry.OpenSubKey('Software\WicHeicSyntheticTrial\'+$providerId)
+ try {
+   $preRevisitCalls=[int]$preRevisitMarker.GetValue('Calls',0)
+ } finally { $preRevisitMarker.Close() }
+ $expectedBeforeRevisit=$calls
+ if($JpegComparisonExePath) { $expectedBeforeRevisit+=$files.Count }
+ Write-Host ('SHELL_TRIAL_BEFORE_CACHE_REVISIT_CALLS='+$preRevisitCalls)
+ if($preRevisitCalls -ne $expectedBeforeRevisit) {
+   throw ('Provider extra extraction count mismatch expected='+$expectedBeforeRevisit+
+          ' got='+$preRevisitCalls)
+ }
  foreach($trialFile in $files) {
    $again=[TrialShell.Shell]::GetSyntheticThumbnail($trialFile,$true,[uint32]$ThumbnailSize)
    if($again.HResult -lt 0 -or -not $again.HasBitmap) {
@@ -294,7 +309,7 @@ try {
  try {
    $afterHits=[int]$verifyMarker.GetValue('Calls',0)
  } finally { $verifyMarker.Close() }
- if($afterHits -ne $calls) {throw 'Shell cache revisit unexpectedly re-invoked the provider'}
+ if($afterHits -ne $preRevisitCalls) {throw 'Shell cache revisit unexpectedly re-invoked the provider'}
  $sort=$elapsed.ToArray()
  [Array]::Sort($sort)
  $median=($sort[4]+$sort[5])/2
