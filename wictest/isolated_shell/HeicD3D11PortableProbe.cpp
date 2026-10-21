@@ -196,13 +196,31 @@ void Audit(const char* name,const Measurement& sw,const Measurement& gpu){
 }
 int wmain(int argc,wchar_t** argv){
  try {
-  Need(argc==2,"usage: HeicD3D11PortableProbe.exe adapter-index [0..9]");
+  Need(argc==2,"usage: HeicD3D11PortableProbe.exe --software-selftest | adapter-index [0..9]");
   const std::wstring arg=argv[1];
-  Need(arg.size()==1&&arg[0]>=L'0'&&arg[0]<=L'9',"Only a single digit DXGI adapter index 0..9 is accepted");
-  const int adapter=arg[0]-L'0';
+  const bool selftest=arg==L"--software-selftest";
+  Need(selftest||(arg.size()==1&&arg[0]>=L'0'&&arg[0]<=L'9'),
+       "Only a single digit DXGI adapter index 0..9 or --software-selftest is accepted");
   const auto dir=ExecutableFolder();
   const auto fixtureDir=dir+L"\\samples\\";
   const char* names[]={"04","fixture-irot3-exif6-noaux"};
+  if(selftest){
+   Route sw;sw.requestedGpu=false;
+   for(int i=0;i<2;++i){
+    const char* name=names[i];
+    const std::wstring stem(name,name+strlen(name));
+    const Bytes input=ReadSafe(fixtureDir+stem+L".h265");
+    const Measurement result=OneFrame(input,sw);
+    Print(name,"software-selftest",result);
+    const int expectedW=i==0?2048:1920,expectedH=i==0?2048:1080;
+    Need(result.w==expectedW&&result.h==expectedH,
+         "Packed HEVC fixture decoded with wrong dimensions");
+   }
+   std::puts("HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_2_OF_2_PASS");
+   std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
+   return 0;
+  }
+  const int adapter=arg[0]-L'0';
   Device gpu;
   const std::string which(1,char('0'+adapter));
   const auto start=Clock::now();
