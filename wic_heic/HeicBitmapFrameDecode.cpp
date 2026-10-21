@@ -357,7 +357,7 @@ void CHeicBitmapFrameDecode::DecodeImage()
 		std::strcmp(ci, "true") == 0) {
 		char value[3] = {};
 		if (GetEnvironmentVariableA("WIC_HEIC_PRIVATE_CODEC_THREADS", value, DWORD(sizeof(value))) == 1) {
-			if (value[0] == '1' || value[0] == '2' || value[0] == '4') trialThreads = value[0] - '0';
+			if (value[0] == '1' || value[0] == '2' || value[0] == '3' || value[0] == '4') trialThreads = value[0] - '0';
 		}
 	}
 	if (trialThreads > 0) {
