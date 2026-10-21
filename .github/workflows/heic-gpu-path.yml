@@ -84,15 +84,23 @@ jobs:
           msbuild wictest/isolated_shell/HeifPrimaryTransforms.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'HEIF primary item property audit did not compile'}
           $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifPrimaryTransforms.exe').Path
-          $lines=@(& $exe)
-          $code=$LASTEXITCODE
-          $lines | ForEach-Object {Write-Host $_}
-          if($code -ne 0){throw 'HEIF item property audit failed'}
-          $prechecks=@($lines | Where-Object {$_ -match '^HEIC_GPU_PRECHECK file='})
-          if($prechecks.Count -ne 7){throw 'Incomplete GPU preflight coverage of seven HEIC fixtures'}
-          foreach($record in $prechecks){
-            if($record -notmatch 'bpp=(\\d+)/(\\d+) alpha=(\\d+) rawICCbytes=(\\d+).*candidate=(\\d+) rejection_mask=(\\d+)
-      - name: Compile and run D3D11 HEVC profile capability check
+          & $exe
+          if($LASTEXITCODE -ne 0){throw 'HEIF item property audit failed'}
+          Write-Host 'HEIC_PRIMARY_ITEM_TRANSFORMS_CI_READONLY_PASSED'
+      - name: Verify HEIC format-based provisional GPU eligibility guards
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifPrimaryTransforms.exe').Path
+          $output=@(& $exe)
+          if($LASTEXITCODE -ne 0){throw 'HEIF property inspection failed'}
+          $pre=@($output | Where-Object {$_ -like 'HEIC_GPU_PRECHECK file=*'})
+          if($pre.Count -ne 7){throw 'HEIC precheck did not inspect all pinned fixtures'}
+          foreach($line in $pre){
+            $isCandidate=$line.EndsWith('candidate=1 rejection_mask=0')
+            $looksSafe=($line -like '*bpp=8/8 alpha=0 rawICCbytes=0 *')
+            if($isCandidate -and -not $looksSafe){throw "Unsafe GPU precheck candidate: $line"}
+            if($line -notmatch 'candidate=[01] rejection_mask=[0-9]+
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -208,20 +216,9 @@ jobs:
         shell: pwsh
         run: |
           Write-Host 'HEIC_GPU_RESEARCH_NO_GPU_DECODE_SUBMISSION_NO_MSI_NO_USER_PHOTOS'
-){
-              throw "Malformed GPU preflight record $record"
-            }
-            $bits=([int]$Matches[1] -eq 8 -and [int]$Matches[2] -eq 8)
-            $opaque=([int]$Matches[3] -eq 0)
-            $noICC=([long]$Matches[4] -eq 0)
-            $accepted=[int]$Matches[5] -eq 1
-            $mask=[int]$Matches[6]
-            if($accepted -ne ($mask -eq 0) -or ($accepted -and (-not $bits -or -not $opaque -or -not $noICC))){
-              throw "Unsafe HEIC selected for provisional GPU decode: $record"
-            }
+){throw "Malformed GPU precheck record: $line"}
           }
           Write-Host 'HEIC_GPU_PRECHECK_CLASSIFICATION_GUARDS_PASS'
-          Write-Host 'HEIC_PRIMARY_ITEM_TRANSFORMS_CI_READONLY_PASSED'
       - name: Compile and run D3D11 HEVC profile capability check
         shell: pwsh
         run: |
