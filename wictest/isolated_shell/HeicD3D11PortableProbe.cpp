@@ -210,13 +210,25 @@ double Median3(std::vector<double> measurements){
  std::sort(measurements.begin(),measurements.end());
  return measurements[1];
 }
-void AuditThumbnail(const char* sample,const Measurement& gpu,const Bytes& reference){
+double MeanRgbError(const Bytes& lhs,const Bytes& rhs){
+ Need(lhs.size()==rhs.size()&&lhs.size()==size_t(256)*192*4,
+      "Quality control buffers must be matching 256x192 BGRA");
+ uint64_t error=0;
+ for(size_t i=0;i<lhs.size();i+=4)
+  for(int ch=0;ch<3;++ch)error+=uint64_t(std::abs(int(lhs[i+ch])-int(rhs[i+ch])));
+ return double(error)/(256.0*192*3);
+}
+struct ThumbReferences{
+ Bytes fant,linear,cubic;
+};
+void AuditThumbnail(const char* sample,const Measurement& gpu,const ThumbReferences& refs){
  if(!gpu.thumbAttempted)return;
  if(!gpu.thumbProduced){
   std::printf("HEIC_GPU_THUMB_NOT_PROVEN sample=%s reason=%s\n",sample,gpu.thumbReason.c_str());
   return;
  }
  const Bytes& candidate=gpu.thumb.bgra;
+ const Bytes& reference=refs.fant;
  Need(candidate.size()==reference.size() && candidate.size()==size_t(256)*192*4,
       "GPU thumb dimensions invalid");
  uint64_t total=0,squares=0;unsigned maxerr=0,nonopaque=0;
@@ -232,6 +244,9 @@ void AuditThumbnail(const char* sample,const Measurement& gpu,const Bytes& refer
  const double psnr=mse==0?99.0:10.0*std::log10(65025.0/mse);
  std::printf("HEIC_GPU_THUMB_COMPARE sample=%s vs_wic_fant_mae=%.6f psnr_db=%.3f max_rgb_error=%u nonopaque_pixels=%u quality_approved=0\n",
    sample,mae,psnr,maxerr,nonopaque);
+ std::printf("HEIC_GPU_THUMB_FILTER_DIAG sample=%s gpu_vs_wic_linear_mae=%.6f gpu_vs_wic_cubic_mae=%.6f wic_linear_vs_fant_mae=%.6f wic_cubic_vs_fant_mae=%.6f\n",
+    sample,MeanRgbError(candidate,refs.linear),MeanRgbError(candidate,refs.cubic),
+    MeanRgbError(refs.linear,refs.fant),MeanRgbError(refs.cubic,refs.fant));
  std::printf("HEIC_GPU_THUMB_TIMES sample=%s setup_ms=%.3f video_blt_submit_ms=%.3f small_256px_readback_ms=%.3f gpu_thumb_total_ms=%.3f hevc_gpu_decode_ms=%.3f hevc_plus_thumb_ms=%.3f original_full_yuv_readback_ms=%.3f reused_processor=%d\n",
    sample,gpu.thumb.setupMs,gpu.thumb.bltMs,gpu.thumb.smallReadbackMs,
    gpu.thumb.totalMs,gpu.decoderMs,gpu.decoderMs+gpu.thumb.totalMs,gpu.readbackMs,int(gpu.thumb.reusedProcessor));
@@ -369,8 +384,12 @@ int wmain(int argc,wchar_t** argv){
       name,sps.generalProfileIdc,sw.profile,sps.spsCount,
       main10?"d3d11_candidate":"software_only");
     if(!main10)continue;
-    Bytes wicReference;
-    if(gpuThumbMode)wicReference=HeicThumbFant::Scale(sw.bgra,sw.w,sw.h);
+    ThumbReferences wicReference;
+    if(gpuThumbMode){
+     wicReference.fant=HeicThumbFant::Scale(sw.bgra,sw.w,sw.h);
+     wicReference.linear=HeicThumbFant::ScaleLinear(sw.bgra,sw.w,sw.h);
+     wicReference.cubic=HeicThumbFant::ScaleCubic(sw.bgra,sw.w,sw.h);
+    }
     hardware.gotD3D11=false;
     const Measurement hw=OneFrame(compressed,hardware);
     Need(hardware.gotD3D11&&hw.hardware,
