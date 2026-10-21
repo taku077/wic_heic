@@ -89,3 +89,13 @@
 - ハイブリッドの「約38%」をユーザー実機の初回サムネイル表示の改善率として使わない。HEIC解析、サムネイルCOM起動、回転、ICC、PBGRA、Fant、メモリ転送、保存などは別検証。
 - 高解像度でも全BGRA約49MBを回避できる設計上の可能性あり。ただし今回のA/B計測器は比較用にフルBGRAとYUVの双方をメモリへ保持するので、プロセスメモリ削減を証明していない。
 - 詳細ノイズを加えた別の4032x3024 Main10人工フレームで同じA/Bを行う`software12detail` CIを追加。**この別素材の結果はCIを確認するまでは未確定**。
+
+## 2026-10-22：第7世代Intel内蔵GPUの実復号確認用パッケージを完成（ただしGPU結果は未取得）
+- 研究コード：`wictest/isolated_shell/HeicD3D11PortableProbe.cpp`。`AV_PIX_FMT_D3D11` フレームを得たときだけD3D11VAハードウェア復号と認識し、`av_hwframe_transfer_data`でCPU側へ読み出し、ソフトウェアと色/画素を比較。暫定的に`max_error<=4`かつ`MAE_RGBA<=0.25`でなければ成功判定しない（製品画質判定ではない）。
+- 仮想GPUやIntel以外のアダプタはハードウェア成功扱いしない。FFmpegのD3D11デバイスを画像間で使い回す。システムコーデック登録やMSIなし。
+- **12MPを実際に復号する試験を追加**：2048x2048 Main10、1920x1080 Main10（irot後は縦長）、高精細4032x3024 Main10（人工HEVC約4,296,647バイト、SHA-256 `157D80CEFAAA41C7BA89F62DE0A719DF894EBB6E07DAA43DE08623CB64D8E339`）の固定3サンプルを同梱。小さいフレーム成功は12MP成功を保証しない。
+- [本番コード非変更、実行用CMDまで通したActions #39634317181](https://github.com/taku077/wic_heic/actions/runs/39634317181) は**success**。C++実行ファイル/MSVC静的ランタイム生成、固定FFmpeg LGPL SDK SHA-256検証、必要な4DLLのみ同梱、外部FFmpeg/VCToolsをPATHから隠したままCPU 3/3デコード成功、D3D11 caps情報表示、実際のWindows CMD実行、ユーザー診断ログの一意な保存まで成功。
+- 同CI上ではDXGI index0/1がMicrosoft Basic Render Driverで実GPUはなし。GPU Main10ハードウェア復号・速度は**未実証**。誤ってGPU成功と表示しないことを確認。
+- 検証済み成果物：Actions artifact名`HEIC_GPU_ReadOnly_Probe_x64_Research`、Run `39634317181`、artifact id `12360632681`、ZIP `49,551,139`バイト（2026-11-04 期限）。ユーザーの元HEICには触れず、固定3ファイル以外を読まず、コーデックと関連付けを変更しない。署名なしのexeのため配布先とコードの確認が必要。
+- 実機確認が成立した場合のみ、Intel GPU初期化時間/HEVC復号/CPU転送/色変換を評価し、12MPのWIC/FantやExif/ICC/回転と結合する。50%以上のGPUハードウェア単体加速を確認しても、初回Explorer表示の改善率とは別に扱う。
+- 高負荷人工12MPのCPU参考：過去の別CIでHEVCソフト復号約421.6ms、BGRA約24.5ms、Fant約18.1ms。**同じ第7世代Intel実機の測定ではないため、GPU改善率を断定しない**。
