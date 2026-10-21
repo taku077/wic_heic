@@ -41,7 +41,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $codec=$env:PINNED_WIC_MSI
-          $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/WicHeicFastPreview.msi').Path
+          $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/en-US/WicHeicFastPreview.msi').Path
           $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
           $p=Start-Process msiexec.exe -ArgumentList ('/i "{0}" /qn /norestart' -f $codec) -Wait -PassThru
           if($p.ExitCode -ne 0){throw "Pinned WIC MSI install failed $($p.ExitCode)"}
@@ -56,6 +56,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WicHeic-FastThumbnail-Preview-v0.1-Win10-UNVERIFIED
-          path: (Build)/x64/Release/WicHeicFastPreview.msi
+          path: (Build)/x64/Release/en-US/WicHeicFastPreview.msi
           if-no-files-found: error
           retention-days: 14
