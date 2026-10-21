@@ -24,3 +24,22 @@ jobs:
           & $exe
           if($LASTEXITCODE -ne 0){throw 'D3D11 capability probe failed'}
           Write-Host 'HEIC_GPU_CAPS_CI_WIN_SERVER_CHECK_PASSED_NOT_INTEL_USER_PC'
+
+      - name: Set up FFmpeg for pinned HEIC sample bitstream parity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)){
+            choco install ffmpeg -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'Research-only FFmpeg installation failed'}
+            $env:PATH="C:\ProgramData\chocolatey\bin;$env:PATH"
+            "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          if(-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)){throw 'ffmpeg.exe not found'}
+      - name: Investigate existing HEIC fixture colors and rotation via AnnexB
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/CI_HeicBridgeRepoCorpus.ps1
+          if(-not $?){throw 'HEIC bridge corpus audit failed'}
+
