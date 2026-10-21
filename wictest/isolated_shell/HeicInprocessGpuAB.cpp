@@ -207,6 +207,8 @@ int wmain(int argc,wchar_t** argv){
   Require(GetFileAttributesW(output.c_str())==INVALID_FILE_ATTRIBUTES,
     "refusing to reuse output directory");
   Require(CreateDirectoryW(output.c_str(),nullptr)!=0,"new disposable output directory unavailable");
+  const auto batchStart=Clock::now();
+  const uint64_t batchCpuStart=ProcessCpuTicks();
   Route route;route.requestedHardware=gpu;
   int gpuIndex=-1;
   if(gpu){
@@ -214,8 +216,14 @@ int wmain(int argc,wchar_t** argv){
     Require(value.size()==1 && value[0]>=L'0' && value[0]<=L'9',"GPU index must be single-digit 0-9");
     gpuIndex=value[0]-L'0';
     std::string which(1,char('0'+gpuIndex));
+    const auto deviceStart=Clock::now();
+    const uint64_t deviceCpuStart=ProcessCpuTicks();
     const int err=av_hwdevice_ctx_create(&route.device,AV_HWDEVICE_TYPE_D3D11VA,
       which.c_str(),nullptr,0);
+    const double deviceInitMs=std::chrono::duration<double,std::milli>(Clock::now()-deviceStart).count();
+    const double deviceCpuMs=double(ProcessCpuTicks()-deviceCpuStart)/10000.0;
+    std::printf("HEIC_INPROCESS_GPU_DEVICE_INIT adapter=%d wall_ms=%.3f cpu_ms=%.3f av_err=%d\n",
+      gpuIndex,deviceInitMs,deviceCpuMs,err);
     if(err<0 || !route.device){
      std::printf("HEIC_INPROCESS_GPU_NOT_PROVEN stage=create_device adapter=%d av_err=%d\n",gpuIndex,err);
      return 0;
@@ -229,7 +237,11 @@ int wmain(int argc,wchar_t** argv){
   for(const char* stem:names){
     const std::wstring wide(stem,stem+strlen(stem));
     const std::wstring input=bridge+L"\\"+wide+L".h265";
+    const auto ioStart=Clock::now();
     const Bytes annex=ReadBounded(input);
+    const double readMs=std::chrono::duration<double,std::milli>(Clock::now()-ioStart).count();
+    std::printf("HEIC_INPROCESS_IO file=%s bytes=%llu disk_read_ms=%.3f\n",
+      stem,static_cast<unsigned long long>(annex.size()),readMs);
     route.gotHardwareFrame=false;
     try{
       const Sample sample=Decode(annex,route);
@@ -245,8 +257,11 @@ int wmain(int argc,wchar_t** argv){
         stem,e.what());
     }
   }
-  std::printf("HEIC_INPROCESS_SUMMARY mode=%s requested=%u decoded=%d device_reused=%d\n",
-    gpu?"gpu":"software",unsigned(sizeof(names)/sizeof(names[0])),completed,int(gpu));
+  const double batchWall=std::chrono::duration<double,std::milli>(Clock::now()-batchStart).count();
+  const double batchCpu=double(ProcessCpuTicks()-batchCpuStart)/10000.0;
+  std::printf("HEIC_INPROCESS_SUMMARY mode=%s requested=%u decoded=%d device_reused=%d batch_wall_ms=%.3f batch_cpu_ms=%.3f batch_private_bytes=%llu\n",
+    gpu?"gpu":"software",unsigned(sizeof(names)/sizeof(names[0])),completed,int(gpu),
+    batchWall,batchCpu,static_cast<unsigned long long>(PrivateBytes()));
   Require(gpu || completed==2,"software control must decode both pinned Main10 frames");
   std::puts("HEIC_INPROCESS_RESEARCH_ONLY_NO_REGISTER_NO_MSI_PASS");
   return 0;
