@@ -113,3 +113,13 @@
 - 別の大きなボトルネックはGPU→CPU P010の同期／転送操作で約268ms。これは転送待ちに含まれるGPU実復号完了の同期待ちを分離したものではない。単純なメモリ転送帯域値と誤解しない。今後はGPU側で縮小・色変換を済ませて小さい結果だけをreadbackするD3D11 VideoProcessor方式を研究する。ただしWIC Fantとの画質一致はまだ不明。
 - 3回CPU/GPUを繰り返して中央値を出す研究版も追加し、単発54.5%という数字の再現性を次の実機診断で確認する。配布前にCIで元ZIPのHEVC固定3件と自己テストを再検証する。
 - **実写真の初回サムネイル30%以上の高速化はまだ未実証**。写真のHEVCプロファイル・ICC・HDR・aux alpha・回転などによる候補割合は未測定。
+
+## 2026-10-22：12MP P010 GPU直接縮小→256px BGRA最小readback（研究実装）
+
+- Intel HD620実機の高負荷Main10 GPU復号成功を踏まえ、全P010（12MP 10bit 4:2:0約36.6MB）を`av_hwframe_transfer_data`でCPUへ戻す前にD3D11 VideoProcessorで縮小・色変換する研究経路を追加。`HeicD3D11GpuThumbnail.h`がFFmpeg `AV_PIX_FMT_D3D11` のGPUテクスチャと配列スライス位置を取得し、同じFFmpegデバイスの`ID3D11VideoDevice/ID3D11VideoContext`を用いてP010から256x192のBGRAターゲットを生成して、192KiB（196,608バイト）のstagingだけ読み戻す。画素数と転送対象バイト数は約186分の1だが、実機転送時間が186分の1になると**断定できない**（デコード同期待ち・VideoProcessorの処理待ちを含む）。
+- `VideoProcessorBlt`のデバイス/フォーマット能力チェック・DXGI配列スライス検証・FFmpeg D3D11ロックを追加。特殊色変換・HDR・フルレンジ・解像度違いの本研究は拒否、失敗時にはGPU小縮小を未実証と記録、既存のフルP010 readback+BGRA処理を維持。
+- `HeicThumbFantReference.h`でWindows WIC `WICBitmapInterpolationModeFant`の4032×3024 BGRA→256×192を**RAM上で**同時比較。MAE、PSNR、最大RGB誤差、不透明画素数をログ記録。`quality_approved=0`を固定し、研究結果だけで画質承認・Explorer製品経路切替は行わない。
+- 新しい引数は`HeicD3D11PortableProbe.exe thumb:0`（アダプターindex 0）。通常の`0`等と分離。`Run_GPU_Thumbnail_Experimental.cmd` は3固定HEVCだけを読み、テキスト`GPU_Thumbnail_Experimental_乱数_乱数.txt`を新規作成する。管理者権限・インストール・既存WIC変更・個人HEIC画像取得なし。
+- GPU側の`setup_ms`、`video_blt_submit_ms`、`small_256px_readback_ms`、`gpu_thumb_total_ms`を分離する。3回反復中央値で比較し、既存フルP010 readback時間も残す。
+- **重要**：実GPUハードウェア上でのVideoProcessor成功、真のreadback速度、WIC Fantとの画質差は未測定。Windows GitHub ActionsはソフトウェアGPUのみで、コンパイルとソフトウェアアダプター拒否／固定3HEVC自己テストしか証明できない。実環境で16:1縮小が処理できないドライバーもありうる。
+- 研究用EXEは比較のため従来のフルP010 CPU readbackも後から行うので、プロセス全体の経過時間やメモリ使用量は現在の性能目標の直接測定ではない。将来の製品候補は**GPU縮小のみを採用可能か**の画質と能力確認後に決める。
