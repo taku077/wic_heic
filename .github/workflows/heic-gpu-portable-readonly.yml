@@ -71,58 +71,12 @@ jobs:
             Write-Host "HEIC_GPU_PORTABLE_FIXTURE name=$name bytes=$((Get-Item $dest).Length) sha256=$((Get-FileHash $dest -Algorithm SHA256).Hash)"
           }
           $libBin=Join-Path $env:FFMPEG_RESEARCH_ROOT 'bin'
-          # Only ship libraries used by the HEVC decoder and BGRA conversion.
-          # A clean-PATH selftest below rejects missing transitive DLLs.
+          # Package only these codec, pixel-format and audio utility FFmpeg DLLs.
+          # The isolated-PATH test below will reject any omitted transitive DLL.
           $dlls=@(Get-ChildItem -LiteralPath $libBin -Filter '*.dll' -File |
-            Where-Object {$_.Name -match '^(avcodec|avutil|swscale|swresample)-[0-9]+\\.dll
-          $manifest=Join-Path $root 'SHA256_MANIFEST.txt'
-          $lines=@(Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName | ForEach-Object {
-            $relative=$_.FullName.Substring($root.Length+1)
-            "$relative SHA256=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
-          })
-          [IO.File]::WriteAllLines($manifest,$lines,[Text.Encoding]::UTF8)
-          "HEIC_GPU_PORTABLE_STAGING=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "HEIC_GPU_PORTABLE_BUNDLE_FILES=$($lines.Count) bundle_bytes=$((Get-ChildItem $root -Recurse -File|Measure-Object -Property Length -Sum).Sum)"
-      - name: Actually decode both bundled HEVC Main10 samples in the portable EXE on CI
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $exe=Join-Path $env:HEIC_GPU_PORTABLE_STAGING 'HeicD3D11PortableProbe.exe'
-          # Hide chocolatey/FFmpeg/system-development PATH: the runnable
-          # package must contain every non-Windows decoding dependency.
-          $originalPath=$env:PATH
-          try {
-            $env:PATH="$env:SystemRoot\System32;$env:SystemRoot"
-            $sw=@(& $exe --software-selftest 2>&1)
-            $exit=$LASTEXITCODE
-          } finally {
-            $env:PATH=$originalPath
-          }
-          $sw | ForEach-Object {Write-Host $_}
-          if($exit -ne 0){throw "Isolated-PATH HEVC selftest failed code=$exit"}
-          if(-not ($sw -match 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_2_OF_2_PASS')){
-            throw 'Portability cannot be claimed without 2/2 decoded HEVC fixtures'
-          }
-          Write-Host 'HEIC_GPU_PORTABLE_BUNDLED_CPU_SELFTEST_PASS'
-      - name: Verify hardware probe reports unproven without a real D3D11 Main10 device
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $exe=Join-Path $env:HEIC_GPU_PORTABLE_STAGING 'HeicD3D11PortableProbe.exe'
-          $response=@(& $exe 0 2>&1)
-          $response | ForEach-Object {Write-Host $_}
-          if($LASTEXITCODE -ne 0){throw 'Portable D3D11 research probe unexpectedly crashed'}
-          Write-Host 'HEIC_GPU_PORTABLE_GPU_SUCCESS_UNPROVEN_UNTIL_REAL_INTEL_PC'
-      - name: Upload portable noninstaller diagnostic (research use only)
-        uses: actions/upload-artifact@v4
-        with:
-          name: HEIC_GPU_ReadOnly_Probe_x64_Research
-          path: ${{ runner.temp }}/heic_gpu_readonly_portable/*
-          retention-days: 14
-          if-no-files-found: error
-})
+            Where-Object {$_.Name -match '^(avcodec|avutil|swscale|swresample)-[0-9]+\.dll$'})
           foreach($required in @('avcodec','avutil','swscale')){
-            if(-not @($dlls | Where-Object {$_.Name -match "^$required-[0-9]+\\.dll$"}).Count){
+            if(-not @($dlls | Where-Object {$_.Name -match "^$required-[0-9]+\.dll$"}).Count){
               throw "Required FFmpeg runtime library missing: $required"
             }
           }
@@ -143,9 +97,18 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $exe=Join-Path $env:HEIC_GPU_PORTABLE_STAGING 'HeicD3D11PortableProbe.exe'
-          $sw=@(& $exe --software-selftest 2>&1)
+          # Eliminate any FFmpeg CLI, Chocolatey or VS Build Tools from PATH.
+          # All non-OS decode DLLs must exist inside this portable package.
+          $originalPath=$env:PATH
+          try {
+            $env:PATH="$env:SystemRoot\System32;$env:SystemRoot"
+            $sw=@(& $exe --software-selftest 2>&1)
+            $exit=$LASTEXITCODE
+          } finally {
+            $env:PATH=$originalPath
+          }
           $sw | ForEach-Object {Write-Host $_}
-          if($LASTEXITCODE -ne 0){throw 'Packaged software HEVC selftest returned failure'}
+          if($exit -ne 0){throw "Isolated-PATH HEVC selftest failed code=$exit"}
           if(-not ($sw -match 'HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_2_OF_2_PASS')){
             throw 'Portability cannot be claimed without 2/2 decoded HEVC fixtures'
           }
