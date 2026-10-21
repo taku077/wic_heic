@@ -1,6 +1,7 @@
 # CI-only: HEIC stream metadata directs a safe rotation of extracted HEVC frames.
 # No photo modification and no unverified silent fast-path fallback.
 $ErrorActionPreference='Stop'
+. ./diagnostics/thumbnail_warmup/HeicOrientationPolicy.ps1
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Only allowed on disposable CI'}
 $ffmpeg=Get-Command ffmpeg -ErrorAction Stop
 $ffprobe=Get-Command ffprobe -ErrorAction Stop
@@ -18,30 +19,17 @@ foreach($file in $files){
   if($LASTEXITCODE -ne 0){throw "FFprobe failed $file"}
   $stream=@((ConvertFrom-Json $json).streams)[0]
   if($null -eq $stream -or $stream.codec_name -ne 'hevc'){throw "Not an HEVC image $file"}
-  $matrices=@($stream.side_data_list|Where-Object {$null -ne $_ -and $_.side_data_type -eq 'Display Matrix'})
-  if($matrices.Count -gt 1){$rejected++;Write-Host "HEIC_METADATA_ROUTE_REJECT file=$file reason=multiple_matrices";continue}
-  $rotation=0
-  if($matrices.Count -eq 1){
-    $m=$matrices[0]
-    if($null -eq $m.PSObject.Properties['rotation']){
-      $rejected++;Write-Host "HEIC_METADATA_ROUTE_REJECT file=$file reason=unavailable_rotation";continue
-    }
-    $rotation=[double]$m.rotation
+  try {
+    $effect=Get-HeicDisplayTransform -Stream $stream
+  } catch {
+    $rejected++
+    Write-Host "HEIC_METADATA_ROUTE_REJECT file=$file reason=$($_.Exception.Message -replace '\s+','_')"
+    continue
   }
-  if($null -ne $stream.tags -and $stream.tags.PSObject.Properties['rotate']){
-    $tagRotation=[double]$stream.tags.rotate
-    if($tagRotation -ne 0 -and $tagRotation -ne $rotation){
-      $rejected++;Write-Host "HEIC_METADATA_ROUTE_REJECT file=$file reason=conflicting_rotation_tags";continue
-    }
-  }
-  $effect=$null
-  if([math]::Abs($rotation) -lt 0.1) { $effect='identity' }
-  elseif([math]::Abs($rotation+90) -lt 0.1) { $effect='clockwise90' }
-  elseif([math]::Abs($rotation-90) -lt 0.1) { $effect='counterclockwise90' }
-  elseif([math]::Abs([math]::Abs($rotation)-180) -lt 0.1){$effect='rotate180'}
-  else{
-    $rejected++;Write-Host "HEIC_METADATA_ROUTE_REJECT file=$file reason=unsupported_angle angle=$rotation";continue
-  }
+  $rotation=if($effect -eq 'clockwise90'){-90}
+            elseif($effect -eq 'counterclockwise90'){90}
+            elseif($effect -eq 'rotate180'){180}
+            else{0}
   $base=[IO.Path]::GetFileNameWithoutExtension($file)
   $annex=Join-Path $out ($base+'.h265')
   $fromHeic=Join-Path $out ($base+'.heic.bgra')
