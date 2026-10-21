@@ -167,8 +167,6 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  m.profile=ctx->profile;
  m.matrix=decoded->colorspace;
  m.colorRange=decoded->color_range;
- if(ctx->profile==AV_PROFILE_HEVC_MAIN && m.w==HeicNative8::W && m.h==HeicNative8::H)
-  m.nativeYuv8=HeicNative8::Normalize(source);
  m.thumbAttempted=route.thumbPilot;
  m.thumbProduced=thumbOk;
  m.thumbReason=thumbReason;
@@ -206,6 +204,10 @@ Measurement OneFrame(const Bytes& compressed,Route& route){
  m.readbackMs=ms(readbackAt-decodedAt);
  m.colorMs=ms(finished-readbackAt);
  m.totalMs=ms(finished-started);
+ // The diagnostic-only 18MiB native YUV normalization is deliberately not
+ // counted as HEVC decoding or RGB conversion in the benchmark figures.
+ if(ctx->profile==AV_PROFILE_HEVC_MAIN && m.w==HeicNative8::W && m.h==HeicNative8::H)
+  m.nativeYuv8=HeicNative8::Normalize(source);
  return m;
 }
 void Print(const char* name,const char* mode,const Measurement& m){
@@ -344,6 +346,17 @@ int wmain(int argc,wchar_t** argv){
        name,sps.generalProfileIdc,sps.spsCount);
     Need(result.profile==expectedProfile && sps.generalProfileIdc==expectedProfile,
          "HEVC profile changed/mismatched SPS; refuse GPU profile contract");
+    if(i==3){
+     Need(result.nativeYuv8.size()==size_t(HeicNative8::W)*HeicNative8::H*3/2,
+          "8-bit software plane canonicalization missing");
+     Need(HeicNative8::Audit(result.nativeYuv8,result.nativeYuv8,name),
+          "8-bit software YUV equal-control selftest failed");
+     Bytes changed=result.nativeYuv8;
+     changed[0]^=1;
+     Need(!HeicNative8::Audit(result.nativeYuv8,changed,name),
+          "8-bit native YUV comparison failed to detect changed luma");
+     std::puts("HEIC_GPU_MAIN8_NATIVE_YUV_POSITIVE_AND_NEGATIVE_SELFTEST_PASS");
+    }
     if(i>=2){
      const Bytes ref=HeicThumbFant::Scale(result.bgra,result.w,result.h);
      const Bytes control=HeicThumbFant::Scale(result.bgra,result.w,result.h);
