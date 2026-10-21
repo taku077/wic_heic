@@ -70,6 +70,7 @@ try {
  Write-Host 'FAST_PREVIEW_SMOKE_BEFORE_FIRST_EXTRACTION'
  foreach($file in $files){
    $result=[TrialShell.Shell]::GetSyntheticThumbnail($file,$false,[uint32]256)
+   Write-Host ('FAST_PREVIEW_FIRST_RESULT path='+[IO.Path]::GetFileName($file)+' hr='+$result.HResult+' bitmap='+$result.HasBitmap)
    if($result.HResult -lt 0 -or -not $result.HasBitmap) {
      throw ('Real .heic Shell thumbnail failed: '+$result.HResult)
    }
@@ -96,10 +97,14 @@ try {
  Write-Host 'FAST_PREVIEW_MSI_REAL_HEIC_FIRST_EXTRACTION_PASSED'
  Write-Host 'FAST_PREVIEW_MSI_REAL_HEIC_CACHE_ONLY_PASSED'
  Write-Host 'FAST_PREVIEW_MSI_SOURCE_HASHES_PASSED'
+} catch {
+ Write-Host ('FAST_PREVIEW_SMOKE_EXCEPTION='+$_.Exception.ToString())
+ throw
 } finally {
  if($installed){
    Write-Host 'FAST_PREVIEW_SMOKE_BEFORE_UNINSTALL'
    $p=Start-Process msiexec.exe -ArgumentList ('/x "{0}" /qn /norestart' -f $msi) -Wait -PassThru
+   Write-Host ('FAST_PREVIEW_SMOKE_UNINSTALL_CODE='+$p.ExitCode)
    if($p.ExitCode -ne 0){throw ('MSI uninstall failed: '+$p.ExitCode)}
  }
  foreach($subkey in $keys){
