@@ -345,9 +345,9 @@ void CHeicBitmapFrameDecode::DecodeImage()
 		throw std::exception("Bad image handle");
 	}
 
-	// Default decoder scheduling remains in force. A bounded two-codec-thread
-	// experiment regressed 256px thumbnail measurements on the Windows CI
-	// runner; do not increase CPU usage without a repeatable improvement.
+	// Small thumbnails and uncommon HEIC formats keep the original decoder.
+	// The CI-only 12MP A/B showed exact PBGRA pixel parity and lower wall
+	// time at two codec threads, at a measured cost in CPU time.
 #ifdef WIC_HEIC_PRIVATE_FAST2
 	// Only the MSI's PRIVATE decoder is built with this macro. Never enable
 	// it in the globally registered WIC codec or the Windows Photos encoder.

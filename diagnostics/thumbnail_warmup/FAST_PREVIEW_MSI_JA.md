@@ -1,13 +1,28 @@
-# WicHeic Fast Thumbnail Preview v0.2.0 (Windows 10 x64 trial)
+# WicHeic Fast Thumbnail Preview v0.3.0（Windows 10 x64 実機試験版）
 
-This experimental MSI installs two DLLs together: WicHeicFastPreview.dll (the actual .heic Shell IThumbnailProvider) and WicHeicPrivateCodec.dll (a pinned existing WIC HEIC decoder, loaded privately by the handler).
+## 今回の変更
+- v0.2.0の高速サムネイルハンドラー＋専用HEICデコーダー同梱形式を継続（既存のWindows WICデコーダーやHEIC Managerの削除は不要）。
+- **6MP以上、8bit、アルファなし**のHEICだけ、プライベートHEVCデコードを標準の1スレッド相当から**2スレッド**へ切り替える。6MP未満、10/12/16bit、アルファ付きは従来経路のまま。
+- HEIC原本を書き換えたり、元画像を再圧縮・削除したりしない。写真の回転保存は今回の改善対象ではない。
+- Windowsの共有WIC/Photosデコーダーを入れ替えず、**Shellサムネイル用のプライベートDLL**のみを変更する。
+- 旧版v0.2.0からMSIによる更新をCIで検証する。インストール・削除時にユーザー別Shell関連付けを管理する。
+- 既存の別のユーザー別HEICサムネイルハンドラーが存在する場合は保護のためインストールを拒否する。レジストリを手動で消して突破しないこと。
 
-**A separately installed WicHeic decoder is NOT REQUIRED.** The v0.1.1/v0.1.2 prerequisite-registry check was invalid for PCs with other HEIC software or a differently registered codec; the v0.2.0 MSI removes that condition and privately loads its included decoder.
+## 現在確認済みの速度（Windows Server 2022 / 人工4032×3024 HEIC）
+- v0.2.0相当の処理：4回の中央値 **1054.63 ms**（CI run 39569741001）
+- v0.3.0候補：4回の中央値 **607.93 ms**（CI run 39574280017）
+- この2件は別のCI実行なので、厳密な同一環境A/Bではない。約42%という比較は参考値。
+- さらに同一CI内で標準、1、2、4スレッドを比較した8サンプルA/Bでは、標準1035.66ms、2スレッド627.90ms。**全条件の出力画素ハッシュが一致**したが、2スレッド時のプロセスCPU時間は増えた（CI run 39572805067）。
+- Windows 10の実機・iPhoneで撮影した実写真・エクスプローラーGUIの表示時間はまだ未検証。
 
-Important safety boundaries:
-- The private decoder is NEVER registered as a system WIC codec. The MSI leaves existing Windows Photos, HEIC Manager, and installed WIC registrations untouched.
-- The provider's own COM class is registered in HKLM; the .heic thumbnail override is recorded under HKCU for the installing account. No .heif association.
-- If an HKCU .heic handler already exists, installation refuses to overwrite it. Do not manually delete registry values to bypass this.
-- The original Windows-wide HEIC association remains; uninstall removes only the preview's own DLLs and registry entries.
-- Test COPIES of real HEIC photos, not originals. Do not rotate/save HEIC using Photos while testing.
-- Windows Server 2022 Shell synthetic CI results do not guarantee Windows 10 GUI paint speed or parity across iPhone HEIC orientations, ICC, HDR, or embedded metadata.
+## Windows 10実機での試験
+1. 既存v0.2.0のインストーラーや元画像は残す。**v0.2.0のアンインストールは事前に行わない**。
+2. 展開した `WicHeicFastPreview.msi` を通常の方法で実行して更新する。以前と同様に管理者権限が必要になる場合がある。
+3. エクスプローラーを再起動、またはWindowsを再起動し、異なる新しいフォルダにコピーした10～30枚の実HEICの初回表示を比較する。画像の解像度とアイコンの大きさをなるべく揃える。
+4. 体感速度（1枚に何秒程度か）と、向き・色・縮小サムネイルの異常がないかを報告する。キャッシュ済みフォルダを開き直すだけでは初回速度比較にならない。
+5. エラーが出たら、インストールを中断して画面を共有する。**HEIC ManagerやWindows標準機能を削除しない**。
+
+## 完了／保留
+- GitHub Actionsの一時的なWindows Server 2022で人工HEIC、Shell初回/キャッシュ、原本ハッシュ、MSIインストール・アンインストールを検証。
+- v0.2.0からの上書き更新／最終削除もリリース前の合格条件。
+- 画質とサムネイル方向、10bit/HDR、ICCの個別パリティは全画像について保証されない。原本のフォト回転・保存試験はしない。
