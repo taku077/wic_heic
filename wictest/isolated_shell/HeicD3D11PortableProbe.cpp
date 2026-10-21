@@ -299,6 +299,32 @@ void Main8SimulatedNv12ColorSelftest(const Measurement& cpu) {
  const Bytes corrected=Color(AV_PIX_FMT_YUV420P,planar.data,planar.linesize);
  Need(corrected==cpu.bgra,
       "Canonical GPU NV12 chroma repack must yield exact CPU YUV420P BGRA");
+ // Real Intel drivers may supply rows with an alignment pitch larger than
+ // the visible image width. Poison the padding so incorrect row handling
+ // is detected before requesting any user-visible trial.
+ constexpr int paddedStride=4096;
+ static_assert(paddedStride>w,"NV12 padding test must actually pad width");
+ Bytes paddedY(size_t(paddedStride)*h,0xA5);
+ Bytes paddedUv(size_t(paddedStride)*ch,0x5A);
+ for(int row=0;row<h;++row)
+  memcpy(paddedY.data()+size_t(row)*paddedStride,
+         canonical.data()+size_t(row)*w,w);
+ for(int row=0;row<ch;++row)
+  memcpy(paddedUv.data()+size_t(row)*paddedStride,
+         interleaved.data()+size_t(row)*w,w);
+ AVFrame paddedNv12{};
+ paddedNv12.format=AV_PIX_FMT_NV12;
+ paddedNv12.width=w;paddedNv12.height=h;
+ paddedNv12.data[0]=paddedY.data();paddedNv12.data[1]=paddedUv.data();
+ paddedNv12.linesize[0]=paddedStride;
+ paddedNv12.linesize[1]=paddedStride;
+ HeicNative8::PlanarNv12View paddedPlanar;
+ HeicNative8::BuildPlanarNv12View(&paddedNv12,paddedPlanar);
+ Need(HeicNative8::Normalize(&paddedNv12)==canonical,
+      "Padded-stride NV12 frame did not recover original YUV bytes");
+ Need(Color(AV_PIX_FMT_YUV420P,paddedPlanar.data,paddedPlanar.linesize)==cpu.bgra,
+      "GPU 4096-byte D3D11 row pitch incorrectly changes BGRA pixels");
+ std::puts("HEIC_GPU_MAIN8_PADDED_STRIDE_4096_NV12_BGRA_EXACT_PASS");
  const uint8_t* rawData[4]={nv12.data[0],nv12.data[1],nullptr,nullptr};
  const int rawStride[4]={nv12.linesize[0],nv12.linesize[1],0,0};
  const Bytes uncorrected=Color(AV_PIX_FMT_NV12,rawData,rawStride);
