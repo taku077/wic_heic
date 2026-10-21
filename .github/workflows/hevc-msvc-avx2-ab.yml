@@ -1,7 +1,5 @@
 name: CI research MSVC HEVC AVX2 dispatch vs baseline - no MSI
 on:
-  push:
-    branches: [experiment/hevc-msvc-avx2-cpu-dispatch]
   workflow_dispatch:
 permissions:
   contents: read
