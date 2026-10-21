@@ -65,10 +65,13 @@ uint64_t PrivateBytes(){
 struct SwsDel {void operator()(SwsContext* p)const{sws_freeContext(p);}};
 using Sws=std::unique_ptr<SwsContext,SwsDel>;
 struct Timed {Bytes output;double ms=0;uint64_t privateBytes=0;};
-Timed WicFant(const Bytes& bgra, IWICImagingFactory* factory){
+Timed WicFant(const Bytes& bgra, IWICImagingFactory* factory,
+              int sourceW=W,int sourceH=H){
+ Need(sourceW>0&&sourceH>0&&bgra.size()==size_t(sourceW)*sourceH*4,
+   "invalid intermediate BGRA dimensions");
  auto start=Clock::now();
  ComPtr<IWICBitmap> source;
- Ok(factory->CreateBitmapFromMemory(W,H,GUID_WICPixelFormat32bppBGRA,W*4,
+ Ok(factory->CreateBitmapFromMemory(sourceW,sourceH,GUID_WICPixelFormat32bppBGRA,sourceW*4,
    UINT(bgra.size()),const_cast<BYTE*>(bgra.data()),source.GetAddressOf()),
    "WIC bitmap from BGRA");
  ComPtr<IWICBitmapScaler> scaler;
@@ -119,6 +122,36 @@ Timed RgbArea(const Bytes& bgra){
    "BGRA area resample incomplete");
  out.ms=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
  out.privateBytes=PrivateBytes();return out;
+}
+Timed HybridYuvAreaFant(const Bytes& yuv10,IWICImagingFactory* factory,
+                       int intermediateW,int intermediateH){
+ Need(intermediateW>TW && intermediateW<=W &&
+      intermediateH>TH && intermediateH<=H &&
+      intermediateW*H==intermediateH*W,
+      "unsafe/non-aspect preserving hybrid size");
+ const size_t luma=size_t(W)*H*2,chroma=size_t(W/2)*(H/2)*2;
+ Need(yuv10.size()==luma+2*chroma,"invalid 10-bit planar YUV size");
+ const uint8_t* planes[4]={yuv10.data(),yuv10.data()+luma,
+   yuv10.data()+luma+chroma,nullptr};
+ const int srcStride[4]={W*2,W,W,0};
+ const auto start=Clock::now();
+ Sws ctx(sws_getContext(W,H,AV_PIX_FMT_YUV420P10LE,
+   intermediateW,intermediateH,AV_PIX_FMT_BGRA,
+   SWS_AREA,nullptr,nullptr,nullptr));
+ Need(ctx!=nullptr,"hybrid intermediate swscale context");
+ const int* coeff=sws_getCoefficients(SWS_CS_ITU601);
+ Need(coeff && sws_setColorspaceDetails(ctx.get(),coeff,0,
+   sws_getCoefficients(SWS_CS_DEFAULT),1,0,1<<16,1<<16)>=0,
+   "hybrid colorspace/range matrix mismatch");
+ Bytes mid(size_t(intermediateW)*intermediateH*4);
+ uint8_t* dest[4]={mid.data(),nullptr,nullptr,nullptr};
+ int destStride[4]={intermediateW*4,0,0,0};
+ Need(sws_scale(ctx.get(),planes,srcStride,0,H,dest,destStride)==intermediateH,
+   "hybrid area shrink failed");
+ Timed result=WicFant(mid,factory,intermediateW,intermediateH);
+ result.ms=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
+ result.privateBytes=PrivateBytes();
+ return result;
 }
 double Median(std::vector<double> v){
  Need(v.size()==4,"median requires 4 paired repetitions");
@@ -204,6 +237,37 @@ int wmain(int argc,wchar_t** argv){
      i,run.ms,static_cast<unsigned long long>(run.privateBytes));
   }
   Audit("BGRA_AREA",ref,warmRgb.output);
+  // Hybrid: avoid full 12MP BGRA allocation and recover RGB-before-final-box
+  // behavior. 512, 1024, 2048 intermediate widths; target always 256x192.
+  const int intermediateW[3]={512,1024,2048};
+  const int intermediateH[3]={384,768,1536};
+  std::vector<double> hybridTimes[3];
+  Timed hybridWarm[3];
+  for(int mode=0;mode<3;++mode){
+   hybridWarm[mode]=HybridYuvAreaFant(yuv,factory.Get(),
+     intermediateW[mode],intermediateH[mode]);
+   maxPrivateBytes=std::max(maxPrivateBytes,hybridWarm[mode].privateBytes);
+  }
+  const int hybridOrder[12]={0,1,2,2,1,0,0,1,2,2,1,0};
+  for(int i=0;i<12;++i){
+   const int mode=hybridOrder[i];
+   Timed run=HybridYuvAreaFant(yuv,factory.Get(),
+     intermediateW[mode],intermediateH[mode]);
+   Need(run.output==hybridWarm[mode].output,
+     "non-deterministic hybrid output");
+   hybridTimes[mode].push_back(run.ms);
+   maxPrivateBytes=std::max(maxPrivateBytes,run.privateBytes);
+   std::printf("HEIC_THUMB_HYBRID_TRIAL intermediate_width=%d intermediate_height=%d repetition=%d wall_ms=%.3f private_bytes=%llu\n",
+     intermediateW[mode],intermediateH[mode],i,run.ms,
+     static_cast<unsigned long long>(run.privateBytes));
+  }
+  for(int mode=0;mode<3;++mode){
+   const std::string method="YUV_"+std::to_string(intermediateW[mode])+"_FANT";
+   Audit(method.c_str(),ref,hybridWarm[mode].output);
+   std::printf("HEIC_THUMB_HYBRID_MEDIAN intermediate_width=%d intermediate_height=%d median_ms=%.3f wic_fant_reference_ms=%.3f\n",
+     intermediateW[mode],intermediateH[mode],
+     Median(hybridTimes[mode]),Median(wicTimes));
+  }
   std::printf("HEIC_THUMB_SCALE_RGB_AREA_MEDIAN bgra_area_ms=%.3f wic_fant_ms=%.3f\n",
     Median(rgbTimes),Median(wicTimes));
   const double mW=Median(wicTimes),mA=Median(areaTimes);
