@@ -1,7 +1,5 @@
-// Windows Shell IThumbnailProvider integration experiment. NOT part of the
-// shipping wic_heic.dll or its MSI. No self-registration entry points.
-// Only a dedicated synthetic .wictrial association on an ephemeral CI runner
-// may activate this COM server.
+// Isolated Shell provider built twice: .wictrial CI or opt-in .heic preview MSI.
+// The preview is a separate per-user install, never silently added to WIC.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <wincodec.h>
@@ -23,10 +21,17 @@
 
 using Microsoft::WRL::ComPtr;
 namespace {
+#ifdef WIC_HEIC_FAST_PREVIEW
+const CLSID kTrialClsid =
+    {0xd973196c,0x165c,0x4fce,{0x88,0x38,0x17,0xc3,0x70,0x37,0xd3,0x84}};
+const wchar_t kCounterKey[] =
+    L"Software\\WicHeicFastPreviewCI\\{D973196C-165C-4FCE-8838-17C37037D384}";
+#else
 const CLSID kTrialClsid =
     {0x94da5cb1,0xf0e4,0x42c2,{0xb5,0xd8,0xb1,0xf3,0xce,0x6d,0x78,0x2b}};
 const wchar_t kCounterKey[] =
     L"Software\\WicHeicSyntheticTrial\\{94DA5CB1-F0E4-42C2-B5D8-B1F3CE6D782B}";
+#endif
 std::atomic<long> g_locks{0},g_objects{0};
 
 void CountTestMarker(const wchar_t* name) noexcept {
@@ -52,6 +57,9 @@ void CountTestMarker(const wchar_t* name) noexcept {
 }
 
 bool ForceArgbForCiTrial() noexcept {
+#ifdef WIC_HEIC_FAST_PREVIEW
+    return true; // CI-proven ARGB PBGRA cache presentation.
+#else
     // CI test option lives only under the synthetic per-run HKCU marker.
     // It has no effect without a script-created Enable=1 entry.
     HKEY key=nullptr;
@@ -67,6 +75,7 @@ bool ForceArgbForCiTrial() noexcept {
              type==REG_DWORD && force==1;
     RegCloseKey(key);
     return valid && requested;
+#endif
 }
 
 class Provider final : public IThumbnailProvider, public IInitializeWithStream {
@@ -218,6 +227,5 @@ STDAPI DllGetClassObject(REFCLSID clsid,REFIID iid,LPVOID* output) {
 STDAPI DllCanUnloadNow() {
     return g_objects.load()==0 && g_locks.load()==0 ? S_OK : S_FALSE;
 }
-// Deliberately no DllRegisterServer or DllUnregisterServer. The only installer
-// is a CI-only script that uses a new extension, explicit ownership checks,
-// and guaranteed cleanup. Never introduce global .heic Shell registrations.
+// No self-registration: MSI owns the preview CLSID and HKCU .heic ShellEx;
+// CI's synthetic .wictrial variant is separate and unchanged.
