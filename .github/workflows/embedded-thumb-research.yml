@@ -1,0 +1,106 @@
+name: HEIC embedded thumbnail shortcut research no MSI
+on:
+  push:
+    branches: [experiment/embedded-heic-thumbnail-fastpath]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  embedded:
+    runs-on: windows-2022
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compute pinned codec signature
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $hash=[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: actions/cache/restore@v4
+        id: deps
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Set up NASM if native library build is necessary
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM setup failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Build pinned codec dependencies if absent
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          foreach($lib in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$lib.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Native dependency failed: $lib"}
+          }
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build private WIC decoder (not registered)
+        shell: pwsh
+        run: |
+          $env:CL='/DWIC_HEIC_PRIVATE_FAST_ADAPTIVE'
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Private decoder build failed'}
+          Remove-Item Env:\CL
+      - name: Compile experimental Shell shortcut with no registration
+        shell: pwsh
+        run: |
+          $env:CL='/DWIC_HEIC_EMBEDDED_THUMB_TRIAL'
+          msbuild wictest/isolated_shell/HeicShellFastPreview.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Shell shortcut build failed'}
+          Remove-Item Env:\CL
+          Write-Host 'EMBEDDED_TRIAL_SHELL_DLL_BUILT_NOT_INSTALLED'
+      - name: Build purely synthetic HEIC fixture generators and WIC benchmark
+        shell: pwsh
+        run: |
+          foreach($project in @('Synthetic12MpHeic','SyntheticEmbeddedHeic','EmbeddedThumbAB')){
+            msbuild "wictest/isolated_shell/$project.vcxproj" /p:Configuration=Release /p:Platform=x64
+            if($LASTEXITCODE -ne 0){throw "Test project build failed: $project"}
+          }
+      - name: Generate paired artificial 12MP HEIC with identical primary bytes
+        shell: pwsh
+        run: |
+          $dir='wictest/isolated_shell/(Build)/x64/Release'
+          $dll=(Resolve-Path 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $make=(Resolve-Path "$dir/Synthetic12MpHeic.exe").Path
+          $attach=(Resolve-Path "$dir/SyntheticEmbeddedHeic.exe").Path
+          $original=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          $base=Join-Path $env:RUNNER_TEMP 'wicfast_baseline_4032x3024.heic'
+          $with=Join-Path $env:RUNNER_TEMP 'wicfast_embedded_4032x3024.heic'
+          & $make $dll $original
+          if($LASTEXITCODE -ne 0){throw 'Artificial source generation failed'}
+          & $attach $original $base $with
+          if($LASTEXITCODE -ne 0){throw '512px embedded HEIC generation failed'}
+          "EMBEDDED_BASE=$base" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EMBEDDED_WITH=$with" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EMBEDDED_BASE_SHA=$((Get-FileHash -LiteralPath $base -Algorithm SHA256).Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "EMBEDDED_WITH_SHA=$((Get-FileHash -LiteralPath $with -Algorithm SHA256).Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Benchmark embedded vs full image and pixel quality
+        shell: pwsh
+        run: |
+          $dll=(Resolve-Path 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $bench=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/EmbeddedThumbAB.exe').Path
+          & $bench $dll $env:EMBEDDED_BASE $env:EMBEDDED_WITH
+          if($LASTEXITCODE -ne 0){throw 'Embedded thumbnail A/B benchmark failed'}
+          if((Get-FileHash -LiteralPath $env:EMBEDDED_BASE -Algorithm SHA256).Hash -ne $env:EMBEDDED_BASE_SHA){throw 'Original artificial HEIC changed'}
+          if((Get-FileHash -LiteralPath $env:EMBEDDED_WITH -Algorithm SHA256).Hash -ne $env:EMBEDDED_WITH_SHA){throw 'Embedded artificial HEIC changed'}
+          Write-Host 'EMBEDDED_AB_ARTIFICIAL_FILE_HASHES_PASSED'
+      - name: No MSI or registry modifications were made
+        shell: pwsh
+        run: |
+          Write-Host 'EMBEDDED_FASTPATH_RESEARCH_ONLY_NO_USER_INSTALLATION'
