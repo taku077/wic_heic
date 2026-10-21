@@ -104,11 +104,27 @@ Timed DirectYuvArea(const Bytes& yuv10){
  out.ms=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
  out.privateBytes=PrivateBytes();return out;
 }
+Timed RgbArea(const Bytes& bgra){
+ Need(bgra.size()==size_t(W)*H*4,"invalid full BGRA reference size");
+ const uint8_t* src[4]={bgra.data(),nullptr,nullptr,nullptr};
+ const int stride[4]={W*4,0,0,0};
+ const auto start=Clock::now();
+ Sws ctx(sws_getContext(W,H,AV_PIX_FMT_BGRA,TW,TH,
+   AV_PIX_FMT_BGRA,SWS_AREA,nullptr,nullptr,nullptr));
+ Need(ctx!=nullptr,"swscale BGRA area context");
+ Timed out;out.output.resize(size_t(TW)*TH*4);
+ uint8_t* dest[4]={out.output.data(),nullptr,nullptr,nullptr};
+ int destStride[4]={TW*4,0,0,0};
+ Need(sws_scale(ctx.get(),src,stride,0,H,dest,destStride)==TH,
+   "BGRA area resample incomplete");
+ out.ms=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
+ out.privateBytes=PrivateBytes();return out;
+}
 double Median(std::vector<double> v){
  Need(v.size()==4,"median requires 4 paired repetitions");
  std::sort(v.begin(),v.end());return (v[1]+v[2])/2.0;
 }
-void Audit(const Bytes& wic,const Bytes& area){
+void Audit(const char* method,const Bytes& wic,const Bytes& area){
  Need(wic.size()==area.size() && wic.size()==size_t(TW)*TH*4,
    "thumbnail output geometry mismatch");
  uint64_t absSum=0,squareSum=0,changed=0,over4=0,over16=0;
@@ -127,8 +143,8 @@ void Audit(const Bytes& wic,const Bytes& area){
  const double mse=double(squareSum)/samples;
  const double mae=double(absSum)/samples;
  const double psnr=mse==0?99.0:10.0*std::log10(255.0*255.0/mse);
- std::printf("HEIC_THUMB_SCALE_QUALITY w=%d h=%d all_pixels_exact=%d mae_rgb=%.6f psnr_db=%.3f max_error=%u channels_changed=%llu over4=%llu over16=%llu alpha_nonopaque_wic=%u alpha_nonopaque_area=%u\n",
-   TW,TH,int(absSum==0),mae,psnr,maxError,
+ std::printf("HEIC_THUMB_SCALE_QUALITY method=%s w=%d h=%d all_pixels_exact=%d mae_rgb=%.6f psnr_db=%.3f max_error=%u channels_changed=%llu over4=%llu over16=%llu alpha_nonopaque_wic=%u alpha_nonopaque_area=%u\n",
+   method,TW,TH,int(absSum==0),mae,psnr,maxError,
    static_cast<unsigned long long>(changed),
    static_cast<unsigned long long>(over4),
    static_cast<unsigned long long>(over16),nonOpaqueWic,nonOpaqueArea);
@@ -174,7 +190,22 @@ int wmain(int argc,wchar_t** argv){
      fast?"YUV_AREA":"WIC_FANT",i,run.ms,
      static_cast<unsigned long long>(run.privateBytes));
   }
-  Audit(ref,direct);
+  Audit("YUV_AREA",ref,direct);
+  // Filter differences versus clipping/color-conversion order differ.
+  const Timed warmRgb=RgbArea(bgra);
+  std::vector<double> rgbTimes;
+  maxPrivateBytes=std::max(maxPrivateBytes,warmRgb.privateBytes);
+  for(int i=0;i<4;++i){
+   const Timed run=RgbArea(bgra);
+   Need(run.output==warmRgb.output,"nondeterministic full BGRA Area output");
+   rgbTimes.push_back(run.ms);
+   maxPrivateBytes=std::max(maxPrivateBytes,run.privateBytes);
+   std::printf("HEIC_THUMB_SCALE_TRIAL method=BGRA_AREA repetition=%d wall_ms=%.3f private_bytes=%llu\n",
+     i,run.ms,static_cast<unsigned long long>(run.privateBytes));
+  }
+  Audit("BGRA_AREA",ref,warmRgb.output);
+  std::printf("HEIC_THUMB_SCALE_RGB_AREA_MEDIAN bgra_area_ms=%.3f wic_fant_ms=%.3f\n",
+    Median(rgbTimes),Median(wicTimes));
   const double mW=Median(wicTimes),mA=Median(areaTimes);
   std::printf("HEIC_THUMB_SCALE_MEDIAN wic_fant_ms=%.3f yuv_area_ms=%.3f delta_percent=%.2f max_private_bytes=%llu\n",
     mW,mA,100.0*(mW-mA)/mW,
