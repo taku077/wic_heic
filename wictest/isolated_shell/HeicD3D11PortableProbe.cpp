@@ -312,10 +312,10 @@ int wmain(int argc,wchar_t** argv){
        "Only DXGI index 0..9, thumb:0..9 or --software-selftest accepted");
   const auto dir=ExecutableFolder();
   const auto fixtureDir=dir+L"\\samples\\";
-  const char* names[]={"04","fixture-irot3-exif6-noaux","synthetic12mp_detail"};
+  const char* names[]={"04","fixture-irot3-exif6-noaux","synthetic12mp_detail","synthetic12mp_8bit_detail"};
   if(selftest){
    Route sw;sw.requestedGpu=false;
-   for(int i=0;i<3;++i){
+   for(int i=0;i<4;++i){
     const char* name=names[i];
     const std::wstring stem(name,name+strlen(name));
     const Bytes input=ReadSafe(fixtureDir+stem+L".h265");
@@ -325,7 +325,8 @@ int wmain(int argc,wchar_t** argv){
     Print(name,"software-selftest",result);
     const int expectedW=i==0?2048:(i==1?1920:4032);
     const int expectedH=i==0?2048:(i==1?1080:3024);
-    const int expectedProfile=i==2?AV_PROFILE_HEVC_MAIN_10:AV_PROFILE_HEVC_REXT;
+    const int expectedProfile=i<2?AV_PROFILE_HEVC_REXT:
+       (i==2?AV_PROFILE_HEVC_MAIN_10:AV_PROFILE_HEVC_MAIN);
     Need(result.w==expectedW&&result.h==expectedH,
          "Packed HEVC fixture decoded with wrong dimensions");
     std::printf("HEIC_GPU_PORTABLE_PROFILE sample=%s got=%d expected=%d\n",
@@ -334,7 +335,7 @@ int wmain(int argc,wchar_t** argv){
        name,sps.generalProfileIdc,sps.spsCount);
     Need(result.profile==expectedProfile && sps.generalProfileIdc==expectedProfile,
          "HEVC profile changed/mismatched SPS; refuse GPU profile contract");
-    if(i==2){
+    if(i>=2){
      const Bytes ref=HeicThumbFant::Scale(result.bgra,result.w,result.h);
      const Bytes control=HeicThumbFant::Scale(result.bgra,result.w,result.h);
      Need(ref==control && ref.size()==size_t(256)*192*4,
@@ -345,7 +346,7 @@ int wmain(int argc,wchar_t** argv){
      std::puts("HEIC_GPU_THUMB_WIC_FANT_REFERENCE_256x192_SELFTEST_PASS");
     }
    }
-   std::puts("HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_3_OF_3_PASS");
+   std::puts("HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_4_OF_4_PASS");
    std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
    return 0;
   }
@@ -392,7 +393,7 @@ int wmain(int argc,wchar_t** argv){
   hardware.thumbPilot=gpuThumbMode;
   hardware.thumbCache=gpuThumbMode?&thumbCache:nullptr;
   Route software;software.requestedGpu=false;
-  int proven=0;
+  int provenMain10=0,provenMain8=0;
   for(const char* name:names){
    const std::wstring stem(name,name+strlen(name));
    const Bytes compressed=ReadSafe(fixtureDir+stem+L".h265");
@@ -409,12 +410,21 @@ int wmain(int argc,wchar_t** argv){
     // them software-only, rather than producing noisy driver errors.
     const bool main10=(sps.generalProfileIdc==AV_PROFILE_HEVC_MAIN_10 &&
                        sw.profile==AV_PROFILE_HEVC_MAIN_10);
-    std::printf("HEIC_GPU_PORTABLE_PROFILE_GUARD sample=%s sps_idc=%d decoded_profile=%d sps_count=%d route=%s\n",
+    const bool main8=(sps.generalProfileIdc==AV_PROFILE_HEVC_MAIN &&
+                      sw.profile==AV_PROFILE_HEVC_MAIN);
+    // First pinned pair: REAL HEIC-derived RExt, not hardware compatible.
+    // Additional 8-bit/10-bit samples: synthetic standalone HEVC only.
+    const bool eligible=main10||main8;
+    std::printf("HEIC_GPU_PORTABLE_PROFILE_GUARD sample=%s sps_idc=%d decoded_profile=%d sps_count=%d route=%s sample_origin=%s\n",
       name,sps.generalProfileIdc,sw.profile,sps.spsCount,
-      main10?"d3d11_candidate":"software_only");
-    if(!main10)continue;
+      eligible?(main10?"d3d11_main10_candidate":"d3d11_main8_candidate"):"software_only",
+      (std::strcmp(name,"04")==0||std::strcmp(name,"fixture-irot3-exif6-noaux")==0)?"heic_extracted":"synthetic_hevc_only");
+    if(!eligible)continue;
+    // The D3D11 256px VideoProcessor pilot accepts only P010/Main10.
+    // Main8/NV12 still uses full readback and byte-exact WIC Fant A/B.
+    hardware.thumbPilot=gpuThumbMode&&main10;
     ThumbReferences wicReference;
-    if(gpuThumbMode){
+    if(hardware.thumbPilot){
      wicReference.fant=HeicThumbFant::Scale(sw.bgra,sw.w,sw.h);
      wicReference.linear=HeicThumbFant::ScaleLinear(sw.bgra,sw.w,sw.h);
      wicReference.cubic=HeicThumbFant::ScaleCubic(sw.bgra,sw.w,sw.h);
@@ -424,7 +434,7 @@ int wmain(int argc,wchar_t** argv){
     Need(hardware.gotD3D11&&hw.hardware,
        "Hardware decode was replaced by software unexpectedly");
     Print(name,"gpu",hw);
-    if(gpuThumbMode)AuditThumbnail(name,hw,wicReference);
+    if(hardware.thumbPilot)AuditThumbnail(name,hw,wicReference);
     if(!Audit(name,sw,hw)){
      std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s stage=color_audit_fail_closed\n",name);
      continue;
@@ -442,7 +452,7 @@ int wmain(int argc,wchar_t** argv){
     std::vector<double> cpuTotal{sw.totalMs},gpuTotal{hw.totalMs};
     std::vector<double> gpuDecode{hw.decoderMs},gpuReadback{hw.readbackMs},gpuColor{hw.colorMs};
     std::vector<double> thumbTotal,smallReadback;
-    if(gpuThumbMode&&hw.thumbProduced){
+    if(hardware.thumbPilot&&hw.thumbProduced){
      thumbTotal.push_back(hw.thumb.totalMs);
      smallReadback.push_back(hw.thumb.smallReadbackMs);
     }
@@ -454,7 +464,7 @@ int wmain(int argc,wchar_t** argv){
      Need(hardware.gotD3D11&&nextGpu.hardware,
          "Repeated Main10 D3D11VA lost hardware device texture");
      Print(name,"gpu-repeat",nextGpu);
-     if(gpuThumbMode)AuditThumbnail(name,nextGpu,wicReference);
+     if(hardware.thumbPilot)AuditThumbnail(name,nextGpu,wicReference);
      Need(Audit(name,nextCpu,nextGpu),
          "Repeated hardware decode failed pixel/color comparison");
      const FantEndToEnd nextFant=CompareFullResolutionFant(name,nextCpu,nextGpu);
@@ -467,7 +477,7 @@ int wmain(int argc,wchar_t** argv){
      gpuDecode.push_back(nextGpu.decoderMs);
      gpuReadback.push_back(nextGpu.readbackMs);
      gpuColor.push_back(nextGpu.colorMs);
-     if(gpuThumbMode&&nextGpu.thumbProduced){
+     if(hardware.thumbPilot&&nextGpu.thumbProduced){
       thumbTotal.push_back(nextGpu.thumb.totalMs);
       smallReadback.push_back(nextGpu.thumb.smallReadbackMs);
      }
@@ -481,7 +491,7 @@ int wmain(int argc,wchar_t** argv){
       name,cFant,gFant,Median3(cpuFantOnly),Median3(gpuFantOnly),
       100.0*(cFant-gFant)/cFant);
     std::puts("HEIC_GPU_FANT_PIXELS_3_OF_3_IDENTICAL_KEEP_ORIGINAL_WINDOWS_FILTER");
-    if(gpuThumbMode){
+    if(hardware.thumbPilot){
      if(thumbTotal.size()==3){
       std::printf("HEIC_GPU_THUMB_REPEATED_BENCH sample=%s trials=3 gpu_thumb_median_ms=%.3f small_bgra_readback_median_ms=%.3f hevc_gpu_decode_median_ms=%.3f gpu_decode_plus_thumb_median_ms=%.3f control_full_readback_median_ms=%.3f research_only=1\n",
        name,Median3(thumbTotal),Median3(smallReadback),Median3(gpuDecode),
@@ -491,15 +501,20 @@ int wmain(int argc,wchar_t** argv){
        name,static_cast<unsigned long long>(thumbTotal.size()));
      }
     }
-    ++proven;
+    if(main10)++provenMain10;
+    if(main8)++provenMain8;
    }catch(const std::exception& err){
     std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s reason=%s\n",
       name,err.what());
    }
   }
-  std::printf("HEIC_GPU_PORTABLE_SUMMARY gpu_eligible_main10=1 proven=%d total_samples=3 software_rext_samples=2 device_reused=1 product_enabled=0\n",proven);
-  if(proven==1)std::puts("HEIC_GPU_PORTABLE_MAIN10_HARDWARE_12MP_DECODE_AND_CPU_READBACK_PROVEN");
-  else std::puts("HEIC_GPU_PORTABLE_GPU_PATH_NOT_PROVEN_KEEP_SOFTWARE_FALLBACK");
+  std::printf("HEIC_GPU_PORTABLE_SUMMARY gpu_eligible_main10=1 gpu_eligible_main8=1 proven_main10=%d proven_main8=%d total_samples=4 real_heic_extracted_rext_samples=2 synthetic_hevc_hardware_candidates=2 device_reused=1 product_enabled=0\n",
+       provenMain10,provenMain8);
+  std::puts("HEIC_GPU_REAL_HEIC_REXT_2_OF_2_SOFTWARE_ONLY_NO_GPU_COVERAGE_PROVEN");
+  if(provenMain10==1)std::puts("HEIC_GPU_PORTABLE_MAIN10_HARDWARE_12MP_DECODE_AND_CPU_READBACK_PROVEN");
+  else std::puts("HEIC_GPU_PORTABLE_MAIN10_NOT_PROVEN_KEEP_SOFTWARE_FALLBACK");
+  if(provenMain8==1)std::puts("HEIC_GPU_PORTABLE_MAIN8_HARDWARE_12MP_FANT_EXACT_PROVEN");
+  else std::puts("HEIC_GPU_PORTABLE_MAIN8_NOT_PROVEN_KEEP_SOFTWARE_FALLBACK");
   std::puts("HEIC_GPU_PORTABLE_READONLY_NO_SYSTEM_CHANGES_NO_MSI");
   return 0;
  }catch(const std::exception& error){
