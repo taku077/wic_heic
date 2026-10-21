@@ -55,6 +55,37 @@ inline Bytes Normalize(const AVFrame* f){
  }
  return output;
 }
+// Zero-copy luma and chroma-only repacking for the GPU NV12 swscale path.
+// This keeps original P010/Main10 and CPU yuv420p paths unchanged and needs
+// only W*H/2 bytes of temporary memory instead of a full 18MiB YUV copy.
+struct PlanarNv12View {
+ Bytes chroma;
+ const uint8_t* data[4]={nullptr,nullptr,nullptr,nullptr};
+ int linesize[4]={0,0,0,0};
+};
+inline void BuildPlanarNv12View(const AVFrame* frame,PlanarNv12View& output){
+ Require(frame&&frame->format==AV_PIX_FMT_NV12 &&
+         frame->width==W&&frame->height==H &&
+         frame->data[0]&&frame->data[1] &&
+         frame->linesize[0]>=W&&frame->linesize[1]>=W,
+         "Main8 NV12 planar view rejected unverified frame geometry");
+ const int cw=W/2,ch=H/2;
+ output.chroma.resize(size_t(W)*H/2);
+ uint8_t* const u=output.chroma.data();
+ uint8_t* const v=u+size_t(cw)*ch;
+ for(int y=0;y<ch;++y){
+  const uint8_t* src=frame->data[1]+size_t(y)*frame->linesize[1];
+  for(int x=0;x<cw;++x){
+   u[size_t(y)*cw+x]=src[2*x];
+   v[size_t(y)*cw+x]=src[2*x+1];
+  }
+ }
+ output.data[0]=frame->data[0];
+ output.data[1]=u;
+ output.data[2]=v;
+ output.linesize[0]=frame->linesize[0];
+ output.linesize[1]=cw;output.linesize[2]=cw;
+}
 struct PlaneSummary {
  uint64_t changed=0,absSum=0;
  unsigned maxDiff=0;
