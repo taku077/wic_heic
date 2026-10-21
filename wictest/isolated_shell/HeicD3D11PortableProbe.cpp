@@ -183,6 +183,11 @@ void Print(const char* name,const char* mode,const Measurement& m){
    name,mode,unsigned(m.hardware),m.w,m.h,m.profile,av_get_pix_fmt_name(m.format),
    m.decoderMs,m.readbackMs,m.colorMs,m.totalMs);
 }
+double Median3(std::vector<double> measurements){
+ Need(measurements.size()==3,"Three repeated measurements required");
+ std::sort(measurements.begin(),measurements.end());
+ return measurements[1];
+}
 bool Audit(const char* name,const Measurement& sw,const Measurement& gpu){
  Need(sw.w==gpu.w&&sw.h==gpu.h&&sw.bgra.size()==gpu.bgra.size(),
       "Hardware frame geometry does not match software");
@@ -299,6 +304,31 @@ int wmain(int argc,wchar_t** argv){
      std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s stage=color_audit_fail_closed\n",name);
      continue;
     }
+    // Cold one-shot timing can misrepresent Intel GPU driver setup.
+    // Retest on the SAME GPU device, but with fresh decoders/frames each time.
+    // This is bounded at three pairs, so it never becomes an open-ended loop.
+    std::vector<double> cpuTotal{sw.totalMs},gpuTotal{hw.totalMs};
+    std::vector<double> gpuDecode{hw.decoderMs},gpuReadback{hw.readbackMs},gpuColor{hw.colorMs};
+    for(int repetition=1;repetition<3;++repetition){
+     const Measurement nextCpu=OneFrame(compressed,software);
+     Print(name,"software-repeat",nextCpu);
+     hardware.gotD3D11=false;
+     const Measurement nextGpu=OneFrame(compressed,hardware);
+     Need(hardware.gotD3D11&&nextGpu.hardware,
+         "Repeated Main10 D3D11VA lost hardware device texture");
+     Print(name,"gpu-repeat",nextGpu);
+     Need(Audit(name,nextCpu,nextGpu),
+         "Repeated hardware decode failed pixel/color comparison");
+     cpuTotal.push_back(nextCpu.totalMs);
+     gpuTotal.push_back(nextGpu.totalMs);
+     gpuDecode.push_back(nextGpu.decoderMs);
+     gpuReadback.push_back(nextGpu.readbackMs);
+     gpuColor.push_back(nextGpu.colorMs);
+    }
+    const double cpuMedian=Median3(cpuTotal),gpuMedian=Median3(gpuTotal);
+    std::printf("HEIC_GPU_PORTABLE_REPEATED_BENCH sample=%s trials=3 cpu_total_median_ms=%.3f gpu_total_median_ms=%.3f gpu_decoder_median_ms=%.3f gpu_readback_median_ms=%.3f gpu_color_median_ms=%.3f total_improvement_percent=%.2f true_hardware_passes=3 exact_reference_audited=3\n",
+       name,cpuMedian,gpuMedian,Median3(gpuDecode),Median3(gpuReadback),
+       Median3(gpuColor),100.0*(cpuMedian-gpuMedian)/cpuMedian);
     ++proven;
    }catch(const std::exception& err){
     std::printf("HEIC_GPU_PORTABLE_NOT_PROVEN sample=%s reason=%s\n",
