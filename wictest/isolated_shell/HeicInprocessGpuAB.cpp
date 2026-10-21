@@ -175,6 +175,34 @@ Sample Decode(const Bytes& compressed,Route& route){
  Sws convert(sws_getContext(w,h,static_cast<AVPixelFormat>(source->format),
    w,h,AV_PIX_FMT_BGRA,SWS_BICUBIC,nullptr,nullptr,nullptr));
  Require(convert!=nullptr,"swscale source pixel format unsupported");
+ // sws_getContext defaults to ITU-601 even when the HEVC VUI is explicitly
+ // BT.709/BT.2020. ffmpeg CLI's scale path follows the AVFrame colorspace.
+ // Honor only known matrix codes; reject an unsupported matrix rather than
+ // making a falsely "matching" 8-bit thumbnail from 10-bit HEIC.
+ const AVColorSpace declared=decoded->colorspace;
+ int matrix=SWS_CS_DEFAULT;
+ switch(declared){
+  case AVCOL_SPC_UNSPECIFIED:
+  case AVCOL_SPC_BT470BG:
+  case AVCOL_SPC_SMPTE170M:matrix=SWS_CS_ITU601;break;
+  case AVCOL_SPC_BT709:matrix=SWS_CS_ITU709;break;
+  case AVCOL_SPC_FCC:matrix=SWS_CS_FCC;break;
+  case AVCOL_SPC_SMPTE240M:matrix=SWS_CS_SMPTE240M;break;
+  case AVCOL_SPC_BT2020_NCL:matrix=SWS_CS_BT2020;break;
+  default:throw std::runtime_error("unapproved HEVC YCbCr matrix: cannot guarantee color fidelity");
+ }
+ const AVColorRange declaredRange=decoded->color_range;
+ Require(declaredRange==AVCOL_RANGE_UNSPECIFIED ||
+         declaredRange==AVCOL_RANGE_MPEG ||
+         declaredRange==AVCOL_RANGE_JPEG,"unknown HEVC color range");
+ const int srcFull=(declaredRange==AVCOL_RANGE_JPEG)?1:0;
+ const int* coefficients=sws_getCoefficients(matrix);
+ Require(coefficients!=nullptr,"missing declared YCbCr conversion coefficients");
+ Require(sws_setColorspaceDetails(convert.get(),coefficients,srcFull,
+   sws_getCoefficients(SWS_CS_DEFAULT),1,0,1<<16,1<<16)>=0,
+   "explicit YCbCr matrix and range conversion refused");
+ std::printf("HEIC_INPROCESS_COLOR_MATRIX declared=%d matrix=%d range=%d src_full=%d\n",
+   int(declared),matrix,int(declaredRange),srcFull);
  uint8_t* dst[4]={sample.bgra.data(),nullptr,nullptr,nullptr};
  int dstStride[4]={pitch,0,0,0};
  Require(sws_scale(convert.get(),source->data,source->linesize,0,h,dst,dstStride)==h,
