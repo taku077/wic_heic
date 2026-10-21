@@ -125,7 +125,39 @@ jobs:
           $response=@(& $exe 0 2>&1)
           $response | ForEach-Object {Write-Host $_}
           if($LASTEXITCODE -ne 0){throw 'Portable D3D11 research probe unexpectedly crashed'}
+          if(($response -match 'MAIN10_HARDWARE_DECODE_AND_CPU_READBACK_PROVEN') -or
+             -not ($response -match 'HEIC_GPU_PORTABLE_NOT_PROVEN')){
+            throw 'Virtual runner cannot establish physical Intel hardware decode'
+          }
           Write-Host 'HEIC_GPU_PORTABLE_GPU_SUCCESS_UNPROVEN_UNTIL_REAL_INTEL_PC'
+      - name: Exercise original user CMD launcher and verify persistent unique read-only log
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=$env:HEIC_GPU_PORTABLE_STAGING
+          $cmd=Join-Path $dir 'Run_GPU_ReadOnly.cmd'
+          if(-not (Test-Path -LiteralPath $cmd)){throw 'Portable launcher absent'}
+          $before=@(Get-ChildItem -LiteralPath $dir -Filter 'GPU_Readonly_Result_*.txt' -File)
+          if($before.Count -ne 0){throw 'Unexpected pre-existing diagnostic user logs in archive'}
+          $env:HEIC_GPU_PROBE_CI='1'
+          try {
+            Push-Location $dir
+            try {
+              & $env:ComSpec /d /c ('"' + $cmd + '"')
+              if($LASTEXITCODE -ne 0){throw 'Full portable CMD launcher failed'}
+            } finally {Pop-Location}
+          } finally {Remove-Item Env:HEIC_GPU_PROBE_CI -ErrorAction SilentlyContinue}
+          $logs=@(Get-ChildItem -LiteralPath $dir -Filter 'GPU_Readonly_Result_*.txt' -File)
+          if($logs.Count -ne 1){throw 'CMD must save exactly one unique log'}
+          $content=[IO.File]::ReadAllText($logs[0].FullName)
+          foreach($require in @('HEIC_GPU_PORTABLE_SOFTWARE_SELFTEST_2_OF_2_PASS',
+              '=== GPU VIDEO HARDWARE DECODER CAPS ===','HEIC_GPU_CAPS_READONLY_NO_MSI_NO_REGISTRY_PASS',
+              '=== GPU INDEX 0 ===','HEIC_GPU_PORTABLE_NOT_PROVEN')){
+            if(-not $content.Contains($require)){throw "Unexpected/incomplete user diagnostic log: $require"}
+          }
+          Write-Host "HEIC_GPU_PORTABLE_REAL_CMD_SMOKETEST_PASSED log=$($logs[0].Name) bytes=$($logs[0].Length)"
+          # User logs must NOT be included in the sealed downloadable artifact.
+          Remove-Item -LiteralPath $logs[0].FullName
       - name: Upload portable noninstaller diagnostic (research use only)
         uses: actions/upload-artifact@v4
         with:
