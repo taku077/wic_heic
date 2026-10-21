@@ -129,6 +129,18 @@ int wmain(){
     if(imir)withMirror++;
     if(clap)withCrop++;
     const bool safeOrientation=(clap==0 && imir==0 && irot<=1);
+    const char* orientation="reject";
+    if(safeOrientation){
+      if(irot==0 || lastCcw==0) orientation="identity";
+      else if(lastCcw==90) orientation="counterclockwise90";
+      else if(lastCcw==180) orientation="rotate180";
+      else if(lastCcw==270) orientation="clockwise90";
+      else throw std::runtime_error("Unrecognized HEIF irot rotation");
+    }
+    // Machine-readable metadata source independent of FFprobe. Only the
+    // affirmative allow bit can authorize the optional GPU fast path.
+    std::printf("HEIC_PRIMARY_ROUTE file=%ls effect=%s allowed=%d\n",
+      name,orientation,int(safeOrientation));
     std::printf("HEIC_PRIMARY_TRANSFORM file=%ls itemId=%u total=%d rotations=%d mirror=%d crops=%d ccw=%d conservative_supported=%d\n",
       name,unsigned(id),fetched,irot,imir,clap,lastCcw,int(safeOrientation));
     heif_context_free(ctx);

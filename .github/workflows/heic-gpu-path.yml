@@ -111,6 +111,12 @@ jobs:
           if(-not $command){throw 'FFmpeg CLI unavailable'}
           "HEIC_BRIDGE_FFMPEG=$($command.Source)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "HEIC_BRIDGE_FFMPEG_SHA256=$((Get-FileHash $command.Source -Algorithm SHA256).Hash)"
+      - name: Cross-check independent libheif and FFprobe transform metadata before GPU routing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/CI_HeifCrosscheckRotation.ps1
+          if(-not $?){throw 'HEIF versus FFprobe orientation validation failed'}
       - name: Build direct libheif HEVC AnnexB source parser (no FFmpeg process to extract)
         shell: pwsh
         run: |
