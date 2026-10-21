@@ -39,3 +39,35 @@
 - 通常プッシュ時の総合ネイティブ再構築は抑え、絞ったMain10プロセス内復号CI + 軽量ガードCIによりフィードバックを得る構成へ変更。
 
 - `e08a93d`／`4e18e10`：iRot変換後の表示寸法（1080x1920）とHEVCデコード面（1920x1080）の混同を修正。D3D11 Main10構成照会は表示寸法ではなく圧縮フレームのcoded寸法で実行する。この修正のGPU実機性能は未測定。
+
+## 2026-10-22：実測で到達した段階と、初回サムネイルの改善可能性
+
+### 今回確定したCI成功
+- [Windows in-process Main10 2件の全BGRA一致 #39625796537](https://github.com/taku077/wic_heic/actions/runs/39625796537)。04.heic（2048×2048、10bit、MPEG limited）とfixture-irot3-exif6-noaux.heic（HEVC coded frame 1920×1080、10bit、JPEG full range）、ともにCLIとプロセス内AVCodecのBGRA全バイトSHA256が一致。フルレンジをlimitedと誤解していたことが従前の2枚目BGRA不一致原因。
+- [raw YUV10とBGRAの独立完全一致 #39625968928](https://github.com/taku077/wic_heic/actions/runs/39625968928) および [#39625979425](https://github.com/taku077/wic_heic/actions/runs/39625979425)。2件ともHEVCデコーダー直後の planar YUV420P10LE と BGRA 各SHA256が一致。
+- [フェーズ別タイミングのビルド＋品質CI #39626009667](https://github.com/taku077/wic_heic/actions/runs/39626009667) が成功。Windowsホスト上の1回の値（複数回中央値ではない、GPU使用なし）：
+  - 04.heic: HEVC codec open 0.412ms／decode 19.241ms／BGRA color 10.248ms／計29.902ms。
+  - 縦長irotサンプル：codec open 0.197ms／decode 10.360ms／BGRA color 5.365ms／計15.923ms。
+  - Annex B本体の読み込みは0.056msと0.100ms、処理単体の計測とは別。
+  - この2枚は小さい／圧縮率が高い固定素材。12MP実写HEIC、Explorerの初回表示、Intel GPUの値に外挿しない。
+
+### 初回表示速度の仮説モデル（**予測実測ではない**）
+現実の1枚約1秒はユーザーの体感値。12MP人工素材の過去別CIで復号400～500ms程度。これらは別計測なので合算はできない。説明用に仮に表示計1000msのうち置換対象450ms／その他550msとした場合：
+- GPU+readback+BGRAの総時間400ms：表示950ms、5%減。
+- 250ms：表示800ms、20%減。
+- 150ms：表示700ms、30%減。
+- 100ms：表示650ms、35%減。
+純粋なHEVC GPUデコードが高速でも、読み戻し・色変換・Fant相当の縮小・Shell起動/キャッシュで利得が減る。ハードウェアデコード成功前に「実機30%改善」と断定しない。対応HEICのみGPU経路を使用、未知の色空間・alpha・ICC・irot/imir/clapは従来経路へfail-closed。
+
+### 研究の段階（段階の完了はテストの成否で認定）
+1. HEICの主画像／メタデータ／ネイティブHEVC Annex Bの可逆抽出／表示行列ガード：**完了（別CIで7/7、8/8）**。
+2. 外部プロセスなしのHEVC Main10 C++ソフトウェア復号と画素基準の独立検証：**2件で完了**（7件全般、ICC/HDR、実写真未カバー）。
+3. 実Intel GPUでD3D11VA Main10の`AV_PIX_FMT_D3D11`フレームを取得、`av_hwframe_transfer_data`でCPUへ読み戻し、画素/色/回転を検査：**コードあり・未実証**。GitHubホストCIにはハードウェアGPUなし。
+4. フル12MPのGPU初期化、復号、P010転送、BGRA色変換、WIC Fant縮小の同一マシン測定／10～30件並列比較：**未実施**。
+5. WIC thumbnail handlerへ私的に導入、原本・Photos・HEIC Manager非干渉、実機初回表示30%以上などの確認、MSIへの移行：**未実施**。
+
+### 将来の性能試験で求める合格条件
+- 一枚の初回表示：ユーザーPCの同一写真・同一表示サイズ・キャッシュ状態・同一CPU/GPU環境でswとGPUの実測中央値。
+- 実ハードウェアデコードの証拠（DXGI adapterとD3D11 texture、readback成功）なしに速度比較しない。
+- 256px thumbnail画像の向き・サイズ・画質・PBGRA・ICC/色、元HEIC SHA256不変、alpha/10bit/HDR/合成変換fallback、並列10～30件のCPU/メモリ上限。
+- GPU初期化の使い回しによる安全性と、単体の高速化が消える並列過剰負荷に注意。
