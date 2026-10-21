@@ -1,0 +1,136 @@
+name: CI research MSVC HEVC AVX2 dispatch vs baseline - no MSI
+on:
+  push:
+    branches: [experiment/hevc-msvc-avx2-cpu-dispatch]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  avx2-ab:
+    runs-on: windows-2022
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compute precise dependency cache key
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $hash=[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore baseline native dependencies
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Install NASM on baseline native build cache miss
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM setup failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Compile baseline libheif and libde265 if not cached
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($name in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$name.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Baseline native dependency failed: $name"}
+          }
+      - name: Save baseline native build cache
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build baseline WIC HEIC DLL and test tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CL='/DWIC_HEIC_PRIVATE_FAST_ADAPTIVE'
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Baseline WIC decoder compile failed'}
+          Remove-Item Env:\CL
+          $root=(Resolve-Path $env:RUNNER_TEMP).Path
+          $base=Join-Path $root 'BaselineWicCodec.dll'
+          Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination $base
+          "BASELINE_CODEC=$base" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Synthetic12MpHeic compile failed'}
+          msbuild wictest/isolated_shell/AVX2PrivateAB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'MSVC AVX2 COM A/B runner compile failed'}
+      - name: Generate synthetic 12MP HEIC for equal-input A/B and record SHA
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          $tool=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          & $tool $env:BASELINE_CODEC $fixture
+          if($LASTEXITCODE -ne 0){throw 'Synthetic HEIC creation failed'}
+          "AVX2_INPUT=$fixture" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AVX2_INPUT_SHA=$((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Patch only disposable libde265 working tree with runtime-safe MSVC AVX2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/Enable_AVX2_Libde265_CI.ps1
+          if(-not $?){throw 'Pinned libde265 experimental dispatch patch failed'}
+          $status=git -C wic_heic/3rdparty/libde265 diff --name-only
+          if(@($status).Count -ne 1 -or $status -ne 'libde265/x86/sse.cc'){
+            throw 'Experimental native-source edit affected unexpected files'
+          }
+      - name: Build optimized libde265 static library with AVX2 kernels
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $build=Join-Path $env:RUNNER_TEMP 'hevc_msvc_avx2_native'
+          $source=(Resolve-Path 'wic_heic/3rdparty/libde265').Path
+          $target=(Resolve-Path 'wic_heic/3rdparty/_out/x64').Path
+          cmake -S $source -B $build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded '-DCMAKE_CXX_FLAGS_RELEASE=/MT /O2 /Ob2 /DNDEBUG' "-DCMAKE_INSTALL_PREFIX=$target" -DBUILD_SHARED_LIBS=OFF -DENABLE_AVX2=ON -DSUPPORTS_AVX2=ON -DENABLE_AVX512=OFF -DENABLE_SDL=OFF
+          if($LASTEXITCODE -ne 0){throw 'Optimized libde265 CMake configure failed'}
+          $config=Get-Content (Join-Path $build 'config.h') -Raw
+          if($config -notmatch '(?m)^#define HAVE_AVX2 1\s*$'){throw 'AVX2 was not compiled in'}
+          cmake --build $build --target install --config Release --parallel 4
+          if($LASTEXITCODE -ne 0){throw 'Optimized libde265 build failed'}
+          Write-Host 'HEVC_MSVC_AVX2_KERNELS_COMPILED_AND_RUNTIME_DISPATCH_GUARDED'
+      - name: Relink private WIC decoder against optimized HEVC library
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CL='/DWIC_HEIC_PRIVATE_FAST_ADAPTIVE'
+          msbuild wic_heic/wic_heic.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Optimized private WIC decoder link failed'}
+          Remove-Item Env:\CL
+          $optimized=Join-Path $env:RUNNER_TEMP 'OptimizedAVX2WicCodec.dll'
+          Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination $optimized
+          "OPTIMIZED_CODEC=$optimized" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if((Get-FileHash -LiteralPath $env:BASELINE_CODEC -Algorithm SHA256).Hash -eq
+             (Get-FileHash -LiteralPath $optimized -Algorithm SHA256).Hash){
+            throw 'AVX2 optimized WIC codec identical to baseline: no native link change detected'
+          }
+          Write-Host 'HEVC_MSVC_AVX2_PRIVATE_DECODER_LINK_DIFFERENT'
+      - name: Benchmark 12MP synthetic HEIC with balanced ABBA order and exact PBGRA parity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $bench=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/AVX2PrivateAB.exe').Path
+          & $bench $env:BASELINE_CODEC $env:OPTIMIZED_CODEC $env:AVX2_INPUT
+          if($LASTEXITCODE -ne 0){throw 'MSVC HEVC AVX2 pixel parity or benchmark failed'}
+          if((Get-FileHash -LiteralPath $env:AVX2_INPUT -Algorithm SHA256).Hash -ne $env:AVX2_INPUT_SHA) {
+            throw 'Synthetic HEIC input modified'
+          }
+          Write-Host 'HEVC_MSVC_AVX2_SYNTHETIC_SOURCE_UNCHANGED'
+      - name: No installer, registration or release artifact
+        shell: pwsh
+        run: |
+          Write-Host 'HEVC_MSVC_AVX2_RESEARCH_ONLY_NO_MSI_NO_GLOBAL_REGISTRATION'
