@@ -10,6 +10,7 @@ param(
  [Parameter(Mandatory=$true)][string]$TrialDllPath,
  [Parameter(Mandatory=$true)][string]$FixturePath,
  [string]$PixelParityExePath='',
+ [string[]]$ExtraFixturePaths=@(),
  [ValidateSet('User','Machine')][string]$RegistrationScope='User'
 )
 $ErrorActionPreference='Stop'
@@ -50,6 +51,24 @@ function Sha256([string]$path) {
 $src=(Resolve-Path -LiteralPath $FixturePath).Path
 $dll=(Resolve-Path -LiteralPath $TrialDllPath).Path
 $hash=Sha256 $src
+# Extra inputs must be known public sample assets from this test repository.
+# No user-provided photo directories or arbitrary paths can be enumerated.
+$samplesRoot=(Resolve-Path -LiteralPath 'wictest/samples').Path
+$allowed=@('03.heic','04.heic','05.heic','06.heic','07.heic','fixture-irot3-exif6.heic')
+if(@($ExtraFixturePaths).Count -gt 6){throw 'Too many extra synthetic fixtures'}
+$sources=New-Object 'System.Collections.Generic.List[string]'
+$sourceHashes=New-Object 'System.Collections.Generic.List[string]'
+$sources.Add($src)
+$sourceHashes.Add($hash)
+foreach($extra in $ExtraFixturePaths) {
+ $resolved=(Resolve-Path -LiteralPath $extra -ErrorAction Stop).Path
+ if(-not ($resolved.StartsWith($samplesRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) -or
+    -not ($allowed -contains [IO.Path]::GetFileName($resolved))) {
+   throw 'Only pinned public repository HEIC fixtures are allowed'
+ }
+ $sources.Add($resolved)
+ $sourceHashes.Add((Sha256 $resolved))
+}
 # Only touch an extension and CLSID whose complete registrations did not exist.
 foreach($subkey in $subkeys) {
  $root=Get-ScopeRoot $subkey
@@ -68,8 +87,11 @@ $files=New-Object 'System.Collections.Generic.List[string]'
 for($index=0;$index -lt 10;$index++) {
  $itemName=('synthetic_{0:D2}{1}' -f $index,$extension)
  $copy=Join-Path $work $itemName
- Copy-Item -LiteralPath $src -Destination $copy
- if((Sha256 $copy) -ne $hash){throw 'Synthetic fixture changed during copy'}
+ $sourceIndex=$index % $sources.Count
+ Copy-Item -LiteralPath $sources[$sourceIndex] -Destination $copy
+ if((Sha256 $copy) -ne $sourceHashes[$sourceIndex]){
+   throw 'Synthetic fixture changed during copy'
+ }
  $files.Add($copy)
 }
 Write-Host ('SHELL_TRIAL_ARTIFICIAL_IMAGES='+$files.Count)
@@ -264,8 +286,10 @@ try {
  Write-Host ('HEIC_SHELL_ISOLATED_THUMBNAIL_P90_MS='+[Math]::Round($sort[8],2))
  Write-Host ('HEIC_SHELL_ISOLATED_SYNTHETIC_COUNT='+$files.Count)
  Write-Host 'HEIC_SHELL_ISOLATED_CACHE_REVISIT_PASSED'
- foreach($copy in $files) {
-   if((Sha256 $copy) -ne $hash){throw 'An artificial HEIC source copy changed during thumbnail generation'}
+ for($index=0;$index -lt $files.Count;$index++) {
+   if((Sha256 $files[$index]) -ne $sourceHashes[$index % $sources.Count]){
+     throw 'An artificial HEIC source copy changed during thumbnail generation'
+   }
  }
  $registeredOk=$true
 } finally {
@@ -292,7 +316,11 @@ try {
    $check=$root.OpenSubKey($subkey)
    if($check){$check.Close();throw ('Registry rollback was not complete: '+$subkey)}
  }
- if((Sha256 $src) -ne $hash){throw 'Original synthetic fixture was modified'}
+ for($index=0;$index -lt $sources.Count;$index++) {
+   if((Sha256 $sources[$index]) -ne $sourceHashes[$index]) {
+     throw 'Original pinned fixture was modified'
+   }
+ }
  Write-Host 'HEIC_SHELL_ISOLATED_REGISTRY_ROLLBACK_PASSED'
 }
 if(-not $registeredOk){throw 'Shell integration test did not finish successfully'}
