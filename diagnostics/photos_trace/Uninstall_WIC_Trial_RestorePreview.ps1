@@ -71,8 +71,12 @@ foreach($entry in $entries){
 $installed=@($before.WicHeicMsi | Where-Object {
  $_.Name -eq 'WicHeic Repair Test' -and $_.Version -eq '1.1.18'
 })
-if($installed.Count -ne 1 -or $before.WicHeicMsi.Count -ne 1){
- throw 'Unexpected WIC MSI installation state: do not uninstall.'
+$previewMsi=@($before.WicHeicMsi | Where-Object {
+ $_.Name -eq 'WicHeic Fast Thumbnail Preview (Experimental)' -and $_.Version -eq '0.4.0'
+})
+if($installed.Count -ne 1 -or $previewMsi.Count -ne 1 -or
+   $before.WicHeicMsi.Count -ne 2){
+ throw 'Unexpected global WIC / independent v0.4 MSI installation state; do not uninstall.'
 }
 Write-Host 'GLOBAL_WIC_TRIAL_UNINSTALL_PREFLIGHT_PASS; v0.4 baseline preserved.'
 if($CheckOnly){return}
@@ -85,8 +89,12 @@ if(!(Test-Path -LiteralPath $afterPath -PathType Leaf)){
 }
 $after=Get-Content -LiteralPath $afterPath -Encoding UTF8 -Raw | ConvertFrom-Json
 $occupied=@($after.Registrations | Where-Object {-not [string]::IsNullOrWhiteSpace($_.InprocServer32)})
-if($occupied.Count -ne 0 -or $after.WicHeicMsi.Count -ne 0){
- throw 'Unexpected remaining WIC registration after rollback. Do not edit HEIC originals.'
+$afterPreviewMsi=@($after.WicHeicMsi | Where-Object {
+ $_.Name -eq 'WicHeic Fast Thumbnail Preview (Experimental)' -and $_.Version -eq '0.4.0'
+})
+if($occupied.Count -ne 0 -or $after.WicHeicMsi.Count -ne 1 -or
+   $afterPreviewMsi.Count -ne 1){
+ throw 'Global WIC registration remains or the independent v0.4 MSI changed after rollback.'
 }
 $previewAfter=PreviewState
 if($previewBefore -cne $previewAfter){
