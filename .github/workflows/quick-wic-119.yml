@@ -1,4 +1,4 @@
-name: Quick WicHeic 1.1.19 x64 MSI build
+name: Quick WicHeic 1.1.19 x64 MSI build attempt
 on:
   push:
     branches: [release/wic-photos-1.1.19-audit]
