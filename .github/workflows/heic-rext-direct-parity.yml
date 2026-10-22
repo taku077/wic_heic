@@ -130,7 +130,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $root=Join-Path $env:GITHUB_WORKSPACE 'wictest\samples'
-          $names=@('04','fixture-irot3-exif6-noaux')
+          $names=@('04','fixture-irot3-exif6-noaux','03','fixture-irot3-exif6')
           $before=@{}
           foreach($name in $names){
             $src=(Resolve-Path -LiteralPath (Join-Path $root ($name+'.heic'))).Path
@@ -141,11 +141,11 @@ jobs:
           $code=$LASTEXITCODE
           $logs|ForEach-Object {Write-Host $_}
           if($code -ne 0){throw 'RExt YUV RGB decode profiling encountered an unsafe error'}
-          if(-not ($logs -match 'HEIC_REXT_COLOR_2FILES_2WORKERS_2FORMATS_4REPEATS_VALID_CI_ONLY_PASS')){
+          if(-not ($logs -match 'HEIC_REXT_COLOR_4FILES_2WORKERS_2FORMATS_4REPEATS_VALID_CI_ONLY_PASS')){
             throw 'All RExt native YUV and RGB decode modes were not observed'
           }
           $rows=@($logs|Where-Object {$_ -match '^HEIC_REXT_COLOR_SPLIT sample='})
-          if($rows.Count -ne 4){throw 'Four stage split measurements are required'}
+          if($rows.Count -ne 8){throw 'Eight alpha/opaque 10bit RExt stage split measurements are required'}
           foreach($line in $rows){
             if($line -notmatch 'repeats=4' -or
                $line -notmatch 'each_route_stable_hash=1' -or
@@ -159,7 +159,7 @@ jobs:
               throw ('Original RExt HEIC file changed: '+$name)
             }
           }
-          Write-Host 'HEIC_REXT_YCBCR420_VS_RGB48_SPLIT_FOUR_STABLE_READONLY_CASES_PASS'
+          Write-Host 'HEIC_REXT_YCBCR420_VS_RGB48_RGBA64_EIGHT_STABLE_READONLY_CASES_PASS'
       - name: Verify raw ten-bit RExt decoder threading effects with exact full-RGB parity
         shell: pwsh
         run: |
