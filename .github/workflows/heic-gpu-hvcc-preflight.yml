@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/heic-gpu-hvcc-preflight.yml'
       - 'wictest/isolated_shell/HeicHvccProfileGuard.h'
+      - 'wictest/isolated_shell/HevcAnnexBSpsProfile.h'
       - 'wictest/isolated_shell/HeifPrimaryTransforms.cpp'
       - 'wictest/isolated_shell/HeifPrimaryTransforms.vcxproj'
   workflow_dispatch:
