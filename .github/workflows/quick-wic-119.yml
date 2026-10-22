@@ -53,15 +53,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'NuGet restore failed'}
           msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
           if($LASTEXITCODE -ne 0){throw 'WIC DLL build failed'}
-          msbuild wictest/wictest.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
-          if($LASTEXITCODE -ne 0){throw 'Native WIC regression executable build failed'}
-          python tools/test_lossless_heic_rotate.py
-          if($LASTEXITCODE -ne 0){throw 'Lossless fixture generation failed'}
-          Push-Location wictest
-          try {
-            & '(Build)/x64/Release/wictest.exe'
-            if($LASTEXITCODE -ne 0){throw 'WIC copy/lossless/ICC regression failed'}
-          } finally {Pop-Location}
+          # Native WIC/ICC/exact-copy verification runs in the companion coexistence workflow after MSI registration.
           $preview='Installer/FastPreview.wxs'
           $parked='Installer/FastPreview.wxs.DISABLED_FOR_GLOBAL_ONLY'
           if(!(Test-Path $preview) -or (Test-Path $parked)){throw 'Installer sources invalid'}
