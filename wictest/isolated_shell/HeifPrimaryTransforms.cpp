@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <libheif/heif.h>
+#include "HeicHvccProfileGuard.h"
 #include <libheif/heif_context.h>
 #include <libheif/heif_properties.h>
 #include <libheif/heif_items.h>
@@ -42,6 +43,8 @@ std::string Ascii(const std::wstring& s){
 int wmain(){
  try{
   Require(Env(L"GITHUB_ACTIONS")==L"true","CI only");
+  Require(HeicHvcc::Selftest(),"HEIC hvcC/SPS profile gate positive/negative selftest failed");
+  std::puts("HEIC_GPU_HVCC_SPS_PROFILE_GUARD_SELFTEST_PASS");
   std::wstring root=Env(L"GITHUB_WORKSPACE");
   Require(!root.empty(),"CI root unavailable");
   const wchar_t* names[]={
@@ -109,12 +112,12 @@ int wmain(){
           std::vector<uint8_t> rawProfile(bytes,0);
           const heif_error readProfile=heif_item_get_property_raw_data(
             ctx,id,configIds[size_t(entry)],rawProfile.data());
-          if(readProfile.code==heif_error_Ok &&
-             rawProfile[0]==1 && (rawProfile[1]&0xC0u)==0 &&
-             (rawProfile[21]&3u)!=2u) {
-             // hvcC general_profile_idc: low five bits of byte 1.
-             hvccProfileIdc=int(rawProfile[1]&31u);
+          if(readProfile.code==heif_error_Ok){
+            const HeicHvcc::Result checked=HeicHvcc::Inspect(rawProfile);
+            if(checked.valid){
+             hvccProfileIdc=checked.profile;
              hvccProfileStrictValid=true;
+            }
           }
         }
       }
