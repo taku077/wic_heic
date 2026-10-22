@@ -14,6 +14,7 @@ using PrivateEntry=HRESULT(STDAPICALLTYPE*)(REFCLSID,REFIID,LPVOID*);
 using ResetFn=void(__stdcall*)();
 using SnapshotFn=void(__stdcall*)(unsigned long long*,unsigned long long*,
                                   unsigned long long*,unsigned long long*);
+using LookupFlagFn=unsigned(__stdcall*)();
 struct Stages{
  double hevcRgbMs=0,rawWicCopyMs=0;
  unsigned long long hevcCalls=0,rawCopyCalls=0;
@@ -121,14 +122,16 @@ inline void Run(const std::wstring& providerDll,
  const std::wstring workspace=Env(L"GITHUB_WORKSPACE");
  Require(!runner.empty()&&!workspace.empty(),"CI paths missing");
  const auto staging=runner+L"\\heic_rext_direct_ab";
+ const std::wstring scalarDll=staging+L"\\WicHeicPrivateCodecScalar.dll";
  Require(IsExactCiDirectory(staging,staging),"missing isolated staging folder");
  Require(sourceDir==workspace+L"\\wictest\\samples",
          "RExt source directory must be fixed public corpus");
  Require(providerDll==staging+L"\\WicHeicFastPreview.dll" &&
          privateDll==staging+L"\\WicHeicPrivateCodec.dll",
          "only isolated private DLL names permitted");
- Require(IsExactCiDll(providerDll)&&IsExactCiDll(privateDll),
-         "isolated provider or codec missing/reparse point");
+ Require(IsExactCiDll(providerDll)&&IsExactCiDll(privateDll)&&
+         IsExactCiDll(scalarDll),
+         "isolated provider or scalar/LUT codec missing/reparse point");
  CheckHr(CoInitializeEx(nullptr,COINIT_MULTITHREADED),"RExt COM init");
  HMODULE provider=LoadLibraryExW(providerDll.c_str(),nullptr,
      LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
@@ -136,6 +139,9 @@ inline void Run(const std::wstring& providerDll,
  HMODULE codec=LoadLibraryExW(privateDll.c_str(),nullptr,
      LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
  Require(codec!=nullptr,"unregistered decoder load failed");
+ HMODULE scalar=LoadLibraryExW(scalarDll.c_str(),nullptr,
+     LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+ Require(scalar!=nullptr,"unregistered scalar reference codec load failed");
  const auto entry=reinterpret_cast<FactoryFn>(
      GetProcAddress(provider,"DllGetClassObject"));
  const auto decoderEntry=reinterpret_cast<PrivateEntry>(
@@ -147,6 +153,19 @@ inline void Run(const std::wstring& providerDll,
    GetProcAddress(codec,"WicHeicRextTimingSnapshot"));
  Require(reset&&snapshot,
          "Research-only RExt timing exports absent: refuse uninstrumented test");
+ const auto scalarEntry=reinterpret_cast<PrivateEntry>(
+   GetProcAddress(scalar,"DllGetClassObject"));
+ const auto scalarReset=reinterpret_cast<ResetFn>(
+   GetProcAddress(scalar,"WicHeicRextTimingReset"));
+ const auto scalarSnapshot=reinterpret_cast<SnapshotFn>(
+   GetProcAddress(scalar,"WicHeicRextTimingSnapshot"));
+ const auto scalarLookup=reinterpret_cast<LookupFlagFn>(
+   GetProcAddress(scalar,"WicHeicRextLookupEnabled"));
+ const auto candidateLookup=reinterpret_cast<LookupFlagFn>(
+   GetProcAddress(codec,"WicHeicRextLookupEnabled"));
+ Require(scalarEntry&&scalarReset&&scalarSnapshot&&scalarLookup&&candidateLookup &&
+         scalarLookup()==0 && candidateLookup()==1,
+         "A/B must compare actual scalar baseline and compiled LUT optimization");
  ComPtr<IWICImagingFactory> wic;
  CheckHr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
     IID_PPV_ARGS(wic.GetAddressOf())),"WIC imaging factory");
@@ -163,6 +182,7 @@ inline void Run(const std::wstring& providerDll,
   std::vector<double> directTime,referenceTime;
   std::vector<double> directHevc,directRawCopy,directOther;
   std::vector<double> refHevc,refRawCopy,refWicOnly,refDownstream,refSetup;
+  std::vector<double> baselineCopy,optimizedCopy,baselineTotal,optimizedTotal;
   UINT lastWidth=0,lastHeight=0;
   // ABBA-like alternation. Two separate implementations, both using the
   // same UNREGISTERED WIC decoder and the exact original Fant->PBGRA.
@@ -225,6 +245,32 @@ inline void Run(const std::wstring& providerDll,
    directTime.push_back(direct.elapsedMs);
    referenceTime.push_back(ref.elapsedMs);
   }
+  // A second balanced ABBA checks whether the 10/12-bit exact LUT
+  // actually beats scalar normalization. Two different private DLLs,
+  // both NOT registered in Windows; output must be identical bytewise.
+  for(int pass=0;pass<4;++pass){
+   Reference base,opt;
+   Stages baseStages,optStages;
+   const bool scalarFirst=(pass==0||pass==3);
+   if(scalarFirst){
+    scalarReset();base=FromUnregisteredWic(scalarEntry,file,wic.Get());
+    baseStages=Snapshot(scalarSnapshot);
+    reset();opt=FromUnregisteredWic(decoderEntry,file,wic.Get());
+    optStages=Snapshot(snapshot);
+   }else{
+    reset();opt=FromUnregisteredWic(decoderEntry,file,wic.Get());
+    optStages=Snapshot(snapshot);
+    scalarReset();base=FromUnregisteredWic(scalarEntry,file,wic.Get());
+    baseStages=Snapshot(scalarSnapshot);
+   }
+   Require(base.width==opt.width && base.height==opt.height &&
+           base.pixels==opt.pixels,
+           "LUT WIC output differs from reference scalar WIC Fant pixels");
+   baselineCopy.push_back(baseStages.rawWicCopyMs);
+   optimizedCopy.push_back(optStages.rawWicCopyMs);
+   baselineTotal.push_back(base.elapsedMs);
+   optimizedTotal.push_back(opt.elapsedMs);
+  }
   const double providerMs=Median(directTime);
   const double referenceMs=Median(referenceTime);
   std::string sample;
@@ -239,14 +285,21 @@ inline void Run(const std::wstring& providerDll,
     sample.c_str(),Median(directHevc),Median(directRawCopy),Median(directOther),
     Median(refHevc),Median(refRawCopy),Median(refWicOnly),
     Median(refDownstream),Median(refSetup));
+  const double scalarCopyMs=Median(baselineCopy),lookupCopyMs=Median(optimizedCopy);
+  std::printf("HEIC_REXT_LUT_AB sample=%s trials=4 scalar_native_copy_ms=%.3f lookup_native_copy_ms=%.3f saved_copy_pct=%.3f scalar_total_ms=%.3f lut_total_ms=%.3f pixel_bytes_identical_all_4=1 distinct_scalar_and_lut_binaries=1 production_enabled=0\n",
+     sample.c_str(),scalarCopyMs,lookupCopyMs,
+     scalarCopyMs>0?100.0*(1.0-lookupCopyMs/scalarCopyMs):0.0,
+     Median(baselineTotal),Median(optimizedTotal));
   ++approved;
  }
  Require(approved==7,"seven RExt examples not covered");
  wic.Reset();
+ FreeLibrary(scalar);
  FreeLibrary(codec);
  FreeLibrary(provider);
  CoUninitialize();
  std::puts("HEIC_REXT_DIRECT_PROVIDER_7_OF_7_WIC_FANT_PBGRA_EXACT_PASS");
+ std::puts("HEIC_REXT_LUT_VS_SCALAR_7_OF_7_4PASS_WIC_BYTE_EXACT_PASS");
  std::puts("HEIC_REXT_DIRECT_RESEARCH_ONLY_NO_REGISTRY_NO_INSTALL_NO_MSI");
 }
 } // namespace RextDirectCorpus
