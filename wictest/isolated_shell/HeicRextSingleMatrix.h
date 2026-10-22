@@ -1,6 +1,6 @@
 // CI only. Distinguish already-existing v0.4 single-image HEVC workers
 // from new image-per-worker batch concurrency. In ONE original WIC Fant
-// pipeline, cross product real single-image 1/2/4 libheif codec workers with
+// pipeline, cross product real single-image 1/2/3/4 libheif codec workers with
 // scalar vs exact 10/12bit normalization, all originals read-only.
 #pragma once
 #include <array>
@@ -10,11 +10,15 @@ using Clock=std::chrono::steady_clock;
 using Entry=RextDirectCorpus::PrivateEntry;
 using SetWorkers=unsigned(__stdcall*)(unsigned);
 using LookupFlag=RextDirectCorpus::LookupFlagFn;
+using TimingReset=RextDirectCorpus::ResetFn;
+using TimingSnapshot=RextDirectCorpus::SnapshotFn;
 struct Codec {
  HMODULE dll=nullptr;
  Entry entry=nullptr;
  SetWorkers set=nullptr;
  LookupFlag lut=nullptr;
+ TimingReset reset=nullptr;
+ TimingSnapshot snapshot=nullptr;
 };
 struct Point {
  double elapsed=0,cpu=0;
@@ -57,7 +61,11 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
        GetProcAddress(c.dll,"WicHeicRextResearchSetWorkers"));
   c.lut=reinterpret_cast<LookupFlag>(
        GetProcAddress(c.dll,"WicHeicRextLookupEnabled"));
-  Require(c.entry&&c.set&&c.lut&&c.lut()==flag,
+  c.reset=reinterpret_cast<TimingReset>(
+       GetProcAddress(c.dll,"WicHeicRextTimingReset"));
+  c.snapshot=reinterpret_cast<TimingSnapshot>(
+       GetProcAddress(c.dll,"WicHeicRextTimingSnapshot"));
+  Require(c.entry&&c.set&&c.lut&&c.reset&&c.snapshot&&c.lut()==flag,
           "Scalar and LUT must be two truly different researched codec DLLs");
  };
  init(codecs[0],scalarPath,0);
@@ -85,17 +93,31 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
    // Each source is instantiated afresh; WIC frame decode is never reused.
    // Alternate baseline and LUT in ABBA+BAAB order to reduce drift.
    const unsigned scheme[]={0,1,1,0,1,0,0,1};
-   std::vector<double> wall[2],cpu[2];
+   std::vector<double> wall[2],cpu[2],decode[2],nativeCopy[2],remaining[2],privateAfter[2];
    for(unsigned turn:scheme){
     Codec& codec=codecs[turn];
     Require(codec.set(threads)==1,
             "Refused CI-only 10bit HEVC worker selection");
+    codec.reset(); // a fresh private WIC frame and one image at a time
     const double cpuStart=CpuMillis();
     const auto start=Clock::now();
     auto image=RextDirectCorpus::FromUnregisteredWic(codec.entry,path,wic.Get());
     const double wallMs=std::chrono::duration<double,std::milli>(
                        Clock::now()-start).count();
     const double cpuMs=CpuMillis()-cpuStart;
+    unsigned long long decodeUs=0,copyUs=0,decodeCalls=0,copyCalls=0;
+    codec.snapshot(&decodeUs,&copyUs,&decodeCalls,&copyCalls);
+    Require(decodeCalls==1 && copyCalls>=1 && copyCalls<=65536,
+            "One private WIC thumbnail must decode HEVC exactly once");
+    const double decodeMs=double(decodeUs)/1000.;
+    const double nativeCopyMs=double(copyUs)/1000.;
+    // Outer wall and nested QPC counters may differ by clock overhead.
+    Require(decodeMs+nativeCopyMs<=wallMs+3.0,
+            "Invalid nested HEVC RGB / WIC copy stage counters");
+    const double restMs=std::max(0.0,wallMs-decodeMs-nativeCopyMs);
+    // Snapshot AFTER the request; never call this a process peak.
+    const double privateMiB=RextBatch::PrivateCommitMiB();
+    Require(privateMiB>0.0,"Invalid private committed memory snapshot");
     Require(image.width>0 && image.height>0 &&
             image.pixels.size()==size_t(image.width)*image.height*4,
             "Bad WIC PBGRA buffer under threading");
@@ -108,6 +130,10 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
     }
     wall[turn].push_back(wallMs);
     cpu[turn].push_back(cpuMs);
+    decode[turn].push_back(decodeMs);
+    nativeCopy[turn].push_back(nativeCopyMs);
+    remaining[turn].push_back(restMs);
+    privateAfter[turn].push_back(privateMiB);
    }
    for(unsigned turn:{0u,1u}){
     const double duration=Median4(wall[turn]);
@@ -115,6 +141,10 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
     std::printf("HEIC_REXT_SINGLE_MATRIX sample=%s libheif_threads=%u color=%s repeats=4 wic_fant_pbgra_ms=%.3f process_cpu_ms=%.3f bytes=%llu exact_original_256px_pbgra=1 same_file_single_image=1 no_shell_queue=1 research_only=1\n",
       file.label,threads,turn?"lut":"scalar",duration,cpuWork,
       static_cast<unsigned long long>(reference.size()));
+    std::printf("HEIC_REXT_SINGLE_STAGES sample=%s libheif_threads=%u color=%s repeats=4 hevc_rgb_ms=%.3f native_wic_copy_ms=%.3f remaining_setup_fant_pbgra_ms=%.3f process_private_committed_after_mib=%.3f all_three_stages_separate_medians=1 decoded_once_each=1 byte_exact_pbgra=1 research_only=1 explorer_not_measured=1\n",
+      file.label,threads,turn?"lut":"scalar",
+      Median4(decode[turn]),Median4(nativeCopy[turn]),
+      Median4(remaining[turn]),Median4(privateAfter[turn]));
    }
   }
  }
