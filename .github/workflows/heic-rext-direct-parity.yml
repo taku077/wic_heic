@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/heic-rext-direct-parity.yml'
       - 'wictest/isolated_shell/HeicRextDirectCorpus.h'
+      - 'wictest/isolated_shell/HeicRextBatchAB.h'
       - 'wictest/isolated_shell/HeicBitmapFrameDecodeProfileCI.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.vcxproj'
@@ -273,3 +274,41 @@ jobs:
           }
           Write-Host 'HEIC_REXT_DIRECT_PRIVATE_SHELL_WIC_7X4_ABBA_SHA256_UNCHANGED_PASS'
           Write-Host 'HEIC_REXT_NO_MSI_NO_REGISTRY_NO_HEIC_MANAGER_INTERFERENCE'
+
+      - name: Compare seven pinned RExt Shell thumbnails using 1 2 and 4 concurrent COM workers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $samples=Join-Path $env:GITHUB_WORKSPACE 'wictest\samples'
+          $names=@('03','04','05','06','07','fixture-irot3-exif6-noaux','fixture-irot3-exif6')
+          $before=@{}
+          foreach($stem in $names){
+            $src=(Resolve-Path -LiteralPath (Join-Path $samples ($stem+'.heic'))).Path
+            $before[$stem]=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+          }
+          $provider=Join-Path $env:RUNNER_TEMP 'heic_rext_direct_ab\WicHeicFastPreview.dll'
+          $exe=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellEmbeddedDirect.exe').Path
+          $out=@(& $exe --rext-batch-corpus $provider $samples 2>&1)
+          $code=$LASTEXITCODE
+          $out|ForEach-Object {Write-Host $_}
+          if($code -ne 0){throw "Concurrent RExt Shell thumbnail pixel or COM failure: $code"}
+          if(-not ($out -match 'HEIC_REXT_BATCH_1_2_4_WORKERS_ALL_7_HEIC_WIC_PIXEL_EXACT_PASS')){
+            throw 'Concurrent batch output did not preserve exact WIC PBGRA pixels'
+          }
+          $times=@($out|Where-Object {$_ -match '^HEIC_REXT_BATCH_MEDIAN workers='})
+          if($times.Count -ne 3){throw 'Missing bounded 1/2/4 worker throughput medians'}
+          foreach($num in @(1,2,4)){
+            $row=@($times|Where-Object {$_ -match ('^HEIC_REXT_BATCH_MEDIAN workers='+$num+' ')})
+            if($row.Count -ne 1 -or
+               $row[0] -notmatch 'repeats=4 source_count=7' -or
+               $row[0] -notmatch 'byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0'){
+              throw "Missing verified warm-cache throughput for worker=$num"
+            }
+          }
+          foreach($stem in $names){
+            $src=(Resolve-Path -LiteralPath (Join-Path $samples ($stem+'.heic'))).Path
+            if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne $before[$stem]){
+              throw "Source HEIC changed in concurrent shell test: $stem"
+            }
+          }
+          Write-Host 'HEIC_REXT_SEVEN_IMAGE_WARM_CACHE_CONCURRENCY_AB_SAFE_NO_SYSTEM_CHANGE_PASS'
