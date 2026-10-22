@@ -66,13 +66,16 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
+          $env:CL='/DWIC_HEIC_REXT_TIMING_CI'
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Instrumented private decoder build failed'}
+          Remove-Item Env:\CL
           foreach($project in @(
-            'wic_heic/wic_heic.vcxproj',
             'wictest/isolated_shell/HeicShellFastPreview.vcxproj',
             'wictest/isolated_shell/ShellEmbeddedDirect.vcxproj'
           )){
             msbuild $project /p:Configuration=Release /p:Platform=x64
-            if($LASTEXITCODE -ne 0){throw "RExt unregistered WIC build failed: $project"}
+            if($LASTEXITCODE -ne 0){throw "RExt unregistered provider/probe build failed: $project"}
           }
           Write-Host 'HEIC_REXT_UNREGISTERED_PROVIDER_PRIVATE_CODEC_COMPILED'
       - name: Build isolated libheif RExt 10bit 1-2-4 thread ABBA evaluator
@@ -145,6 +148,22 @@ jobs:
           if(-not ($out -match 'HEIC_REXT_DIRECT_PROVIDER_7_OF_7_WIC_FANT_PBGRA_EXACT_PASS')){
             throw 'Private codec and Shell provider color/geometry parity not proven'
           }
+          $stages=@($out|Where-Object {$_ -match '^HEIC_REXT_STAGES sample='})
+          if($stages.Count -ne 7){throw 'Missing HEVC/RGB, 16bpp copy, and WIC Fant stage medians'}
+          foreach($stage in $stages){
+            foreach($key in @('provider_hevc_rgb_ms','provider_native_copy_ms',
+                  'reference_hevc_rgb_ms','reference_native_copy_ms',
+                  'reference_wic_copy_pixels_ms','reference_wic_downstream_ms',
+                  'reference_setup_ms')){
+              if($stage -notmatch ("(?:^| )"+$key+"=([0-9]+(?:\\.[0-9]+)?)")){
+                throw ('Missing numeric RExt stage '+$key+': '+$stage)
+              }
+            }
+            if($stage -notmatch 'passes=4' -or $stage -notmatch 'data_scope=private_WIC_only source_unchanged=1'){
+              throw ('Invalid HEIC profiling scope: '+$stage)
+            }
+          }
+          Write-Host 'HEIC_REXT_COPYPIXELS_7_OF_7_STAGES_ISOLATED_AND_PIXEL_EXACT_PASS'
           foreach($stem in $names){
             $src=(Resolve-Path -LiteralPath "wictest/samples/$stem.heic").Path
             if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne $hashes[$stem]){
