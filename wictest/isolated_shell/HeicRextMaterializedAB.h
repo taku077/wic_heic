@@ -43,14 +43,20 @@ Photo Render(Entry entry,const std::wstring& path,IWICImagingFactory* wic){
  WICPixelFormatGUID native{};
  RextDirectCorpus::CheckHr(scaler->GetPixelFormat(&native),
     "materialized CI source format");
- UINT channels=0;
- if(IsEqualGUID(native,GUID_WICPixelFormat48bppRGB))channels=6;
- else if(IsEqualGUID(native,GUID_WICPixelFormat64bppRGBA))channels=8;
- else if(IsEqualGUID(native,GUID_WICPixelFormat24bppRGB))channels=3;
- else if(IsEqualGUID(native,GUID_WICPixelFormat32bppRGBA))channels=4;
- if(channels==0) std::printf("HEIC_REXT_MATERIALIZED_NATIVE_UNSUPPORTED guid_data1=%08X guid_data2=%04X guid_data3=%04X mode=research_only\\n",
-      unsigned(native.Data1),unsigned(native.Data2),unsigned(native.Data3));
- Require(channels!=0,"materialized CI unsupported native scaler format");
+ // Scaler's native GUID is not guaranteed to equal the frame's GUID.
+ // Ask WIC for the actual pixel-format descriptor, never guess a layout.
+ ComPtr<IWICComponentInfo> component;
+ RextDirectCorpus::CheckHr(wic->CreateComponentInfo(native,component.GetAddressOf()),
+    "materialized CI native component info");
+ ComPtr<IWICPixelFormatInfo> pixelInfo;
+ RextDirectCorpus::CheckHr(component.As(&pixelInfo),
+    "materialized CI native WIC pixel format info");
+ UINT bitsPerPixel=0;
+ RextDirectCorpus::CheckHr(pixelInfo->GetBitsPerPixel(&bitsPerPixel),
+    "materialized CI scaler native bits per pixel");
+ Require(bitsPerPixel>=24 && bitsPerPixel<=128 && bitsPerPixel%8==0,
+    "materialized CI unsupported native scaler pixel packing");
+ const UINT channels=bitsPerPixel/8;
  const uint64_t stride=uint64_t(tw)*channels;
  const uint64_t length=stride*th;
  Require(stride<=UINT_MAX&&length>0&&length<=4u*1024u*1024u,
