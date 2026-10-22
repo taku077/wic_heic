@@ -1,0 +1,119 @@
+name: Windows Photos global WIC and v0.4 private preview coexistence
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths: ['.github/workflows/photos-wic-preview-coexistence.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Prepare pinned native dependencies on isolated runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM bootstrap failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+          }
+          Push-Location 'wic_heic/3rdparty'
+          try {
+            foreach($part in @('libde265','kvazaar','libheif')){
+              cmd /c "call build-$part.bat x64"
+              if($LASTEXITCODE -ne 0){throw "Native dependency failed: $part"}
+            }
+          } finally {Pop-Location}
+      - name: Build separate global WIC and isolated 0.4.0 private-preview installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wic_heic.sln /t:Restore /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Solution restore failed'}
+          msbuild wic_heic.sln /p:Configuration=Release /p:Platform=x64 /nologo /m
+          if($LASTEXITCODE -ne 0){throw 'System WIC build failed'}
+          $msi=@(Get-ChildItem -LiteralPath '(Build)' -Filter 'WicHeic.msi' -File -Recurse |
+            Where-Object {$_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]'})
+          if($msi.Count -ne 1){throw "Expected one global WIC x64 MSI"}
+          $dir=Join-Path $env:RUNNER_TEMP 'wic_coexist'
+          New-Item -ItemType Directory -Path $dir | Out-Null
+          Copy-Item -LiteralPath $msi[0].FullName -Destination (Join-Path $dir 'global.msi')
+          Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination (Join-Path $dir 'global.dll')
+          $env:CL='/DWIC_HEIC_PRIVATE_FAST_ADAPTIVE'
+          try {
+            msbuild wic_heic/wic_heic.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /nologo
+            if($LASTEXITCODE -ne 0){throw 'Private 2/4 worker build failed'}
+          } finally {Remove-Item Env:\CL -ErrorAction SilentlyContinue}
+          Copy-Item 'wic_heic/(Build)/x64/Release/wic_heic.dll' 'Installer/WicHeicPrivateCodec.dll'
+          msbuild wictest/isolated_shell/HeicShellFastPreview.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Preview Shell handler build failed'}
+          msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Preview MSI build failed'}
+      - name: Verify global decoder-encoder and private preview stay installed independently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $temp=Join-Path $env:RUNNER_TEMP 'wic_coexist'
+          $global=(Resolve-Path -LiteralPath (Join-Path $temp 'global.msi')).Path
+          $preview=(Resolve-Path -LiteralPath '(Build)/x64/Release/en-US/WicHeicFastPreview.msi').Path
+          $expectedWic=(Get-FileHash -LiteralPath (Join-Path $temp 'global.dll') -Algorithm SHA256).Hash
+          $expectedPrivate=(Get-FileHash -LiteralPath 'Installer/WicHeicPrivateCodec.dll' -Algorithm SHA256).Hash
+          if($expectedWic -eq $expectedPrivate){throw 'Public/private WIC builds unexpectedly identical'}
+          $decoder='{6215667C-74CA-4076-A769-3F834C3F25F5}'
+          $encoder='{0E8AB687-73A5-455B-8C19-B93CA9AC0EEB}'
+          $handler='{D973196C-165C-4FCE-8838-17C37037D384}'
+          $shell='{E357FCCD-A995-4576-B01F-234630154E96}'
+          function ReadVal([string]$p,[string]$root){
+            if($root -eq 'HKLM'){$hive=[Microsoft.Win32.Registry]::LocalMachine}
+            else{$hive=[Microsoft.Win32.Registry]::CurrentUser}
+            $k=$hive.OpenSubKey($p)
+            if(!$k){return ''}
+            try{return [string]$k.GetValue('')}finally{$k.Close()}
+          }
+          function TestGlobal([bool]$exists){
+            foreach($cls in @($decoder,$encoder)){
+              $p=ReadVal "SOFTWARE\Classes\CLSID\$cls\InprocServer32" 'HKLM'
+              if(!$exists){if($p){throw 'Unexpected system WIC registration'};continue}
+              if(!$p -or !(Test-Path -LiteralPath $p -PathType Leaf)){throw "Missing global WIC CLSID: $cls"}
+              if((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash -ne $expectedWic){throw 'System WIC DLL changed'}
+            }
+          }
+          function TestPreview([bool]$exists){
+            $p=ReadVal "SOFTWARE\Classes\CLSID\$handler\InprocServer32" 'HKLM'
+            $u=ReadVal "Software\Classes\.heic\ShellEx\$shell" 'HKCU'
+            if(!$exists){if($p -or $u){throw 'Thumbnail handler unexpectedly registered'};return}
+            if(!$p -or !(Test-Path -LiteralPath $p -PathType Leaf) -or $u -cne $handler){throw 'Preview handler/association missing'}
+            $private=Join-Path (Split-Path -Parent $p) 'WicHeicPrivateCodec.dll'
+            if(!(Test-Path -LiteralPath $private -PathType Leaf)){throw 'Private preview codec missing'}
+            if((Get-FileHash -LiteralPath $private -Algorithm SHA256).Hash -ne $expectedPrivate){throw 'Private preview codec changed'}
+          }
+          function Msi([string]$operation,[string]$path){
+            $argsText="/$operation "+'"'+$path+'"'+' /qn /norestart'
+            $process=Start-Process -FilePath 'msiexec.exe' -ArgumentList $argsText -Wait -PassThru
+            if($process.ExitCode -ne 0){throw "MSI $operation failed code=$($process.ExitCode)"}
+          }
+          TestGlobal $false;TestPreview $false
+          $g=$false;$p=$false
+          try {
+            Msi 'i' $global;$g=$true
+            TestGlobal $true;TestPreview $false
+            Msi 'i' $preview;$p=$true
+            TestGlobal $true;TestPreview $true
+            Msi 'x' $preview;$p=$false
+            TestGlobal $true;TestPreview $false
+            Msi 'x' $global;$g=$false
+            TestGlobal $false;TestPreview $false
+            Write-Host 'HEIC_PUBLIC_WIC_AND_V040_PRIVATE_SHELL_COEXIST_AND_ROLLBACK_PASS'
+          } finally {
+            if($p){Msi 'x' $preview}
+            if($g){Msi 'x' $global}
+          }
+          Write-Host 'NO_USER_PC_TESTED=1 WINDOWS_PHOTOS_EDITOR_UNVERIFIED=1 NO_RELEASE_MSI=1'
