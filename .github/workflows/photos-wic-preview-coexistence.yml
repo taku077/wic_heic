@@ -168,6 +168,13 @@ jobs:
             TestGlobal $false;TestPreview $true
             Msi 'i' $global;$g=$true
             TestGlobal $true;TestPreview $true
+            # Populate pinned synthetic lossless 90/180/270° fixtures in the
+            # disposable runner exactly as the original native WIC CI does.
+            # No real user media, and the repo fixture is hash-audited below.
+            python -m py_compile 'tools/lossless_heic_rotate_experimental.py'
+            if($LASTEXITCODE -ne 0){throw 'Lossless generator Python syntax invalid'}
+            python 'tools/test_lossless_heic_rotate.py'
+            if($LASTEXITCODE -ne 0){throw 'Lossless synthetic fixture preparation failed'}
             # Real WIC decoding, encoding, orientation and EXIF readback must
             # work WITH v0.4 registered; COM registration alone is insufficient.
             $test=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
