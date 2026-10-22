@@ -1,0 +1,111 @@
+name: HEIC hvcC/SPS fail-closed codec preflight
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - '.github/workflows/heic-gpu-hvcc-preflight.yml'
+      - 'wictest/isolated_shell/HeicHvccProfileGuard.h'
+      - 'wictest/isolated_shell/HeifPrimaryTransforms.cpp'
+      - 'wictest/isolated_shell/HeifPrimaryTransforms.vcxproj'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  hvcc-and-sps:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Hash exact native submodule versions for cache
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $digest=[Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$digest" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore isolated pinned libheif static-library cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Supply NASM only on cache miss
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM dependency missing'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Rebuild pinned libheif dependencies only if cache is missing
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($name in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$name.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Native codec dependency failed: $name"}
+          }
+      - name: Save built fixed dependency cache if first build
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build isolated libheif primary HEVC profile preflight only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifPrimaryTransforms.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'HEIC hvcC/SPS primary property analyzer compile failed'}
+          Write-Host 'HEIC_HVCC_SPS_METADATA_ANALYZER_COMPILED_WITHOUT_CODEC_REGISTRATION'
+      - name: Ensure all seven real-container HEIC samples fail closed as RExt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@('03','04','05','06','07','fixture-irot3-exif6','fixture-irot3-exif6-noaux')
+          $before=@{}
+          foreach($stem in $files){
+            $source=(Resolve-Path -LiteralPath "wictest/samples/$stem.heic").Path
+            $before[$stem]=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+          }
+          $exe=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifPrimaryTransforms.exe').Path
+          $log=@(& $exe 2>&1)
+          $log | ForEach-Object {Write-Host $_}
+          if($LASTEXITCODE -ne 0){throw 'HEIC metadata-only analyzer failed'}
+          if($log -notmatch 'HEIC_GPU_HVCC_SPS_PROFILE_GUARD_SELFTEST_PASS'){
+            throw 'Main/Main10/RExt/malformed hvcC and SPS unit tests did not pass'
+          }
+          $profiles=@($log | Where-Object {$_ -match '^HEIC_GPU_HVCC_PROFILE file='})
+          $prechecks=@($log | Where-Object {$_ -match '^HEIC_GPU_PRECHECK file='})
+          if($profiles.Count -ne 7 -or $prechecks.Count -ne 7){
+            throw 'Incomplete HEIC primary hvcC or preflight records'
+          }
+          foreach($stem in $files){
+            $profile=@($profiles | Where-Object {$_ -like "HEIC_GPU_HVCC_PROFILE file=$stem.heic *"})
+            $safety=@($prechecks | Where-Object {$_ -like "HEIC_GPU_PRECHECK file=$stem.heic *"})
+            if($profile.Count -ne 1 -or $safety.Count -ne 1){throw "Wrong primary item mapping: $stem"}
+            if($profile[0] -notmatch 'hvcC_general_profile_idc=4 valid=1 allowed=0'){
+              throw "RExt HEIC must be positively identified and refused: $stem"
+            }
+            if($safety[0] -notmatch 'candidate=0 rejection_mask=(\d+)$' -or
+               (([int]$Matches[1] -band 32) -eq 0)){
+              throw "Unsafe HEIC GPU preflight allowed RExt or lost profile-reject bit: $stem"
+            }
+            $source=(Resolve-Path -LiteralPath "wictest/samples/$stem.heic").Path
+            if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $before[$stem]){
+              throw "HEIC original modified: $stem"
+            }
+          }
+          if($log -notmatch 'HEIC_GPU_PRECHECK_SUMMARY total=7 provisional_main8=0 provisional_main10=0 fallback=7'){
+            throw 'Pinned RExt-only HEIC corpus incorrectly registered GPU candidate'
+          }
+          Write-Host 'HEIC_REAL_HEIF_7_OF_7_REXT_HVCC_SPS_CONFIRMED_GPU_FALLBACK_PASS'
+          Write-Host 'HEIC_WIC_PHOTOS_HEIC_MANAGER_NOT_MODIFIED_NO_MSI'
