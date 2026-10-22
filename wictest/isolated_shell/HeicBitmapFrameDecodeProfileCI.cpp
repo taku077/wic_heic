@@ -25,8 +25,8 @@ constexpr std::array<uint16_t,4096> MakeRext12BitLut() noexcept {
   result[i]=uint16_t((i*65535u+2047u)/4095u);
  return result;
 }
-constexpr auto kRext10BitLut=MakeRext10BitLut();
-constexpr auto kRext12BitLut=MakeRext12BitLut();
+const auto kRext10BitLut=MakeRext10BitLut();
+const auto kRext12BitLut=MakeRext12BitLut();
 }
 #endif
 // Strictly research-only performance counters: these exports do not exist in
