@@ -89,3 +89,25 @@ Windows CIでビルド・実行後、必要になった**1回の診断用**に�
 - 初回Explorerサムネイル30%以上短縮もWindows10実描画では未確認。プレビューv0.4.0 COMとDLLの保持は確認できたが、導入中のExplorer初回時間・CPUピークは未計測。
 - JPEG同等の完全な色・全Exif・MakerNote/ICC・XMP/HDR/補助画像保護、PhotosがWIC native lossless経路を実際に選択することは未確認。**既存実写HEICをWindowsフォトで上書き保存させてはいけない**。
 - 将来の実機試験は公開人工HEIC作業コピー、編集・回転有効性、寸法・ハッシュ、復旧スクリプト実行、v0.4サムネイル維持の一度限りのゲートで実施する。
+
+## 2026-10-22 21時頃：Windows 10フォト実機で復旧候補の失敗が確定（P0 継続）
+
+実機ユーザー報告：CI #39773274867で合格したグローバルWICの試験導入後も「HEVC拡張機能が必要」警告が**消えず**、標準フォトの編集・回転が**使用不可**。人工HEIC回転成功の報告はなく、旧版の「正常表示」を実現できなかった。
+
+### ソース監査で確定した構成問題
+- `Installer/Package.wxs` の `<Package Id="prsyahmi.WicHeic" ... Version="1.1.18">` は、以前の旧WIC Repair Test 1.1.18のコミット `f5b66fe89fa203c89967b46399ed6af61a6161e8` と今回の研究ブランチで**内容もblob SHAも同一**。新版試験でコードが変わっても識別子・製品バージョンを変えなかった。製品ライフサイクルを正しく管理しておらず、今後のin-place/repair/upgradeの正確性を主張できない。これは**独立した設計不備**であり、今回のPhotos失敗の原因と即断しない。
+- `Installer/WicHeic.wxs` のSelfRegCost DLL成分GUID、`wic_heic/dllmain.cpp` のWIC decoder/encoder CLSID登録は旧版と**ソース同一**。変更は主に `HeicBitmapFrameDecode.cpp` の**サムネイル用の条件付きプライベート最適化**で、通常のグローバルWICビルドに同じ最適化が適用されたと考えない。
+- 10月22日20時の実機診断では**グローバルWICの全登録が空**であり、導入用スクリプトは既存グローバルWICの上書きを拒否する仕様だった。この実機試行を「旧1.1.18の上書きによる不具合」と説明する証拠はない。v0.4.0は別製品識別子・別Shell Providerで保持。
+- 10月20日23時の旧WIC登録は確認できる一方、**当時HEVC拡張AppX/MFデコーダーが利用できたかは記録されていない**。Photos版番号が同じでもMicrosoft HEIF/HEVC依存の状態変化は否定できない。
+- Microsoft公式（https://support.microsoft.com/ja-jp/windows/apps/photos/photos-app-video-editor-error-can-t-view-this-file-type）はWindows10フォトで写真だけでもHEIFとHEVC両拡張が必要な場合を明記。10月22日現ユーザー診断でHEVC AppXなし・MF HEVC decoder=0。これは現状の警告と整合するが、旧正常状態から変化した理由は未特定。
+- v0.4.0のHKCU ShellExへのサムネイルProvider登録がフォトに影響したかどうかは標準フォト実機UIでのA/Bが存在せず、原因と断定しない。
+
+### 開発判断・安全措置
+1. **今のMSI復旧候補は実機不合格。製品ではなく不採用**。ユーザーへの繰り返し実機検証・アンインストール・新規MSI導入依頼はしない。
+2. Windows CIのWIC direct decode/encodeや回転・ICCの成功をフォトの成功に読み替えない。今後、UI編集/回転の互換性が証明されるまで `photos-wic-preview-coexistence.yml` からの実験MSI artifactの自動配布を**停止**。
+3. 同じPackage識別子＋同じVersionで異なるバイナリをリリースしない。将来の修正版は専用のインストール・完全削除・復元方式と、重複MSI/サムネイルProvider/権限チェックで確実な衝突防止を要求。
+4. 既にユーザーに導入された試験WICはPhotosの問題を解決していない。実機の状況を変えるときは**試験WICだけを切り戻す既存のチェック付きスクリプト**を一度だけ使う方針。v0.4.0と原本は変更しない。
+5. Windows10標準フォト自身のHEVC要件を正規かつ安全に満たす方法がなければ、WIC改修で解決したと偽装しない。旧WICが編集できたとのユーザー実績は実在する報告として扱い、断定的に否定しない。
+
+### 高速化の技術的範囲
+v0.4.0 Explorer初回表示の目標30%以上改善研究は**別トラックで継続**。安全性と同時に実測のある高速化だけ製品候補とする。

@@ -268,10 +268,18 @@ jobs:
           }
           if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 7){throw 'Candidate kit incomplete'}
           Write-Host 'HEIC_PHOTOS_SINGLE_P0_TRIAL_PACKAGE_PREPARED_WINDOWS10_UNVERIFIED'
-      - name: Store ONE optional experimental Windows 10 recovery kit for consented field test
-        uses: actions/upload-artifact@v4
-        with:
-          name: WIC-Photos-P0-TemporaryGlobalWIC-Win10-UNVERIFIED
-          path: ${{ runner.temp }}/WIC_Photos_P0_Win10_Trial_Candidate/
-          if-no-files-found: error
-          retention-days: 14
+      # The Windows 10 Photos 2026.11090.22001.0 field report explicitly
+      # showed HEVC extension warning + edit/rotate disabled AFTER the trial
+      # global WIC MSI was installed. Native WIC CI success is not Photos UI
+      # compatibility. Do not issue or reissue an unverified MSI artifact.
+      - name: P0 release gate - WITHHELD until actual Windows 10 Photos editor works
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $built=Join-Path $env:RUNNER_TEMP 'WIC_Photos_P0_Win10_Trial_Candidate'
+          if(-not (Test-Path -LiteralPath (Join-Path $built 'README_JA.md'))){
+            throw 'Synthetic kit staging verification failed'
+          }
+          Write-Host 'PHOTOS_2026_EDITOR_HEVC_WARNING_PERSISTS_AFTER_GLOBAL_WIC_INSTALL'
+          Write-Host 'WINDOWS10_PHOTOS_ACTUAL_ROTATE_EDIT_PASS=0'
+          Write-Host 'EXPERIMENTAL_MSI_ARTIFACT_RELEASE_BLOCKED_NO_FURTHER_FIELD_TESTS'
