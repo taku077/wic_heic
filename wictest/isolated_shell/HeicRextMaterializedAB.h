@@ -53,7 +53,7 @@ Photo Render(Entry entry,const std::wstring& path,IWICImagingFactory* wic){
  const uint64_t length=stride*th;
  Require(stride<=UINT_MAX&&length>0&&length<=4u*1024u*1024u,
     "materialized CI 256px raster memory bound");
- std::vector<BYTE> staging(size_t(length));
+ std::vector<BYTE> staging(static_cast<size_t>(length), BYTE{0});
  RextDirectCorpus::CheckHr(scaler->CopyPixels(nullptr,UINT(stride),
     UINT(length),staging.data()),"materialized CI Fant pixels");
  ComPtr<IWICBitmap> cached;
