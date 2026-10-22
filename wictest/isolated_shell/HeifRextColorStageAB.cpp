@@ -1,5 +1,5 @@
 // CI-only HEVC RExt software-decoder versus libheif RGB conversion cost.
-// 10bit, fixed 2 real HEIC items, pinned CI workspace. NOT equivalent color
+// 10bit, fixed 4 real HEIC items with and without alpha, pinned CI. NOT equivalent color
 // output: this tests whether color conversion is large enough to optimize.
 // Never registers WIC, edits source images, or creates a GPU success claim.
 #define WIN32_LEAN_AND_MEAN
@@ -53,7 +53,7 @@ uint64_t HashPlane(uint64_t state,const uint8_t* buf,int pitch,int w,int h,
  return state;
 }
 Output Decode(const heif::ImageHandle& primary,bool rgb,int workers,
-              int expectedW,int expectedH){
+              int expectedW,int expectedH,bool hasAlpha){
  heif_decoding_options* opt=heif_decoding_options_alloc();
  Need(opt!=nullptr,"Allocation of decoding options failed");
  opt->num_codec_threads=workers;
@@ -61,7 +61,8 @@ Output Decode(const heif::ImageHandle& primary,bool rgb,int workers,
  const uint64_t c0=CpuTicks();const auto t0=Clock::now();
  const heif_error status=heif_decode_image(primary.get_raw_image_handle(),
     &raw,rgb?heif_colorspace_RGB:heif_colorspace_YCbCr,
-    rgb?heif_chroma_interleaved_RRGGBB_LE:heif_chroma_420,opt);
+    rgb?(hasAlpha?heif_chroma_interleaved_RRGGBBAA_LE:
+                   heif_chroma_interleaved_RRGGBB_LE):heif_chroma_420,opt);
  const auto t1=Clock::now();const uint64_t c1=CpuTicks();
  heif_decoding_options_free(opt);
  Need(status.code==heif_error_Ok && raw,
@@ -76,7 +77,7 @@ Output Decode(const heif::ImageHandle& primary,bool rgb,int workers,
   const int w=heif_image_get_width(raw,heif_channel_interleaved);
   const int h=heif_image_get_height(raw,heif_channel_interleaved);
   Need(w==expectedW&&h==expectedH,"HEIF RGB16 geometry mismatch");
-  hash=HashPlane(hash,p,pitch,w,h,6,bytes);
+  hash=HashPlane(hash,p,pitch,w,h,hasAlpha?8u:6u,bytes);
   result.width=w;result.height=h;
  }else{
   for(heif_channel c:{heif_channel_Y,heif_channel_Cb,heif_channel_Cr}){
@@ -90,6 +91,15 @@ Output Decode(const heif::ImageHandle& primary,bool rgb,int workers,
         "HEIF YUV420 plane geometry or chroma layout mismatch");
    hash=HashPlane(hash,p,pitch,w,h,2,bytes);
   }
+  if(hasAlpha){
+   int pitch=0;
+   const uint8_t* alpha=heif_image_get_plane_readonly(raw,heif_channel_Alpha,&pitch);
+   const int w=heif_image_get_width(raw,heif_channel_Alpha);
+   const int h=heif_image_get_height(raw,heif_channel_Alpha);
+   Need(w==expectedW&&h==expectedH,
+        "RExt YCbCr alpha plane geometry incomplete");
+   hash=HashPlane(hash,alpha,pitch,w,h,2,bytes);
+  }
   result.width=expectedW;result.height=expectedH;
  }
  result.hash=hash;result.bytes=bytes;
@@ -102,7 +112,7 @@ double Median(std::vector<double> values){
  return (values[1]+values[2])/2;
 }
 void RunOne(const std::wstring& path,const char* name,
-            int expectedW,int expectedH){
+            int expectedW,int expectedH,bool hasAlpha){
  std::string utf8;
  for(wchar_t c:path){Need(c>0&&c<128,"CI path not ASCII");utf8.push_back(char(c));}
  heif::Context context;context.read_from_file(utf8);
@@ -111,7 +121,7 @@ void RunOne(const std::wstring& path,const char* name,
       primary.get_height()==expectedH &&
       primary.get_luma_bits_per_pixel()==10 &&
       primary.get_chroma_bits_per_pixel()==10 &&
-      !primary.has_alpha_channel(),
+      primary.has_alpha_channel()==hasAlpha,
       "RExt 10bit opaque image preconditions changed");
  for(int workers:{2,4}){
   // Symmetric A-B-B-A timing order to reduce warmup/thermal/order bias:
@@ -121,7 +131,7 @@ void RunOne(const std::wstring& path,const char* name,
   uint64_t refHash[2]={},refBytes[2]={};
   for(unsigned i=0;i<8;++i){
    const bool rgb=order[i];const unsigned route=rgb?1u:0u;
-   const Output out=Decode(primary,rgb,workers,expectedW,expectedH);
+   const Output out=Decode(primary,rgb,workers,expectedW,expectedH,hasAlpha);
    if(times[route].empty()){refHash[route]=out.hash;refBytes[route]=out.bytes;}
    Need(out.hash==refHash[route] && out.bytes==refBytes[route],
         "Decoded image bytes changed between identical RExt iterations");
@@ -134,8 +144,8 @@ void RunOne(const std::wstring& path,const char* name,
   const double rgbMs=Median(times[1]),yuvMs=Median(times[0]);
   // Delta is an empirical conversion-mode difference, NOT a strictly isolated
   // time for RGB alone; libheif performs potentially different extra work.
-  std::printf("HEIC_REXT_COLOR_SPLIT sample=%s threads=%d repeats=4 rgb16_ms=%.3f yuv420p10_ms=%.3f mode_delta_ms=%.3f mode_delta_pct_of_rgb=%.3f rgb_cpu_ms=%.3f yuv_cpu_ms=%.3f rgb_bytes=%llu yuv_bytes=%llu each_route_stable_hash=1 equivalent_image_color_not_claimed=1 production_enabled=0\n",
-     name,workers,rgbMs,yuvMs,rgbMs-yuvMs,
+  std::printf("HEIC_REXT_COLOR_SPLIT sample=%s threads=%d alpha=%d repeats=4 rgb16_ms=%.3f yuv420p10_ms=%.3f mode_delta_ms=%.3f mode_delta_pct_of_rgb=%.3f rgb_cpu_ms=%.3f yuv_cpu_ms=%.3f rgb_bytes=%llu yuv_bytes=%llu each_route_stable_hash=1 equivalent_image_color_not_claimed=1 production_enabled=0\n",
+     name,workers,int(hasAlpha),rgbMs,yuvMs,rgbMs-yuvMs,
      rgbMs>0?100.0*(rgbMs-yuvMs)/rgbMs:0.0,Median(cpu[1]),Median(cpu[0]),
      static_cast<unsigned long long>(refBytes[1]),
      static_cast<unsigned long long>(refBytes[0]));
@@ -149,10 +159,13 @@ int wmain(int argc,wchar_t** argv) {
   Need(Env(L"GITHUB_ACTIONS")==L"true" && !workspace.empty() &&
        argv[1]==workspace+L"\\wictest\\samples",
        "Only pinned public HEIC corpus allowed in CI");
-  RunOne(workspace+L"\\wictest\\samples\\04.heic","04",2048,2048);
+  RunOne(workspace+L"\\wictest\\samples\\04.heic","04",2048,2048,false);
   RunOne(workspace+L"\\wictest\\samples\\fixture-irot3-exif6-noaux.heic",
-         "fixture-irot3-exif6-noaux",1080,1920);
-  std::puts("HEIC_REXT_COLOR_2FILES_2WORKERS_2FORMATS_4REPEATS_VALID_CI_ONLY_PASS");
+         "fixture-irot3-exif6-noaux",1080,1920,false);
+  RunOne(workspace+L"\\wictest\\samples\\03.heic","03",1920,1080,true);
+  RunOne(workspace+L"\\wictest\\samples\\fixture-irot3-exif6.heic",
+         "fixture-irot3-exif6",1080,1920,true);
+  std::puts("HEIC_REXT_COLOR_4FILES_2WORKERS_2FORMATS_4REPEATS_VALID_CI_ONLY_PASS");
   return 0;
  }catch(const std::exception& e){
   std::printf("HEIC_REXT_COLOR_SPLIT_FATAL reason=%s\n",e.what());return 1;
