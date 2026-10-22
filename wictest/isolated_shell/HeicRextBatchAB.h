@@ -83,6 +83,10 @@ void Run(const std::wstring& providerDll,const std::wstring& samplesPath){
   Require(!baseline.pixels.empty(),"Missing deterministic RExt reference pixels");
   items[i].pixels=baseline.pixels;
   items[i].w=baseline.width;items[i].h=baseline.height;
+  std::printf("HEIC_REXT_BATCH_PIXEL_REF index=%llu width=%u height=%u bytes=%llu hash=%016llX\n",
+    static_cast<unsigned long long>(i),baseline.width,baseline.height,
+    static_cast<unsigned long long>(baseline.pixels.size()),
+    static_cast<unsigned long long>(baseline.pixelHash));
  }
  std::printf("HEIC_REXT_BATCH_REFERENCES sample_count=7 strict_full_PBGRA_baselines=7 no_reencoding=1\n");
  // Interleave 1/2/4 worker trials to mitigate warm cache and temporal
