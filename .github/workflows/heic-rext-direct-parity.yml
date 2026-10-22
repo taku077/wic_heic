@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/heic-rext-direct-parity.yml'
       - 'wictest/isolated_shell/HeicRextDirectCorpus.h'
+      - 'wictest/isolated_shell/HeifRextThreadsAB.cpp'
+      - 'wictest/isolated_shell/HeifRextThreadsAB.vcxproj'
       - 'wictest/isolated_shell/ShellEmbeddedDirect.cpp'
       - 'wictest/isolated_shell/HeicTrialThumbnail.cpp'
       - 'wictest/isolated_shell/HeicShellFastPreview.vcxproj'
@@ -73,6 +75,45 @@ jobs:
             if($LASTEXITCODE -ne 0){throw "RExt unregistered WIC build failed: $project"}
           }
           Write-Host 'HEIC_REXT_UNREGISTERED_PROVIDER_PRIVATE_CODEC_COMPILED'
+      - name: Build isolated libheif RExt 10bit 1-2-4 thread ABBA evaluator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifRextThreadsAB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'RExt thread-count research test failed compilation'}
+      - name: Verify raw ten-bit RExt decoder threading effects with exact full-RGB parity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $sources=Join-Path $env:GITHUB_WORKSPACE 'wictest\samples'
+          $fixed=@('04','fixture-irot3-exif6-noaux')
+          $before=@{}
+          foreach($stem in $fixed){
+            $input=(Resolve-Path -LiteralPath (Join-Path $sources ($stem+'.heic'))).Path
+            $before[$stem]=(Get-FileHash -LiteralPath $input -Algorithm SHA256).Hash
+          }
+          $program=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/HeifRextThreadsAB.exe').Path
+          $measure=@(& $program $sources 2>&1)
+          $ret=$LASTEXITCODE
+          $measure|ForEach-Object {Write-Host $_}
+          if($ret -ne 0){throw 'RExt 10bit decoded pixels vary or benchmark failed'}
+          if(-not ($measure -match 'HEIC_REXT_THREADS_TWO_OPAQUE_HEIC_12PASS_EACH_PIXEL_PARITY_PASS')){
+            throw 'Full-RGB parity against 1/2/4 thread counts not verified'
+          }
+          $rows=@($measure|Where-Object {$_ -match '^HEIC_REXT_THREADS_MEDIAN sample='})
+          if($rows.Count -ne 2){throw 'Missing RExt worker comparison for two pinned inputs'}
+          foreach($line in $rows){
+            if($line -notmatch 'passes=12' -or $line -notmatch 'exact_rgb_all=1 production_enabled=0'){
+              throw "Unsafe RExt 10bit pixel or thread report: $line"
+            }
+          }
+          foreach($stem in $fixed){
+            $input=(Resolve-Path -LiteralPath (Join-Path $sources ($stem+'.heic'))).Path
+            if((Get-FileHash -LiteralPath $input -Algorithm SHA256).Hash -ne $before[$stem]){
+              throw "Original RExt HEIC changed: $stem"
+            }
+          }
+          Write-Host 'HEIC_REXT_THREADS_1_2_4_CI_READONLY_PIXEL_PARITY_PASS'
       - name: Verify seven original file hashes and 4x ABBA 256px provider pixel parity
         shell: pwsh
         run: |
