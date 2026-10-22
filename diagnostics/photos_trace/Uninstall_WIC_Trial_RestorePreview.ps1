@@ -54,7 +54,7 @@ function PreviewState {
 }
 $previewBefore=PreviewState
 $beforePath=(& $preflight | Select-Object -Last 1)
-if($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $beforePath)){
+if(!(Test-Path -LiteralPath $beforePath -PathType Leaf)){
  throw 'Read-only WIC inventory failed.'
 }
 $before=Get-Content -LiteralPath $beforePath -Encoding UTF8 -Raw | ConvertFrom-Json
@@ -80,7 +80,7 @@ $log=Join-Path $dir ('WIC_Trial_Uninstall_'+(Get-Date -Format 'yyyyMMdd_HHmmss')
 $proc=Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/x "{0}" /passive /norestart /l*v "{1}"' -f $msi,$log) -Wait -PassThru
 if($proc.ExitCode -ne 0){throw "MSI rollback failed: exit $($proc.ExitCode). Inspect log: $log"}
 $afterPath=(& $preflight | Select-Object -Last 1)
-if($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $afterPath)){
+if(!(Test-Path -LiteralPath $afterPath -PathType Leaf)){
  throw 'Rollback postflight WIC inventory unavailable.'
 }
 $after=Get-Content -LiteralPath $afterPath -Encoding UTF8 -Raw | ConvertFrom-Json
