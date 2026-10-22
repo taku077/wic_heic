@@ -17,7 +17,7 @@
 | 研究10/12bit LUT | 厳密な16bit値正規化の整数式と全画素一致。04.heicの総256px WIC Fant約9.5～10.2%改善 | 未登録・CI研究コピーだけ |
 | 研究1/2/4 **画像間**並列 | 7枚暖機済み一括Provider生成でLUT+2並列が約42～43%短縮。単一先頭画像は約4.5% | 製品未導入、既存Explorer並列化と重複のおそれ。CPU時間増 |
 | 研究HEVCワーカー1/2/3/4 × LUT | 単一10bit RExt実HEICで04: **29.498/29.520%**、回転約28%、alpha約21%まで | 未登録WIC CIだけ。4スレッドのCPU仕事量増。Explorer未達 |
-| 追加研究 commit 1513cc9a | 各単一画像のHEVC+RGB、WIC生画素コピー、下流Fant等の残り、CPU時間、終了時private commitを相互比較する計測。全画素一致ガード維持 | **この計測機能自体のWindows CI確認待ち**。終了時メモリをピーク値と呼ばない |
+| 追加研究 commit 1513cc9a | 各単一画像のHEVC+RGB、WIC生画素コピー、下流Fant等の残り、CPU時間、終了時private commitを相互比較する計測。全画素一致ガード維持 | **Windows CI #39759963056成功**。実10bit RExt単一画像で工程別カウンタ検証済み。終了時メモリをピーク値と呼ばない |
 | HEIC Manager | 独立プロジェクト、Viewerや独自Explorerサムネイル | この研究ブランチから変更しない |
 | Windows標準Photosの編集 | 過去にHEIC回転保存・幾何学的歪みの症状あり、診断専用ブランチとWIC呼出し調査あり | 改善未確定、**既存画像の回転を試験しない** |
 
@@ -43,3 +43,9 @@
 - Photos UI/HEVC: https://support.microsoft.com/ja-jp/windows/apps/photos/photos-app-video-editor-error-can-t-view-this-file-type
 - WIC HEIF codec: https://learn.microsoft.com/ja-jp/windows/win32/wic/heif-codec
 - Windows 10 Photos診断: diagnostics/photos_trace/WINDOWS10_PHOTOS_SAFETY_GATE.md
+
+## 工程別計測の確定CI（2026-10-22）
+- [#39759963056](https://github.com/taku077/wic_heic/actions/runs/39759963056) **成功**：04のscalar1→LUT4は124.970→87.896ms（**29.666%**）、回転27.864%、alpha 21.835%。全画素完全一致。3件とも30%未達。
+- 04はHEVC+RGB 83.565→58.141ms、WICコピー22.591→10.325ms、残り18.733→19.374ms。アルファ03では下流48.390→48.228msとほぼ不変で、まずalpha/Fantの後段が次のボトルネック候補。
+- CPU時間比は04 1.118倍、回転1.400倍、alpha 1.294倍。増えたCPUコストを隠して高速化達成と呼ばない。
+- ProcessMemoryCountersEx.PrivateUsageは**終了時点**、ピークメモリは未計測。真のExplorer初回描画も未確認。
