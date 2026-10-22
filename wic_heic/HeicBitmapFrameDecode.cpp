@@ -9,38 +9,6 @@
 #include <new>
 #endif
 #include "PhotosWicTrace.h"
-// Strictly research-only performance counters: these exports do not exist in
-// production DLLs; no registry, logging file, image contents or paths.
-// Separate HEIC CPU decode+RGB, WIC native 16bpp sample normalization,
-// and WIC Fant/PBGRA downstream by subtraction in the isolated probe.
-#ifdef WIC_HEIC_REXT_TIMING_CI
-namespace {
-std::atomic<unsigned long long> g_rextDecodeUs{0}, g_rextCopyUs{0};
-std::atomic<unsigned long long> g_rextDecodeCalls{0}, g_rextCopyCalls{0};
-unsigned long long RextMicros(LARGE_INTEGER a,LARGE_INTEGER b) noexcept {
- LARGE_INTEGER rate{};
- if(!QueryPerformanceFrequency(&rate) || rate.QuadPart<=0 ||
-    b.QuadPart<a.QuadPart)return 0;
- return static_cast<unsigned long long>(
-   (double(b.QuadPart-a.QuadPart)*1000000.0)/double(rate.QuadPart));
-}
-}
-extern "C" __declspec(dllexport) void __stdcall WicHeicRextTimingReset() noexcept {
- g_rextDecodeUs.store(0);
- g_rextCopyUs.store(0);
- g_rextDecodeCalls.store(0);
- g_rextCopyCalls.store(0);
-}
-extern "C" __declspec(dllexport) void __stdcall WicHeicRextTimingSnapshot(
- unsigned long long* decodeUs,unsigned long long* copyUs,
- unsigned long long* decodeCalls,unsigned long long* copyCalls) noexcept {
- if(decodeUs)*decodeUs=g_rextDecodeUs.load();
- if(copyUs)*copyUs=g_rextCopyUs.load();
- if(decodeCalls)*decodeCalls=g_rextDecodeCalls.load();
- if(copyCalls)*copyCalls=g_rextCopyCalls.load();
-}
-#endif
-
 #ifdef WIC_HEIC_PRIVATE_FAST_ADAPTIVE
 #include <stdexcept>
 #include <new>
@@ -218,11 +186,6 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 	WicHeicDiagnostic::Emit("DecoderCopyPixels",prc?UINT(prc->Width):UINT(m_Handle.get_width()),prc?UINT(prc->Height):UINT(m_Handle.get_height()),0,0,prc?"region":"full");
 	DbgLog("%s: (prc=%p, cbStride=%u, cbBufferSize=%u, pbBuffer=%p)", __FUNCTION__, prc, cbStride, cbBufferSize, pbBuffer);
 
-#ifdef WIC_HEIC_REXT_TIMING_CI
-	const bool rextNeedsFirstDecode = !m_Decoded;
-	LARGE_INTEGER rextDecodeStart{},rextDecodeFinish{};
-	if(rextNeedsFirstDecode)QueryPerformanceCounter(&rextDecodeStart);
-#endif
 	try
 	{
 		DecodeImage();
@@ -233,13 +196,6 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 		return WINCODEC_ERR_BADIMAGE;
 	}
 
-#ifdef WIC_HEIC_REXT_TIMING_CI
-	if(rextNeedsFirstDecode){
-		QueryPerformanceCounter(&rextDecodeFinish);
-		g_rextDecodeUs.fetch_add(RextMicros(rextDecodeStart,rextDecodeFinish));
-		g_rextDecodeCalls.fetch_add(1);
-	}
-#endif
 	if (!pbBuffer) {
 		DbgLog("%s: pbBuffer is null", __FUNCTION__);
 		return E_POINTER;
@@ -272,10 +228,6 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 	const uint8_t* plane = m_PlaneInterleaved +
 		(size_t(m_Stride) * size_t(rc.Y)) + size_t(inputOffset);
 	uint8_t* out = pbBuffer;
-#ifdef WIC_HEIC_REXT_TIMING_CI
-	LARGE_INTEGER rextCopyStart{},rextCopyFinish{};
-	QueryPerformanceCounter(&rextCopyStart);
-#endif
 	const uint32_t sourceMax = (1u << m_SourceBits) - 1u;
 	for (int row = 0; row < rc.Height; ++row) {
 		if (m_SourceBits <= 8) {
@@ -295,11 +247,6 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 		out += cbStride;
 		plane += m_Stride;
 	}
-#ifdef WIC_HEIC_REXT_TIMING_CI
-	QueryPerformanceCounter(&rextCopyFinish);
-	g_rextCopyUs.fetch_add(RextMicros(rextCopyStart,rextCopyFinish));
-	g_rextCopyCalls.fetch_add(1);
-#endif
 
 	return S_OK;
 }
