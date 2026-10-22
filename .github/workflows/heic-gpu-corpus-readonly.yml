@@ -1,0 +1,53 @@
+name: HEIC seven-file profile and fallback research
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - '.github/workflows/heic-gpu-corpus-readonly.yml'
+      - 'diagnostics/thumbnail_warmup/CI_HeicGpuProfileCorpus.ps1'
+      - 'wictest/samples/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  corpus:
+    runs-on: windows-2022
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Assert PowerShell parser and fixed-source safety guards
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $script='diagnostics/thumbnail_warmup/CI_HeicGpuProfileCorpus.ps1'
+          $tokens=$null;$errors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath $script).Path,[ref]$tokens,[ref]$errors)
+          if($errors.Count){throw "HEIC corpus PowerShell syntax error: $($errors.Count)"}
+          $body=[IO.File]::ReadAllText((Resolve-Path $script).Path)
+          foreach($fragment in @('GITHUB_ACTIONS', 'Get-FileHash -LiteralPath $source',
+              'wictest\samples','Refuse overwrite','product_enabled=0')){
+            if(-not $body.Contains($fragment)){throw "Missing safety guard: $fragment"}
+          }
+          Write-Host 'HEIC_GPU_CORPUS_STATIC_SAFETY_AND_SYNTAX_PASS'
+      - name: Resolve FFmpeg and FFprobe read-only tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or
+             -not (Get-Command ffprobe -ErrorAction SilentlyContinue)){
+            choco install ffmpeg -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'FFmpeg CLI not available'}
+            $env:PATH="C:\ProgramData\chocolatey\bin;$env:PATH"
+            "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          & ffprobe -version | Select-Object -First 1
+      - name: Read seven HEIC profiles and guard source SHA256 immutability
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/thumbnail_warmup/CI_HeicGpuProfileCorpus.ps1
+          if(-not $?){throw 'HEIC corpus profile census failed'}
+          Write-Host 'HEIC_GPU_REAL_HEIC_CORPUS_READONLY_PASSED_NO_HARDWARE_CLAIM'
