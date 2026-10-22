@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/heic-gpu-portable-readonly.yml'
       - 'wictest/isolated_shell/HeicD3D11PortableProbe.cpp'
+      - 'wictest/isolated_shell/HevcAnnexBSpsProfile.h'
       - 'wictest/isolated_shell/HeicMain8NativeYuvAudit.h'
       - 'wictest/isolated_shell/HeicD3D11PortableProbe.vcxproj'
       - 'wictest/isolated_shell/gpu_probe_portable/**'
