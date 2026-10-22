@@ -86,6 +86,10 @@ jobs:
           New-Item -ItemType Directory -Path $dir | Out-Null
           Copy-Item -LiteralPath $msi[0].FullName -Destination (Join-Path $dir 'global.msi')
           Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination (Join-Path $dir 'global.dll')
+          # Build WIC read/encode/rotation smoke probe before rebuilding the
+          # decoder with the v0.4 private-only macro.
+          msbuild wictest/wictest.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'WIC integration test executable build failed'}
           $env:CL='/DWIC_HEIC_PRIVATE_FAST_ADAPTIVE'
           try {
             msbuild wic_heic/wic_heic.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /nologo
@@ -164,6 +168,20 @@ jobs:
             TestGlobal $false;TestPreview $true
             Msi 'i' $global;$g=$true
             TestGlobal $true;TestPreview $true
+            # Real WIC decoding, encoding, orientation and EXIF readback must
+            # work WITH v0.4 registered; COM registration alone is insufficient.
+            $test=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+            $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+            $fixtureHash=(Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash
+            Push-Location 'wictest'
+            try {
+              & $test
+              if($LASTEXITCODE -ne 0){throw 'WIC decoder/encoder/orientation regression with v0.4 preview installed'}
+            } finally {Pop-Location}
+            if((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -ne $fixtureHash) {
+              throw 'CI input HEIC was changed by WIC interoperability test'
+            }
+            Write-Host 'HEIC_NATIVE_WIC_DECODE_ENCODE_ROTATE_AND_V04_PREVIEW_COEXIST_PASS'
             Msi 'x' $global;$g=$false
             TestGlobal $false;TestPreview $true
             Msi 'x' $preview;$p=$false
