@@ -110,6 +110,45 @@ inline void PreserveCompleteHEICOnDefaultCopy(IWICImagingFactory* factory) {
     printf("WIC_DEFAULT_HEIC_COPY_EXIF_ICC_HDR_FULL_BYTE_EQUALITY_PASS bytes=%zu\\n",actual.size());
 }
 
+inline void PreserveExplicitIccOnDefaultCopy(IWICImagingFactory* factory) {
+    const wchar_t* sourceFile=L"samples\\icc-roundtrip.heic";
+    const wchar_t* destFile=L"samples\\icc-exact-default-copy.heic";
+    const auto original=Read(sourceFile);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(sourceFile,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"ICC passthrough decoder");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"ICC passthrough source");
+    UINT w=0,h=0;
+    Check(source->GetSize(&w,&h),"ICC passthrough dimensions");
+    IWICColorContext* profile=nullptr;
+    UINT count=0;
+    Check(source->GetColorContexts(1,&profile,&count),"ICC passthrough profile");
+    if(count!=1 || !profile)throw std::runtime_error("ICC source profile missing");
+    CComPtr<IWICColorContext> profileHolder;
+    profileHolder.Attach(profile);
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"ICC passthrough encoder");
+    IWICColorContext* values[]={profileHolder};
+    Check(encoder->SetColorContexts(1,values),"ICC passthrough write context");
+    CComPtr<IWICStream> stream;
+    Check(factory->CreateStream(&stream),"ICC passthrough stream");
+    Check(stream->InitializeFromFilename(destFile,GENERIC_WRITE),"ICC passthrough destination");
+    Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),"ICC passthrough encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"ICC passthrough new frame");
+    Check(frame->Initialize(nullptr),"ICC passthrough frame init");
+    Check(frame->SetSize(w,h),"ICC passthrough size");
+    Check(frame->WriteSource(source,nullptr),"ICC passthrough preserve source bytes");
+    Check(frame->Commit(),"ICC passthrough frame commit");
+    Check(encoder->Commit(),"ICC passthrough encoder commit");
+    frame.Release();encoder.Release();stream.Release();
+    if(Read(destFile)!=original)
+        throw std::runtime_error("Explicitly matching ICC profile caused source container loss");
+    printf("WIC_EXPLICIT_SAME_ICC_FULL_HEIC_BYTE_EQUALITY_PASS size=%zu\\n",original.size());
+}
+
 inline void RejectAuxiliaryImage(IWICImagingFactory* factory) {
     CComPtr<IWICBitmapDecoder> decoder;
     Check(factory->CreateDecoderFromFilename(
@@ -195,6 +234,7 @@ inline void Run() {
     if(Read(L"samples\\fixture-irot3-exif6-noaux.heic")!=original)
         throw std::runtime_error("Original synthetic HEIC was modified");
     PreserveCompleteHEICOnDefaultCopy(factory);
+    PreserveExplicitIccOnDefaultCopy(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
