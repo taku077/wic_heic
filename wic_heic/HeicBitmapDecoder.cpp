@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "wic_heic.h"
+#include "HeicThumbnailGeometry.h"
 #include "HeifStreamReader.h"
 #include "HeicBitmapDecoder.h"
 #include "PhotosWicTrace.h"
@@ -250,6 +251,12 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetThumbnail(__RPC__deref_out_opt 
 		}
 
 		heif::ImageHandle thumbHandle = handle.get_thumbnail(thumbIds[0]);
+		if (thumbHandle.empty() || !HeicThumbnailGeometry::Compatible(
+			handle.get_width(),handle.get_height(),
+			thumbHandle.get_width(),thumbHandle.get_height())) {
+			WicHeicDiagnostic::Emit("ThumbnailOrientationMismatch");
+			return WINCODEC_ERR_CODECNOTHUMBNAIL;
+		}
 
 		DbgLog("GetThumbnail@handle: hasAlpha=%d, chromaBpp=%d, lumaBpp=%d, width=%d, height=%d, primary=%d",
 			thumbHandle.has_alpha_channel(),
