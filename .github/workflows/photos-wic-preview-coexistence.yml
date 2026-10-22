@@ -16,7 +16,21 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: microsoft/setup-msbuild@v2
-      - name: Prepare pinned native dependencies on isolated runner
+      - name: Reuse existing native library cache keyed to pinned submodules
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $sig=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$sig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore known-good native codec libs
+        id: native
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Prepare pinned native dependencies on isolated runner only if uncached
+        if: steps.native.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -32,6 +46,12 @@ jobs:
               if($LASTEXITCODE -ne 0){throw "Native dependency failed: $part"}
             }
           } finally {Pop-Location}
+      - name: Cache matching deps after clean native compile
+        if: steps.native.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
       - name: Build separate global WIC and isolated 0.4.0 private-preview installers
         shell: pwsh
         run: |
@@ -59,7 +79,7 @@ jobs:
             throw 'Preview Wix source not restored after global build'
           }
           Write-Host 'GLOBAL_WIC_MSI_AND_V04_WIX_SOURCE_ISOLATION_PASS'
-          $msi=@(Get-ChildItem -LiteralPath '(Build)' -Filter 'WicHeic.msi' -File -Recurse |
+          $msi=@(Get-ChildItem -LiteralPath 'Installer/(Build)' -Filter 'WicHeic.msi' -File -Recurse |
             Where-Object {$_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]'})
           if($msi.Count -ne 1){throw "Expected one global WIC x64 MSI"}
           $dir=Join-Path $env:RUNNER_TEMP 'wic_coexist'
@@ -130,9 +150,30 @@ jobs:
             TestGlobal $true;TestPreview $false
             Msi 'x' $global;$g=$false
             TestGlobal $false;TestPreview $false
-            Write-Host 'HEIC_PUBLIC_WIC_AND_V040_PRIVATE_SHELL_COEXIST_AND_ROLLBACK_PASS'
+            Write-Host 'HEIC_GLOBAL_THEN_PREVIEW_COINSTALL_AND_ROLLBACK_PASS'
           } finally {
             if($p){Msi 'x' $preview}
             if($g){Msi 'x' $global}
+          }
+          # This is the actual user repair ordering: leave v0.4 present,
+          # add global WIC, remove ONLY global WIC, then remove preview.
+          TestGlobal $false;TestPreview $false
+          $g=$false;$p=$false
+          try {
+            Msi 'i' $preview;$p=$true
+            TestGlobal $false;TestPreview $true
+            Msi 'i' $global;$g=$true
+            TestGlobal $true;TestPreview $true
+            Msi 'x' $global;$g=$false
+            TestGlobal $false;TestPreview $true
+            Msi 'x' $preview;$p=$false
+            TestGlobal $false;TestPreview $false
+            Write-Host 'HEIC_V040_PREVIEW_THEN_GLOBAL_COINSTALL_AND_INDEPENDENT_ROLLBACK_PASS'
+          } finally {
+            if($g){Msi 'x' $global}
+            if($p){Msi 'x' $preview}
+          }
+          if(@(git diff --name-only -- 'Installer/' 'wic_heic/').Count -ne 0) {
+            throw 'Disposable CI modified the tracked production files.'
           }
           Write-Host 'NO_USER_PC_TESTED=1 WINDOWS_PHOTOS_EDITOR_UNVERIFIED=1 NO_RELEASE_MSI=1'
