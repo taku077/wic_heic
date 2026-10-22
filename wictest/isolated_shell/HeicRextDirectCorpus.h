@@ -10,7 +10,6 @@
 namespace RextDirectCorpus {
 using Bytes=std::vector<BYTE>;
 using Clock=std::chrono::steady_clock;
-const CLSID kHeicDecoder={0x7d7b0ec2,0xfa1a,0x4a2f,{0x9d,0x48,0x6b,0x7b,0xec,0x76,0xf8,0x32}}; // overwritten by canonical below
 using PrivateEntry=HRESULT(STDAPICALLTYPE*)(REFCLSID,REFIID,LPVOID*);
 inline void CheckHr(HRESULT hr,const char* stage){
  if(FAILED(hr)) {
@@ -130,6 +129,7 @@ inline void Run(const std::wstring& providerDll,
     (attr&FILE_ATTRIBUTE_DIRECTORY)==0 &&
     (attr&FILE_ATTRIBUTE_REPARSE_POINT)==0,"unexpected HEIC file");
   std::vector<double> directTime,referenceTime;
+  UINT lastWidth=0,lastHeight=0;
   // ABBA-like alternation. Two separate implementations, both using the
   // same UNREGISTERED WIC decoder and the exact original Fant->PBGRA.
   for(int pass=0;pass<4;++pass){
@@ -154,14 +154,20 @@ inline void Run(const std::wstring& providerDll,
     IsEqualGUID(ref.originalFormat,GUID_WICPixelFormat64bppRGBA);
    Require(direct.alpha==(hasAlpha?WTSAT_ARGB:WTSAT_RGB),
      "RExt WTS_ALPHATYPE flag not compatible with source WIC format");
+   lastWidth=ref.width;lastHeight=ref.height;
    directTime.push_back(direct.elapsedMs);
    referenceTime.push_back(ref.elapsedMs);
   }
   const double providerMs=Median(directTime);
   const double referenceMs=Median(referenceTime);
-  std::wprintf(L"HEIC_REXT_DIRECT_AB sample=%ls passes=4 exact_bytes_all_passes=1 provider_median_ms=%.3f private_wic_median_ms=%.3f dimensions=%ux%u no_registry=1\n",
-    stem,providerMs,referenceMs,unsigned(256),
-    unsigned(0)); // pixels geometry verified separately
+  std::string sample;
+  for(const wchar_t* p=stem;*p;++p){
+    Require(*p>0&&*p<127,"invalid public ASCII sample name");
+    sample.push_back(char(*p));
+  }
+  std::printf("HEIC_REXT_DIRECT_AB sample=%s passes=4 exact_bytes_all_passes=1 provider_median_ms=%.3f private_wic_median_ms=%.3f dimensions=%ux%u no_registry=1\n",
+    sample.c_str(),providerMs,referenceMs,
+    unsigned(lastWidth),unsigned(lastHeight));
   ++approved;
  }
  Require(approved==7,"seven RExt examples not covered");
