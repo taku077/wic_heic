@@ -1,0 +1,116 @@
+name: Restore exact formerly-working 2026-10-20 WIC 1.1.18 (hash-gated)
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - '.github/workflows/photos-restore-exact-20261020-wic.yml'
+      - 'diagnostics/photos_trace/Restore_Original_WicHeic_OneClick.ps1'
+      - 'diagnostics/photos_trace/Restore_Original_WicHeic_OneClick.cmd'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  exact-rebuild-only:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact source used for the Windows 10 working DLL
+        uses: actions/checkout@v4
+        with:
+          ref: a18b9ab146ca4d6f7b46a86507d7f0d0d882dc87
+          submodules: recursive
+          persist-credentials: false
+      - name: Checkout current restoration safety scripts only in separate folder
+        uses: actions/checkout@v4
+        with:
+          ref: experiment/heic-gpu-inprocess-avcodec
+          path: current_restoration
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Fixed native dependency cache key
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore pinned libraries used in original WIC build
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-\${{ env.CODEC_DEPS }}-v1
+      - name: Build deps if the pinned cache misses
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM unavailable'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+          }
+          Push-Location wic_heic/3rdparty
+          try{
+            foreach($part in @('libde265','kvazaar','libheif')){
+              cmd /c "call build-$part.bat x64"
+              if($LASTEXITCODE -ne 0){throw "Native dependency $part failed"}
+            }
+          }finally{Pop-Location}
+      - name: Build the original 1.1.18 binary and installer without preview changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wic_heic.sln /t:Restore /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Original solution restore failed'}
+          msbuild wic_heic.sln /p:Configuration=Release /p:Platform=x64 /nologo /m
+          if($LASTEXITCODE -ne 0){throw 'Original x64 solution build failed'}
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $sha=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+          Write-Host "20261020_ORIGINAL_DLL_REBUILD_SHA256=$sha"
+          $wanted='9E9D2F17038C03A5BF8840A8BD43BC4FDA19C91E947C4CD5904A8209051F93D4'
+          if($sha -ne $wanted){
+            Write-Host 'EXACT_BINARY_REBUILD_FAILED_RELEASE_WITHHELD'
+            throw 'Rebuild not bit-identical to the actual Windows 10 previously working decoder.'
+          }
+          Write-Host 'EXACT_USER_20261020_WIC_DLL_REBUILD_SHA256_PASSED'
+          $msis=@(Get-ChildItem -LiteralPath '(Build)' -Filter 'WicHeic.msi' -Recurse -File |
+            Where-Object {$_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]'})
+          if($msis.Count -ne 1){throw 'Expected one original MSI'}
+          $msi=$msis[0].FullName
+          $installer=New-Object -ComObject WindowsInstaller.Installer
+          $db=$installer.OpenDatabase($msi,0)
+          function Prop([string]$name){
+            $v=$db.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+            try{$v.Execute();$rec=$v.Fetch();if(!$rec){return ''};return [string]$rec.StringData(1)}
+            finally{$v.Close()}
+          }
+          $prod=Prop 'ProductCode';$version=Prop 'ProductVersion';$name=Prop 'ProductName'
+          Write-Host "EXACT_OLD_MSI_MANIFEST ProductCode=$prod ProductVersion=$version ProductName=$name"
+          if($version -ne '1.1.18' -or $name -ne 'WicHeic Repair Test'){
+            throw 'Original source MSI identity mismatch'
+          }
+          $temp=Join-Path $env:RUNNER_TEMP 'WIC_20261020_ExactRestore'
+          if(Test-Path -LiteralPath $temp){throw 'Unexpected output staging collision'}
+          New-Item -ItemType Directory -Path $temp | Out-Null
+          Copy-Item -LiteralPath $msi -Destination (Join-Path $temp 'WicHeic-ORIGINAL-20261020-1.1.18.msi')
+          Copy-Item -LiteralPath 'current_restoration/diagnostics/photos_trace/Restore_Original_WicHeic_OneClick.ps1' -Destination $temp
+          Copy-Item -LiteralPath 'current_restoration/diagnostics/photos_trace/Restore_Original_WicHeic_OneClick.cmd' -Destination $temp
+          Copy-Item -LiteralPath 'current_restoration/diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1' -Destination $temp
+          [IO.File]::WriteAllText((Join-Path $temp 'ORIGINAL_MSI_SHA256.txt'),
+            ((Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash+[Environment]::NewLine),
+            [Text.Encoding]::ASCII)
+          # PowerShell 5.1 uses the same baseline-compatible parser APIs.
+          foreach($p in @('Restore_Original_WicHeic_OneClick.ps1','WIC_Preflight_ReadOnly.ps1')){
+            $errors=$null;$tokens=$null
+            $null=[Management.Automation.Language.Parser]::ParseFile((Join-Path $temp $p),
+              [ref]$tokens,[ref]$errors)
+            if($errors.Count){throw "Restoration PS syntax invalid in $p"}
+          }
+          Write-Host 'EXACT_RESTORE_PACKAGE_PREPARED_AFTER_SHA256_GATE'
+      - name: Upload exact historical WIC MSI only after binary identity is proven
+        uses: actions/upload-artifact@v4
+        with:
+          name: WicHeic-EXACT-Original-20261020-Restore-OneClick
+          path: \${{ runner.temp }}/WIC_20261020_ExactRestore/
+          retention-days: 14
+          if-no-files-found: error
