@@ -21,6 +21,9 @@ inline ProfileProbe ReadAnnexBSpsProfile(const std::vector<uint8_t>& data) {
   if(data[i+2]==1)marker=3;
   else if(data[i+2]==0&&data[i+3]==1)marker=4;
   if(!marker)continue;
+  // 00 00 00 01 also contains an overlapping 00 00 01 starting at i+1.
+  // Count it as exactly ONE NAL; previously the same SPS was counted twice.
+  if(marker==3 && i>0 && data[i-1]==0)continue;
   const size_t n=i+marker;
   if(n+4>=data.size())continue;
   const uint8_t header1=data[n],header2=data[n+1];
