@@ -6,6 +6,7 @@ on:
       - '.github/workflows/heic-rext-direct-parity.yml'
       - 'wictest/isolated_shell/HeicRextDirectCorpus.h'
       - 'wictest/isolated_shell/HeicRextBatchAB.h'
+      - 'wictest/isolated_shell/HeicRextSingleMatrix.h'
       - 'wictest/isolated_shell/HeicBitmapFrameDecodeProfileCI.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.vcxproj'
@@ -433,3 +434,61 @@ jobs:
             }
           }
           Write-Host 'HEIC_REXT_COMBINED_SCALAR_LUT_AND_PARALLEL_7_HEIC_4_ABBA_PROCESS_PASS'
+
+      - name: Isolated single-HEIC WIC Fant ABBA cross-product HEVC decode workers x exact 16bit LUT
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'heic_rext_direct_ab'
+          $samples=Join-Path $env:GITHUB_WORKSPACE 'wictest\samples'
+          $scalar=Join-Path $root 'WicHeicPrivateCodecScalar.dll'
+          $lut=Join-Path $root 'WicHeicPrivateCodec.dll'
+          $exe=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellEmbeddedDirect.exe').Path
+          $names=@('04','fixture-irot3-exif6-noaux','03')
+          $before=@{}
+          foreach($name in $names){
+            $file=(Resolve-Path -LiteralPath (Join-Path $samples ($name+'.heic'))).Path
+            $before[$name]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+          }
+          $out=@(& $exe --rext-single-matrix $scalar $lut $samples 2>&1)
+          $exit=$LASTEXITCODE
+          $out | ForEach-Object {Write-Host $_}
+          if($exit -ne 0){throw 'HEIC single-photo codec worker/LUT joint test failed'}
+          if(-not ($out -match 'HEIC_REXT_SINGLE_3_REAL_HEIC_6_MODE_ALL_WIC_PBGRA_BYTE_EXACT_PASS')){
+            throw 'HEIC single-photo exact WIC Fant output not established'
+          }
+          $rows=@($out|Where-Object {$_ -match '^HEIC_REXT_SINGLE_MATRIX sample='})
+          if($rows.Count -ne 18){throw "Need 3 images times 6 configuration medians; got $($rows.Count)"}
+          $data=@{}
+          foreach($line in $rows){
+            $rx='^HEIC_REXT_SINGLE_MATRIX sample=([^ ]+) libheif_threads=(1|2|4) color=(scalar|lut) repeats=4 wic_fant_pbgra_ms=([0-9.]+) process_cpu_ms=([0-9.]+) bytes=([0-9]+) exact_original_256px_pbgra=1 same_file_single_image=1 no_shell_queue=1 research_only=1$'
+            if($line -notmatch $rx){throw "Incomplete strict image-color and timing report: $line"}
+            $sample=$Matches[1];$workers=$Matches[2];$mode=$Matches[3]
+            $wall=[double]$Matches[4];$cpu=[double]$Matches[5]
+            if($wall -le 0 -or $cpu -le 0){throw 'Nonpositive wall/CPU timing'}
+            $key="$sample/$workers/$mode"
+            if($data.ContainsKey($key)){throw "Duplicate single photo path $key"}
+            $data[$key]=[pscustomobject]@{wall=$wall;cpu=$cpu}
+          }
+          foreach($sample in @('04_2048x2048_10bit','irot_1080x1920_10bit','03_alpha_1920x1080_10bit')){
+            $base=$data["$sample/1/scalar"]
+            if($null -eq $base){throw "Missing original baseline $sample"}
+            foreach($workers in @(1,2,4)){
+              foreach($mode in @('scalar','lut')){
+                $item=$data["$sample/$workers/$mode"]
+                if($null -eq $item){throw "Missing combined HEVC decode/LUT sample $sample/$workers/$mode"}
+                $saving=100.0*(1.0-$item.wall/$base.wall)
+                $cpuRatio=$item.cpu/$base.cpu
+                $qualityGate=($saving -ge 30.0)
+                Write-Host ("HEIC_REXT_SINGLE_COMBINED_VS_BASELINE sample={0} workers={1} color={2} scalar1_ms={3:F3} combined_ms={4:F3} wall_saved_pct={5:F3} process_cpu_ratio={6:F3} reaches_30pct={7} wic_fant_exact=1 explorer_not_tested=1" -f
+                    $sample,$workers,$mode,$base.wall,$item.wall,$saving,$cpuRatio,([int]$qualityGate))
+              }
+            }
+          }
+          foreach($name in $names){
+            $file=(Resolve-Path -LiteralPath (Join-Path $samples ($name+'.heic'))).Path
+            if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $before[$name]){
+              throw "HEIC sample modified: $name"
+            }
+          }
+          Write-Host 'HEIC_REXT_SINGLE_PHOTO_COMBINED_DECODE_THREADS_AND_LUT_WIC_READONLY_ALL_PASS'
