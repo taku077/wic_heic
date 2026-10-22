@@ -100,6 +100,13 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Preview Shell handler build failed'}
           msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64 /nologo
           if($LASTEXITCODE -ne 0){throw 'Preview MSI build failed'}
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Disposable 8bit 12MP HEIC generator build failed'}
+          $generator=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          $codec=(Resolve-Path 'Installer/WicHeicPrivateCodec.dll').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          & $generator $codec $fixture
+          if($LASTEXITCODE -ne 0){throw 'Disposable 12MP Main 8bit HEIC generation failed'}
       - name: Prepare one-time opt-in Photos restore field kit on disposable CI runner
         shell: pwsh
         run: |
@@ -113,16 +120,18 @@ jobs:
             'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1'='Uninstall_WIC_Trial_RestorePreview.ps1'
             'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1'='WIC_Preflight_ReadOnly.ps1'
             'diagnostics/photos_trace/WIC_Photos_P0_OneTimeTrial_README_JA.md'='README_JA.md'
-            'wictest/samples/fixture-irot3-exif6-noaux.heic'='Synthetic_Test_Only.heic'
           }
           foreach($pair in $files.GetEnumerator()){
             Copy-Item -LiteralPath $pair.Key -Destination (Join-Path $stage $pair.Value) -ErrorAction Stop
           }
+          # Synthetic 4032x3024 8bit Main HEIC generated afresh in isolated CI;
+          # avoid using a 10bit RExt diagnostic for the user's initial UI check.
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic') -Destination (Join-Path $stage 'Synthetic_Test_Only.heic') -ErrorAction Stop
           $digest=(Get-FileHash -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Algorithm SHA256).Hash
           # The x64 Global WIC DLL has been overwritten by the PRIVATE adaptive
           # build, so take expected public hash ONLY from pinned global stash.
           $digest=(Get-FileHash -LiteralPath (Join-Path $env:RUNNER_TEMP 'wic_coexist/global.dll') -Algorithm SHA256).Hash
-          [IO.File]::WriteAllText((Join-Path $stage 'EXPECTED_GLOBAL_WIC_DLL_SHA256.txt'),$digest+"\r\n",[Text.Encoding]::ASCII)
+          [IO.File]::WriteAllText((Join-Path $stage 'EXPECTED_GLOBAL_WIC_DLL_SHA256.txt'),($digest+[Environment]::NewLine),[Text.Encoding]::ASCII)
           foreach($p in @('Install_Experimental_WIC.ps1','Uninstall_WIC_Trial_RestorePreview.ps1','WIC_Preflight_ReadOnly.ps1')){
             $full=(Join-Path $stage $p)
             $errors=$null;$tokens=$null
