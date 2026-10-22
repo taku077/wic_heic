@@ -60,6 +60,24 @@ try {
       ForEach-Object { [pscustomobject]@{Name=[string]$_.Name;Version=[string]$_.Version} })
   }
 } catch { $photos=@() }
+# This is an AppX inventory of the CURRENT USER, not proof of a Media
+# Foundation HEVC decoder, effective Store entitlement or Photos load path.
+# Never install/repair/uninstall packages during a read-only preflight.
+$mediaCodecs=@()
+try {
+  if(Get-Command Get-AppxPackage -ErrorAction SilentlyContinue) {
+    $mediaCodecs=@(Get-AppxPackage -ErrorAction Stop |
+      Where-Object { $_.Name -match '(?i)(HEIF|HEVC)' } |
+      Sort-Object Name |
+      ForEach-Object {
+        [pscustomobject]@{
+          Name=[string]$_.Name
+          Version=[string]$_.Version
+          Status=[string]$_.Status
+        }
+      })
+  }
+} catch { $mediaCodecs=@() }
 $data=[ordered]@{
   Schema=1
   CollectedAtUtc=[DateTime]::UtcNow.ToString('o')
@@ -69,6 +87,8 @@ $data=[ordered]@{
     DisplayVersion=[string]$os.DisplayVersion
   }
   Photos=$photos
+  MediaCodecAppxCurrentUser=$mediaCodecs
+  MediaCodecAppxScope='Inventory only; no Media Foundation decoder, license, Photos-route proof'
   Registrations=@($registrations.ToArray())
   WicHeicMsi=@($msiMatches.ToArray())
 }
