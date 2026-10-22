@@ -219,6 +219,64 @@ inline void RejectRasterOnlyRotation(IWICImagingFactory* factory) {
         throw std::runtime_error("WIC raster wrapper was incorrectly treated as lossless source");
 }
 
+inline void RejectUnsafeOriginalHeicRasterFallback(IWICImagingFactory* factory) {
+    // Regression for a metadata-loss loophole: explicit HEVC and cropped
+    // WriteSource previously bypassed the exact-source safeguard and
+    // silently re-encoded an original HEIC with missing EXIF/HDR assets.
+    const wchar_t* sourceFile=L"samples\\fixture-irot3-exif6.heic";
+    const auto original=Read(sourceFile);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(sourceFile,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"unsafe-raster original");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"unsafe-raster frame");
+    UINT w=0,h=0;
+    Check(source->GetSize(&w,&h),"unsafe-raster dimensions");
+    if(w<2 || h<2)throw std::runtime_error("Unexpected HEIC fixture size");
+
+    for (int test=0;test<2;++test) {
+        const wchar_t* outputFile=test==0?
+            L"samples\\fixture-wic-raw-explicit-hevc-rejected.heic":
+            L"samples\\fixture-wic-raw-crop-rejected.heic";
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"unsafe-raster encoder");
+        CComPtr<IWICStream> stream;
+        Check(factory->CreateStream(&stream),"unsafe-raster stream");
+        Check(stream->InitializeFromFilename(outputFile,GENERIC_WRITE),
+            "unsafe-raster destination");
+        Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),
+            "unsafe-raster encoder init");
+        CComPtr<IWICBitmapFrameEncode> frame;
+        CComPtr<IPropertyBag2> options;
+        Check(encoder->CreateNewFrame(&frame,&options),
+            "unsafe-raster encoder options");
+        if(!options)throw std::runtime_error("Missing HEIC frame options");
+        if(test==0) {
+            PROPBAG2 method{};
+            method.pstrName=const_cast<LPOLESTR>(L"HeifCompressionMethod");
+            VARIANT compression{};
+            compression.vt=VT_UI1; compression.bVal=2; // explicit HEVC
+            Check(options->Write(1,&method,&compression),
+                "unsafe-raster explicit HEVC");
+        }
+        Check(frame->Initialize(options),"unsafe-raster init frame");
+        Check(frame->SetSize(test==0?w:w-1,h),"unsafe-raster output size");
+        WICRect crop{0,0,int(w-1),int(h)};
+        const HRESULT hr=frame->WriteSource(source,test==0?nullptr:&crop);
+        printf("WIC_RAW_HEIC_METADATA_SAFE_REJECTION_%d=0x%08X\n",
+            test,(unsigned)hr);
+        if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+            throw std::runtime_error("Original HEIC silently entered lossy raster path");
+        frame.Release();encoder.Release();stream.Release();options.Release();
+        if(!Read(outputFile).empty())
+            throw std::runtime_error("Failed HEIC write produced unexpected bytes");
+    }
+    if(Read(sourceFile)!=original)
+        throw std::runtime_error("HEIC raster rejection modified input");
+    printf("WIC_RAW_HEIC_EXPLICIT_HEVC_AND_CROP_FAIL_CLOSED_PASS\n");
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -237,6 +295,7 @@ inline void Run() {
     PreserveExplicitIccOnDefaultCopy(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
+    RejectUnsafeOriginalHeicRasterFallback(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
 }
 }
