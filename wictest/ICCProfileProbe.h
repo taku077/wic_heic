@@ -53,6 +53,30 @@ inline void Run() {
     CComPtr<IWICBitmapFrameDecode> decoded;
     Must(decoder->GetFrame(0,&decoded),"Get decoded frame");
     UINT count=0;
+    // Windows Photos and WIC callers may request the ICC on the decoder
+    // itself, not only on an individual frame. Both must be identical.
+    UINT containerCount=0;
+    Must(decoder->GetColorContexts(0,nullptr,&containerCount),
+         "Query decoder-level ICC count");
+    if(containerCount!=1)throw std::runtime_error("HEIC decoder hid source ICC");
+    IWICColorContext* containerRaw=nullptr;
+    UINT returned=0;
+    Must(decoder->GetColorContexts(1,&containerRaw,&returned),
+         "Retrieve decoder-level ICC");
+    CComPtr<IWICColorContext> containerICC;
+    containerICC.Attach(containerRaw);
+    if(returned!=1 || !containerICC)
+        throw std::runtime_error("Decoder-level ICC missing");
+    UINT containerSize=0;
+    Must(containerICC->GetProfileBytes(0,nullptr,&containerSize),
+         "Read decoder-level ICC size");
+    if(containerSize!=inputSize)
+        throw std::runtime_error("Decoder ICC size changed");
+    std::vector<BYTE> bytesFromDecoder(containerSize);
+    Must(containerICC->GetProfileBytes(containerSize,bytesFromDecoder.data(),&returned),
+         "Read decoder-level ICC bytes");
+    if(returned!=containerSize || bytesFromDecoder!=inputICC)
+        throw std::runtime_error("Decoder-level ICC bytes changed");
     Must(decoded->GetColorContexts(0,nullptr,&count),"Query color context count");
     if(count!=1)throw std::runtime_error("ICC not exposed on decoded HEIC");
     CComPtr<IWICColorContext> outputContext;
