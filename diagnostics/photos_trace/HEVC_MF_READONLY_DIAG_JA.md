@@ -54,3 +54,12 @@ Windows CIでビルド・実行後、必要になった**1回の診断用**に�
 | 編集・回転できるが画素が変形 | 正しい寸法だけでは判定せず、非対称タイル画像のJPEG/HEIC幾何学比較を採用。再圧縮・EXIF・ICC・HDR等の保持も評価する。 |
 
 **技術的な限界**: MicrosoftのWindows 10フォト自身が正規HEVC拡張の利用可能性を条件に編集を制限しているケースでは、第三者のWICサムネイル用DLL単独ではその制限を解除できない可能性が高い。非公式パッケージや偽装を採用しない。
+
+## v0.4.0 MSIのコード実査（重要な根本的切り分け）
+`Installer/FastPreview.wxs` と `diagnostics/thumbnail_warmup/FAST_PREVIEW_MSI_JA.md` の実装を確認した。
+- `WicHeicFastPreview v0.4.0` は `WicHeicFastPreview.dll` のShellサムネイルProvider CLSID `{D973196C-165C-4FCE-8838-17C37037D384}` をHKLMに登録し、HKCUのHEIC ShellExをProviderへ向ける。
+- 同梱の `WicHeicPrivateCodec.dll` はサムネイル生成の**内部デコーダー**であり、Windows全体へのHEIC WIC codec登録もWindowsフォトのMedia Foundation HEVC codec提供もしない。
+- これは意図的な非干渉設計であり、v0.4.0のサムネイル改善で回転編集も自動改善するという推測は誤り。
+- 一方、過去に別途導入したグローバルWIC `wic_heic.dll` は`Installer/WicHeic.wxs` の**別MSI/登録経路**。使用中のグローバルWICが残っているかは、ユーザー実機のWIC CLSID/ DLL SHA-256で判定する必要がある。
+- 今回のWindowsフォトでHEVC不足警告が出た理由が「グローバルWIC消失」か「HEVC拡張不足」か「両方」かは、このソース監査だけでは決まらない。
+- **対策として現在のv0.4.0を削除しない**。まず読取専用診断で登録差分を分離し、もし製品WICを修復するなら原本復旧可能なMSI/別Windows環境での検証とユーザー承認が必要。
