@@ -458,10 +458,10 @@ jobs:
             throw 'HEIC single-photo exact WIC Fant output not established'
           }
           $rows=@($out|Where-Object {$_ -match '^HEIC_REXT_SINGLE_MATRIX sample='})
-          if($rows.Count -ne 18){throw "Need 3 images times 6 configuration medians; got $($rows.Count)"}
+          if($rows.Count -ne 24){throw "Need 3 images times 8 configuration medians; got $($rows.Count)"}
           $data=@{}
           foreach($line in $rows){
-            $rx='^HEIC_REXT_SINGLE_MATRIX sample=([^ ]+) libheif_threads=(1|2|4) color=(scalar|lut) repeats=4 wic_fant_pbgra_ms=([0-9.]+) process_cpu_ms=([0-9.]+) bytes=([0-9]+) exact_original_256px_pbgra=1 same_file_single_image=1 no_shell_queue=1 research_only=1$'
+            $rx='^HEIC_REXT_SINGLE_MATRIX sample=([^ ]+) libheif_threads=(1|2|3|4) color=(scalar|lut) repeats=4 wic_fant_pbgra_ms=([0-9.]+) process_cpu_ms=([0-9.]+) bytes=([0-9]+) exact_original_256px_pbgra=1 same_file_single_image=1 no_shell_queue=1 research_only=1$'
             if($line -notmatch $rx){throw "Incomplete strict image-color and timing report: $line"}
             $sample=$Matches[1];$workers=$Matches[2];$mode=$Matches[3]
             $wall=[double]$Matches[4];$cpu=[double]$Matches[5]
@@ -473,7 +473,7 @@ jobs:
           foreach($sample in @('04_2048x2048_10bit','irot_1080x1920_10bit','03_alpha_1920x1080_10bit')){
             $base=$data["$sample/1/scalar"]
             if($null -eq $base){throw "Missing original baseline $sample"}
-            foreach($workers in @(1,2,4)){
+            foreach($workers in @(1,2,3,4)){
               foreach($mode in @('scalar','lut')){
                 $item=$data["$sample/$workers/$mode"]
                 if($null -eq $item){throw "Missing combined HEVC decode/LUT sample $sample/$workers/$mode"}
