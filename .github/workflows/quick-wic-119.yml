@@ -63,7 +63,7 @@ jobs:
           }finally{
             Move-Item $parked $preview -ErrorAction Stop
           }
-          $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/en-US/WicHeic.msi').Path
+          $msi=(Resolve-Path -LiteralPath 'Installer/(Build)/x64/Release/en-US/WicHeic.msi').Path
           $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $engine=New-Object -ComObject WindowsInstaller.Installer
           $db=$engine.OpenDatabase($msi,0)
