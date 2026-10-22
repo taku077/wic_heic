@@ -114,7 +114,8 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
     // Outer wall and nested QPC counters may differ by clock overhead.
     Require(decodeMs+nativeCopyMs<=wallMs+3.0,
             "Invalid nested HEVC RGB / WIC copy stage counters");
-    const double restMs=std::max(0.0,wallMs-decodeMs-nativeCopyMs);
+    const double residualMs=wallMs-decodeMs-nativeCopyMs;
+    const double restMs=(residualMs>0.0)?residualMs:0.0;
     // Snapshot AFTER the request; never call this a process peak.
     const double privateMiB=RextBatch::PrivateCommitMiB();
     Require(privateMiB>0.0,"Invalid private committed memory snapshot");
