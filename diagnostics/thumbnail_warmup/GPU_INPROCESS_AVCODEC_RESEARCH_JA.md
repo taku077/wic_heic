@@ -214,3 +214,15 @@ Main8に対して、GPUから戻したNV12のY（輝度）をそのまま参照�
 さらに実物GPUがないWindows CIでも固定12MP CPU YUV420Pデータから人工NV12をメモリに作り、**新しいUV解除を通したBGRA出力を元のCPU出力と全48,771,072バイト完全一致**で確認できる正負テストを追加。元のNV12→BGRAの色差は同じデータから測定するが、直接NV12経路が必ず不一致という仮定は置かない。
 
 あとはヘッダ/主CPPコードのGitHub Actions Windowsビルド、自己テスト、プロファイル検証、ソフトウェアアダプター誤検知拒否、読取専用コマンド生成、全変更のコード監査まで開発側で実施。実GPUがなければハードウェア経路の最終成功は断定せず、必要な最終節目だけユーザーに依頼する。
+
+## 2026-10-22：HEICコンテナー7件すべてRExt判明／事前判定の修正とCI完了
+
+- [Windows CI #39723178570](https://github.com/taku077/wic_heic/actions/runs/39723178570) はGitHubリポジトリ管理下の固定7 HEICファイルを読み取り専用でFFmpegにより主画像HEVCビットストリームへコピー抽出し、FFprobeの実際の `profile` と `pix_fmt` を照合した。7/7件が **HEVC Range Extensions (Rext, profile_idc=4)** であり、Main8=0件、Main10=0件。入力SHA256は全件前後一致。03/04/fixture2件は10bit YUV420、05は8bit YUV444、06は10bit YUV444、07は12bit YUV444。圧縮ビットストリームのプロファイルだけの集計であり写真全体のGPU対応率を推定できない。
+- これまでの `HeifPrimaryTransforms.cpp` は、HEIF主画像が10bitかつアルファなし・ICCなし等なら **実SPSがRExtでも仮のMain10候補**と判定できる欠陥を持っていた。今回 `hvcC` のプライマリitem `ipma` 紐付けを厳密に解析し、hvcCのgeneral_profile_idcとVPS/SPS/PPS中の実SPSのprofile_idcが一致し、Main8(idc=1)かMain10(idc=2)で、かつ他の従来条件も満たす場合だけ暫定候補とした。RExt(idc=4)は10bit YUV420であってもCPUへフォールバックする。
+- 最初はlibheifの一般 `heif_item_get_property_raw_size` APIでhvcCを読もうとしたが、固定ライブラリは既知のhvcCプロパティにcode=5を返しデータを公開しない。このため既存 `HeifNativeAnnexB.cpp` の実績があるISO BMFF `meta/iprp/ipco/ipma/hvcC` 解釈を、個別の境界チェック付き独立ヘッダー `HeicPrimaryConfigBoxes.h` に実装した。
+- `HeicHvccProfileGuard.h` が1～64配列のhvcC内SPSの実ヘッダーを走査し、hvcC General HEVC Profileと比較。不正な長さ・未知プロファイル・複数の不整合SPS・プロファイル不一致・曖昧な主画像プロパティではfail-closedする。テスト用のMain8/Main10/RExt・不正長等を含む正負テストにも合格。
+- `HevcAnnexBSpsProfile.h` に4byte `00 00 00 01` と重なった3byte開始コード `00 00 01` を両方認識してSPS1個を2個に数えるバグがあり修正。修正後、HEIC7件すべて hvcC general_profile_idc=4, SPS profile_idc=4, SPS count=1。
+- [Windows CI #39724843223](https://github.com/taku077/wic_heic/actions/runs/39724843223)：独立libheifネイティブ分析器をWindows MSVCでビルド成功、7件の一次画像プロパティ紐付け確認、hvcC/SPS正負自己テスト通過、7件すべて `candidate=0`・CPUフォールバック・元画像SHA256不変を通過。以前の暫定Main10候補2件を期待する旧CIのチェックも7件CPUフォールバックへ整合修正した。
+- 実機Intel HD620 GPUで完全画素一致の人工HEVC Main10は実証済み。ただし本テスト群の**実HEICは全件RExt**なので現行GPUパイプラインが高速化する実HEICは7件中0件。GPU経路単体の人工画像約50%短縮をWindows 10 Explorer全HEICの高速化と混同しない。
+- 次の開発で本当に優先すべきは、(1) 現行プライベートWIC/libheif/libde265のソフトウェアRExtフル画像デコードとShell起動経路、(2) Windows 10 Explorer初回表示での効果、(3) 高品質で正しい48bpp/64bpp、ICC、Exif/irot処理。既存研究では埋込サムネイルは固定7件中256pxへ適用0件、libde265 AVX2限定カーネル効果は±0.5%、CPU FFmpeg decoder差は約-1.5%、直接IThumbnailProvider試作は人工HEICで2.1～2.6倍（Explorer実表示は未測定）。
+- **ユーザーの手間削減**：研究途中の小刻みな診断ZIPやMSIを毎回要求しない。可能な解析・ベンチ・CIを先にまとめて実施し、十分な品質と速度改善が見込める段階にだけ実機検証を依頼する。Windows標準フォト、WIC登録、HEIC Manager、実ユーザーHEICファイルは変更しない。
