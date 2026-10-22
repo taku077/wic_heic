@@ -1,0 +1,114 @@
+name: HEIC RExt unregistered private Shell versus WIC parity
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - '.github/workflows/heic-rext-direct-parity.yml'
+      - 'wictest/isolated_shell/HeicRextDirectCorpus.h'
+      - 'wictest/isolated_shell/ShellEmbeddedDirect.cpp'
+      - 'wictest/isolated_shell/HeicTrialThumbnail.cpp'
+      - 'wictest/isolated_shell/HeicShellFastPreview.vcxproj'
+      - 'wic_heic/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  direct-private-codec:
+    runs-on: windows-2022
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Get fixed native dependency cache key
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore pinned native libheif dependencies
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Install NASM if dependencies uncached
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM dependency failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Build fixed native deps if cache misses
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($name in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$name.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Build dependency failed: $name"}
+          }
+      - name: Save fixed native library cache if necessary
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build three isolated DLL/EXE binaries without registering any codec
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($project in @(
+            'wic_heic/wic_heic.vcxproj',
+            'wictest/isolated_shell/HeicShellFastPreview.vcxproj',
+            'wictest/isolated_shell/ShellEmbeddedDirect.vcxproj'
+          )){
+            msbuild $project /p:Configuration=Release /p:Platform=x64
+            if($LASTEXITCODE -ne 0){throw "RExt unregistered WIC build failed: $project"}
+          }
+          Write-Host 'HEIC_REXT_UNREGISTERED_PROVIDER_PRIVATE_CODEC_COMPILED'
+      - name: Verify seven original file hashes and 4x ABBA 256px provider pixel parity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'heic_rext_direct_ab'
+          if(Test-Path -LiteralPath $root){throw 'Refusing temporary output folder overwrite'}
+          New-Item -ItemType Directory -Path $root | Out-Null
+          $names=@('03','04','05','06','07','fixture-irot3-exif6-noaux','fixture-irot3-exif6')
+          $hashes=@{}
+          foreach($stem in $names){
+            $src=(Resolve-Path -LiteralPath "wictest/samples/$stem.heic").Path
+            $hashes[$stem]=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+          }
+          Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination (Join-Path $root 'WicHeicPrivateCodec.dll') -ErrorAction Stop
+          Copy-Item -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/WicHeicFastPreview.dll' -Destination (Join-Path $root 'WicHeicFastPreview.dll') -ErrorAction Stop
+          $probe=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellEmbeddedDirect.exe').Path
+          $out=@(& $probe --rext-corpus (Join-Path $root 'WicHeicFastPreview.dll') (Join-Path $root 'WicHeicPrivateCodec.dll') (Join-Path $env:GITHUB_WORKSPACE 'wictest\samples') 2>&1)
+          $code=$LASTEXITCODE
+          $out|ForEach-Object {Write-Host $_}
+          if($code -ne 0){throw "Unregistered RExt pixel parity EXE rejected: $code"}
+          $rows=@($out|Where-Object {$_ -match '^HEIC_REXT_DIRECT_AB sample='})
+          if($rows.Count -ne 7){throw "Not all RExt test cases ran: $($rows.Count)"}
+          foreach($line in $rows){
+            if($line -notmatch 'passes=4 exact_bytes_all_passes=1' -or
+               $line -notmatch 'no_registry=1'){
+              throw "Missing strict provider PBGRA parity evidence: $line"
+            }
+          }
+          if(-not ($out -match 'HEIC_REXT_DIRECT_PROVIDER_7_OF_7_WIC_FANT_PBGRA_EXACT_PASS')){
+            throw 'Private codec and Shell provider color/geometry parity not proven'
+          }
+          foreach($stem in $names){
+            $src=(Resolve-Path -LiteralPath "wictest/samples/$stem.heic").Path
+            if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne $hashes[$stem]){
+              throw "Read-only HEIC source changed: $stem"
+            }
+          }
+          Write-Host 'HEIC_REXT_DIRECT_PRIVATE_SHELL_WIC_7X4_ABBA_SHA256_UNCHANGED_PASS'
+          Write-Host 'HEIC_REXT_NO_MSI_NO_REGISTRY_NO_HEIC_MANAGER_INTERFERENCE'
