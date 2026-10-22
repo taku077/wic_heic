@@ -52,7 +52,7 @@ unsigned long long RextMicros(LARGE_INTEGER a,LARGE_INTEGER b) noexcept {
 }
 extern "C" __declspec(dllexport) unsigned __stdcall WicHeicRextResearchSetWorkers(unsigned count) noexcept {
  // CI code only; set before any frame is opened and never concurrently.
- if(count!=0 && count!=1 && count!=2 && count!=4)return 0;
+ if(count!=0 && count!=1 && count!=2 && count!=3 && count!=4)return 0;
  g_rextResearchWorkers.store(count,std::memory_order_release);
  return 1;
 }
