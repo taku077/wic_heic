@@ -85,9 +85,13 @@ void Run(const std::wstring& providerDll,const std::wstring& samplesPath){
   items[i].w=baseline.width;items[i].h=baseline.height;
  }
  std::printf("HEIC_REXT_BATCH_REFERENCES sample_count=7 strict_full_PBGRA_baselines=7 no_reencoding=1\n");
- for(unsigned workers:{1u,2u,4u}){
-  std::vector<double> trials,cpuTrials,privateAfter;
-  for(unsigned repetition=0;repetition<4;++repetition){
+ // Interleave 1/2/4 worker trials to mitigate warm cache and temporal
+ // CPU clock frequency bias. Do not compare sequentially grouped modes.
+ constexpr unsigned schedule[]={1,2,4,4,2,1,1,4,2,2,4,1};
+ std::vector<double> trials[5],cpuTrials[5],privateAfter[5];
+ unsigned attempts[5]={};
+ for(unsigned workers:schedule){
+  const unsigned repetition=attempts[workers]++;
    std::atomic<size_t> next{0};
    std::atomic<size_t> verified{0};
    const double cpu0=TotalCpuMilliseconds();
@@ -115,14 +119,16 @@ void Run(const std::wstring& providerDll,const std::wstring& samplesPath){
         Clock::now()-t0).count();
    const double cpu=TotalCpuMilliseconds()-cpu0;
    const double privateMiB=PrivateCommitMiB();
-   trials.push_back(wall);
-   cpuTrials.push_back(cpu);
-   privateAfter.push_back(privateMiB);
+   trials[workers].push_back(wall);
+   cpuTrials[workers].push_back(cpu);
+   privateAfter[workers].push_back(privateMiB);
    std::printf("HEIC_REXT_BATCH_TRIAL workers=%u repeat=%u source_count=7 warm_cache_wall_ms=%.3f process_cpu_ms=%.3f process_private_committed_after_mib=%.2f byte_exact_count=7 provider_unregistered=1\n",
       workers,repetition,wall,cpu,privateMiB);
-  }
+ }
+ for(unsigned workers:{1u,2u,4u}){
+  Require(attempts[workers]==4,"Unbalanced throughput modes");
   std::printf("HEIC_REXT_BATCH_MEDIAN workers=%u repeats=4 source_count=7 warm_cache_total_ms=%.3f process_cpu_ms=%.3f process_private_committed_after_mib=%.2f byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0\n",
-    workers,Median4(trials),Median4(cpuTrials),Median4(privateAfter));
+    workers,Median4(trials[workers]),Median4(cpuTrials[workers]),Median4(privateAfter[workers]));
  }
  FreeLibrary(provider);
  std::puts("HEIC_REXT_BATCH_1_2_4_WORKERS_ALL_7_HEIC_WIC_PIXEL_EXACT_PASS");
