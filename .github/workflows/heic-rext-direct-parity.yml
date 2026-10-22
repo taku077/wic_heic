@@ -210,6 +210,16 @@ jobs:
           if(-not ($out -match 'HEIC_REXT_LUT_VS_SCALAR_7_OF_7_4PASS_WIC_BYTE_EXACT_PASS')){
             throw 'LUT versus scalar native 16bit normalization parity not proven'
           }
+          $native=@($out|Where-Object {$_ -match '^HEIC_REXT_NATIVE_FULL_AB sample='})
+          if($native.Count -ne 7){throw 'Exact full native 8/10/12bit WIC raster test is incomplete'}
+          foreach($line in $native){
+            if($line -notmatch 'full_native_wic_bytes_identical=1 no_reencoding=1'){
+              throw ('Native WIC full-raster differed between LUT and scalar: '+$line)
+            }
+          }
+          if(-not ($out -match 'HEIC_REXT_LUT_VS_SCALAR_7_OF_7_FULL_NATIVE_WIC_PIXEL_EXACT_PASS')){
+            throw 'Full native WIC 24/32/48/64bpp strict image quality not proven'
+          }
           Write-Host 'HEIC_REXT_COPYPIXELS_7_OF_7_STAGES_ISOLATED_AND_PIXEL_EXACT_PASS'
           Write-Host 'HEIC_REXT_EXACT_10_12BIT_LUT_AB_TESTS_PASSED_WITHOUT_PRODUCT_CHANGE'
           foreach($stem in $names){
