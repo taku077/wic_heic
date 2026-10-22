@@ -1,0 +1,110 @@
+name: Quick WicHeic 1.1.19 x64 MSI build
+on:
+  push:
+    branches: [release/wic-photos-1.1.19-audit]
+    paths: ['.github/workflows/quick-wic-119.yml']
+permissions:
+  contents: read
+jobs:
+  msi:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compute native dependency cache key
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $sig=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$sig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore prebuilt native libraries
+        id: libs
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Compile native libraries only if missing
+        if: steps.libs.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM install failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+          }
+          Push-Location wic_heic/3rdparty
+          try{
+            foreach($lib in @('libde265','kvazaar','libheif')){
+              cmd /c "call build-$lib.bat x64"
+              if($LASTEXITCODE -ne 0){throw "Library $lib failed"}
+            }
+          }finally{Pop-Location}
+      - name: Build WIC DLL and standalone MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wic_heic.sln /t:Restore /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'NuGet restore failed'}
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'WIC DLL build failed'}
+          $preview='Installer/FastPreview.wxs'
+          $parked='Installer/FastPreview.wxs.DISABLED_FOR_GLOBAL_ONLY'
+          if(!(Test-Path $preview) -or (Test-Path $parked)){throw 'Installer sources invalid'}
+          Move-Item $preview $parked -ErrorAction Stop
+          try{
+            msbuild Installer/Installer.wixproj /p:Configuration=Release /p:Platform=x64 /nologo
+            if($LASTEXITCODE -ne 0){throw 'MSI build failed'}
+          }finally{
+            Move-Item $parked $preview -ErrorAction Stop
+          }
+          $msi=(Resolve-Path -LiteralPath '(Build)/x64/Release/en-US/WicHeic.msi').Path
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $engine=New-Object -ComObject WindowsInstaller.Installer
+          $db=$engine.OpenDatabase($msi,0)
+          foreach($name in @('ProductName','ProductVersion','ProductCode','UpgradeCode')){
+            $view=$db.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+            try{
+              [void]$view.Execute()
+              $rec=$view.Fetch()
+              if(!$rec){throw "MSI missing $name"}
+              $v=[string]$rec.StringData(1)
+              if($name -eq 'ProductName' -and $v -ne 'WicHeic Repair Test'){throw 'MSI product mismatch'}
+              if($name -eq 'ProductVersion' -and $v -ne '1.1.19'){throw 'MSI version mismatch'}
+              if($name -eq 'ProductCode' -and !$v){throw 'Missing ProductCode'}
+              Write-Host "$name=$v"
+            }finally{[void]$view.Close()}
+          }
+          $v=$db.OpenView("SELECT FileName FROM File")
+          try{
+            [void]$v.Execute()
+            $filenames=@()
+            while($row=$v.Fetch()){$filenames+=([string]$row.StringData(1))}
+            if(!$filenames -or $filenames -match 'WicHeicFastPreview|WicHeicPrivateCodec'){
+              throw 'Global MSI unexpectedly includes standalone preview'
+            }
+            Write-Host ('MSI_FILE_TABLE '+($filenames -join ';'))
+          }finally{[void]$v.Close()}
+          $out=Join-Path $env:RUNNER_TEMP 'WIC_119_BUILD_ONLY'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          Copy-Item -LiteralPath $msi -Destination (Join-Path $out 'WicHeic-Repair-1.1.19-x64.msi')
+          @(
+            ('MSI_SHA256='+((Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash)),
+            ('WIC_DLL_SHA256='+((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash)),
+            'STATUS: BUILD-ONLY; Windows 10 Photos GUI rotate/save not verified.',
+            'WARNING: HEIC photo editing and save may lose EXIF/XMP/ICC and auxiliary items. Do not install for photo editing.',
+            'MUST NOT be described as a finished or safe replacement for the user''s previous working version.'
+          ) | Set-Content -LiteralPath (Join-Path $out 'CHECKSUMS_AND_LIMITATIONS.txt') -Encoding UTF8
+          Write-Host 'WIC_119_MSI_BUILD_AND_IDENTITY_PASS_PHOTOS_GUI_NOT_VERIFIED'
+      - name: Publish build-only MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WicHeic-Repair-1.1.19-x64-BUILD-ONLY-DO-NOT-INSTALL
+          path: ${{ runner.temp }}/WIC_119_BUILD_ONLY/
+          retention-days: 30
+          if-no-files-found: error
