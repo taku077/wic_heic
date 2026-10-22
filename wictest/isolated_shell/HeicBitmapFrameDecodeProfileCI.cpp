@@ -9,6 +9,26 @@
 #include <new>
 #endif
 #include "PhotosWicTrace.h"
+#ifdef WIC_HEIC_REXT_NBIT_LUT_CI
+#include <array>
+// CI research only: never compile this fast branch into a production codec.
+namespace {
+constexpr std::array<uint16_t,1024> MakeRext10BitLut() noexcept {
+ std::array<uint16_t,1024> result{};
+ for(unsigned i=0;i<1024;++i)
+  result[i]=uint16_t((i*65535u+511u)/1023u);
+ return result;
+}
+constexpr std::array<uint16_t,4096> MakeRext12BitLut() noexcept {
+ std::array<uint16_t,4096> result{};
+ for(unsigned i=0;i<4096;++i)
+  result[i]=uint16_t((i*65535u+2047u)/4095u);
+ return result;
+}
+constexpr auto kRext10BitLut=MakeRext10BitLut();
+constexpr auto kRext12BitLut=MakeRext12BitLut();
+}
+#endif
 // Strictly research-only performance counters: these exports do not exist in
 // production DLLs; no registry, logging file, image contents or paths.
 // Separate HEIC CPU decode+RGB, WIC native 16bpp sample normalization,
@@ -277,6 +297,11 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 	QueryPerformanceCounter(&rextCopyStart);
 #endif
 	const uint32_t sourceMax = (1u << m_SourceBits) - 1u;
+#ifdef WIC_HEIC_REXT_NBIT_LUT_CI
+	const uint16_t* rextNormalizeLut =
+		(m_SourceBits==10)?kRext10BitLut.data():
+		(m_SourceBits==12)?kRext12BitLut.data():nullptr;
+#endif
 	for (int row = 0; row < rc.Height; ++row) {
 		if (m_SourceBits <= 8) {
 			memcpy(out, plane, size_t(rowBytes));
@@ -287,7 +312,12 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 				const uint32_t sample = uint32_t(plane[i]) |
 				                        (uint32_t(plane[i + 1]) << 8);
 				if (sample > sourceMax) return WINCODEC_ERR_BADIMAGE;
+#ifdef WIC_HEIC_REXT_NBIT_LUT_CI
+				const uint32_t normalized = rextNormalizeLut ?
+					rextNormalizeLut[sample] : sample;
+#else
 				const uint32_t normalized = (sample * 65535u + sourceMax/2) / sourceMax;
+#endif
 				out[i] = BYTE(normalized & 255);
 				out[i + 1] = BYTE(normalized >> 8);
 			}
