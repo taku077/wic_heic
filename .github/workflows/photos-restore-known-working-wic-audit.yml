@@ -20,7 +20,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
-          run-id: 39560736899
+          run-id: 39433397223
           repository: taku077/wic_heic
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/wic_original_20261021
@@ -33,7 +33,7 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/wic_failed_20261022
       - name: Compare original and failed MSI identities without touching registry
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $original=(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'wic_original_20261021') -Filter '*.msi' -File -Recurse | Select-Object -First 1).FullName
@@ -45,10 +45,10 @@ jobs:
             $map=@{}
             foreach($name in @('ProductName','ProductVersion','ProductCode','UpgradeCode','Manufacturer')){
               $view=$db.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
-              $view.Execute()
+              [void]$view.Execute()
               $record=$view.Fetch()
               $map[$name]=if($record){[string]$record.StringData(1)}else{''}
-              $view.Close()
+              [void]$view.Close()
             }
             return $map
           }
@@ -59,6 +59,9 @@ jobs:
           Write-Host 'FORMER_WIN10_REGISTERED_WIC_SHA256=9E9D2F17038C03A5BF8840A8BD43BC4FDA19C91E947C4CD5904A8209051F93D4'
           Write-Host 'FORMER_WIN10_REGISTERED_PRODUCT_CODE={A9F264DD-92D3-419B-8CA0-A88B00FA42F3}'
           Write-Host ("PREVIOUS_MSI_FILE_SHA256="+(Get-FileHash $original -Algorithm SHA256).Hash)
+          if((Get-FileHash $original -Algorithm SHA256).Hash -ne '4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'){
+            throw 'Original artifact file does not match 2026-10-20 real MSI SHA256'
+          }
           Write-Host ("FAILED_MSI_FILE_SHA256="+(Get-FileHash $failed -Algorithm SHA256).Hash)
           if($a.ProductName -ne 'WicHeic Repair Test' -or $b.ProductName -ne 'WicHeic Repair Test'){
             throw 'Unexpected MSI identity.'
@@ -70,3 +73,23 @@ jobs:
           if(!$a.UpgradeCode -or $a.UpgradeCode -ne $b.UpgradeCode){throw 'Unexpected upgrade lineage.'}
           Write-Host ('MSI_IDENTITIES_AUDITED. PRODUCT_CODE_EQUAL=' + [string]($a.ProductCode -eq $b.ProductCode))
           Write-Host 'AUDIT_ONLY_NO_MSI_INSTALLED_NO_USER_PC_CHANGED'
+          $db=$msi.OpenDatabase($original,0)
+          # This is the exact fixed MSI reader used by the user's corrected one-click zip.
+          function MsiProp([string]$name) {
+            $view=$db.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+            try {
+              [void]$view.Execute()
+              $rec=$view.Fetch()
+              if($rec){return [string]$rec.StringData(1)}
+              return ''
+            } finally { [void]$view.Close() }
+          }
+          $actualName=[string](MsiProp 'ProductName')
+          $actualVersion=[string](MsiProp 'ProductVersion')
+          Write-Host "REAL_USER_RESTORE_FIXED_MSI_READER_NAME=$actualName VERSION=$actualVersion"
+          if($actualName -cne 'WicHeic Repair Test' -or $actualVersion -cne '1.1.18') {
+            throw 'Corrected user restore identity test failed on ORIGINAL MSI'
+          }
+          Write-Host 'EXACT_ORIGINAL_MSI_IDENTITY_PASS'
+          Write-Host 'NO_INSTALL_OR_REGISTRY_CHANGES'
+
