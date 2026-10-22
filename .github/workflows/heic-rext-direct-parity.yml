@@ -314,3 +314,113 @@ jobs:
             }
           }
           Write-Host 'HEIC_REXT_SEVEN_IMAGE_WARM_CACHE_CONCURRENCY_AB_SAFE_NO_SYSTEM_CHANGE_PASS'
+
+      - name: Combined ABBA benchmark scalar LUT and 1 2 4 workers on the same seven HEICs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          # Four *separate* processes. This prevents Windows from reusing a
+          # DLL module by basename when comparing scalar and LUT alternatives.
+          # Each process itself executes 1/2/4 worker levels in interleaved order.
+          # The test is CI warm-cache seven-file throughput, NOT Explorer first paint.
+          $dir=Join-Path $env:RUNNER_TEMP 'heic_rext_direct_ab'
+          $stash=Join-Path $env:RUNNER_TEMP 'heic_rext_profile_binaries'
+          $scalar=Join-Path $stash 'Scalar.dll'
+          $lut=Join-Path $stash 'Lut.dll'
+          $target=Join-Path $dir 'WicHeicPrivateCodec.dll'
+          $provider=Join-Path $dir 'WicHeicFastPreview.dll'
+          $source=Join-Path $env:GITHUB_WORKSPACE 'wictest\samples'
+          $exe=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellEmbeddedDirect.exe').Path
+          foreach($p in @($scalar,$lut,$target,$provider,$exe)){
+            if(-not (Test-Path -LiteralPath $p -PathType Leaf)){
+              throw "Missing isolated A/B executable or DLL: $p"
+            }
+          }
+          $hashScalar=(Get-FileHash -LiteralPath $scalar -Algorithm SHA256).Hash
+          $hashLut=(Get-FileHash -LiteralPath $lut -Algorithm SHA256).Hash
+          if($hashScalar -eq $hashLut){throw 'A/B must use two different real code binaries'}
+          $names=@('03','04','05','06','07','fixture-irot3-exif6-noaux','fixture-irot3-exif6')
+          $original=@{}
+          foreach($name in $names){
+            $file=(Resolve-Path -LiteralPath (Join-Path $source ($name+'.heic'))).Path
+            $original[$name]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+          }
+          $modes=@('scalar','lut','lut','scalar')
+          $firstRef=$null
+          $wall=@{};$cpu=@{};$commit=@{}
+          for($pass=0;$pass -lt $modes.Count;++$pass){
+            $mode=$modes[$pass]
+            $origin=if($mode -eq 'lut'){$lut}else{$scalar}
+            Copy-Item -LiteralPath $origin -Destination $target -Force
+            if((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne
+               (Get-FileHash -LiteralPath $origin -Algorithm SHA256).Hash){
+              throw "Unexpected HEIC decoder copy/hash for mode $mode"
+            }
+            $log=@(& $exe --rext-batch-corpus $provider $source 2>&1)
+            $exit=$LASTEXITCODE
+            if($exit -ne 0){
+              $log|ForEach-Object {Write-Host $_}
+              throw "Combined A/B run failed: $mode pass $pass exit $exit"
+            }
+            if(-not ($log -match 'HEIC_REXT_BATCH_1_2_4_WORKERS_ALL_7_HEIC_WIC_PIXEL_EXACT_PASS')){
+              throw "Combined A/B did not verify full PBGRA parity"
+            }
+            $ref=@($log | Where-Object {$_ -match '^HEIC_REXT_BATCH_PIXEL_REF index='})
+            if($ref.Count -ne 7){throw 'Missing full seven-file reference hashes'}
+            $refKey=(@($ref|Sort-Object) -join '|')
+            if($null -eq $firstRef){$firstRef=$refKey}
+            if($refKey -cne $firstRef){
+              throw 'Scalar/LUT variants produced different PBGRA reference images'
+            }
+            $rows=@($log | Where-Object {$_ -match '^HEIC_REXT_BATCH_MEDIAN workers='})
+            if($rows.Count -ne 3){throw 'Missing per-worker throughput medians'}
+            foreach($line in $rows){
+              if($line -notmatch '^HEIC_REXT_BATCH_MEDIAN workers=(1|2|4) repeats=4 source_count=7 warm_cache_total_ms=([0-9.]+) process_cpu_ms=([0-9.]+) process_private_committed_after_mib=([0-9.]+) byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0$'){
+                throw "Invalid combined batch statistic: $line"
+              }
+              $workers=[int]$Matches[1]
+              $wallValue=[double]$Matches[2]
+              $cpuValue=[double]$Matches[3]
+              $memValue=[double]$Matches[4]
+              if($wallValue -le 0 -or $wallValue -gt 1000000 -or
+                 $cpuValue -le 0 -or $memValue -le 0){
+                throw 'Invalid timing or memory measurement'
+              }
+              $key="$mode/$workers"
+              if(-not $wall.ContainsKey($key)){
+                $wall[$key]=@();$cpu[$key]=@();$commit[$key]=@()
+              }
+              $wall[$key]=@($wall[$key])+@($wallValue)
+              $cpu[$key]=@($cpu[$key])+@($cpuValue)
+              $commit[$key]=@($commit[$key])+@($memValue)
+              Write-Host ("HEIC_REXT_COMBINED_TRIAL mode={0} process_pass={1} workers={2} median_7files_ms={3:F3} cpu_ms={4:F3} private_after_mib={5:F2} all_pixels_exact=1" -f $mode,$pass,$workers,$wallValue,$cpuValue,$memValue)
+            }
+          }
+          function PairMean($v){
+            if(@($v).Count -ne 2){throw 'Two complete A/B pairs required'}
+            return (([double]$v[0]+[double]$v[1])/2.0)
+          }
+          $scalar1=PairMean $wall['scalar/1']
+          foreach($mode in @('scalar','lut')){
+            foreach($workers in @(1,2,4)){
+              $key="$mode/$workers"
+              $wallMs=PairMean $wall[$key]
+              $cpuMs=PairMean $cpu[$key]
+              $memMiB=PairMean $commit[$key]
+              $saved=100.0*(1.0-$wallMs/$scalar1)
+              Write-Host ("HEIC_REXT_COMBINED_RESULT mode={0} workers={1} independent_processes=2 within_process_repeats=4 seven_images_wall_ms={2:F3} seven_images_cpu_ms={3:F3} private_after_mib={4:F3} saved_from_scalar_sequential_pct={5:F3} same_7_full_PBGRA_images=1 first_paint_not_claimed=1 product_enabled=0" -f $mode,$workers,$wallMs,$cpuMs,$memMiB,$saved)
+            }
+          }
+          # Restore the prior CI probe staging layout. Persistent repository
+          # source files, registered codecs, and personal image paths untouched.
+          Copy-Item -LiteralPath $lut -Destination $target -Force
+          if((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $hashLut){
+            throw 'Isolated optimized DLL not restored'
+          }
+          foreach($name in $names){
+            $file=(Resolve-Path -LiteralPath (Join-Path $source ($name+'.heic'))).Path
+            if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $original[$name]){
+              throw "RExt HEIC original changed in combined CI: $name"
+            }
+          }
+          Write-Host 'HEIC_REXT_COMBINED_SCALAR_LUT_AND_PARALLEL_7_HEIC_4_ABBA_PROCESS_PASS'
