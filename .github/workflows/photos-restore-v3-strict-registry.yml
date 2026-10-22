@@ -19,8 +19,8 @@ jobs:
           name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
           run-id: 39433397223
           repository: taku077/wic_heic
-          github-token: \${{ github.token }}
-          path: \${{ runner.temp }}/old-msi
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/old-msi
       - name: Strict-mode regression - anonymous Windows uninstall records and exact MSI
         shell: powershell
         run: |
