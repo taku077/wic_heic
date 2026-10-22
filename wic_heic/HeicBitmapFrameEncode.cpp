@@ -277,15 +277,39 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// Explicit HEVC compression (2), supplied ICC, cropping or geometry
 	// changes prohibit this fast path.
 	if (pIBitmapSource && !prc && m_BitmapTransform == 0 &&
-	    m_HeifCompressionMethod != 2 && m_IccProfile.empty() &&
+	    m_HeifCompressionMethod != 2 &&
 	    !m_LosslessReady && !m_HasPixels && !m_WrittenLines && !m_Created) {
 		IHeicRawSource* originalSource = nullptr;
 		if (SUCCEEDED(pIBitmapSource->QueryInterface(
 		        IID_IHeicRawSource, reinterpret_cast<void**>(&originalSource))) &&
 		    originalSource) {
+			// A caller may explicitly supply the same ICC profile as the source.
+			// Verify byte-for-byte equality before preserving source bytes; a
+			// changed ICC profile must not be silently discarded.
+			bool sameIcc = m_IccProfile.empty();
+			if (!sameIcc) {
+				IWICBitmapFrameDecode* sourceFrame = nullptr;
+				if (SUCCEEDED(pIBitmapSource->QueryInterface(
+				        IID_IWICBitmapFrameDecode, reinterpret_cast<void**>(&sourceFrame))) &&
+				    sourceFrame) {
+					UINT count=0, actual=0;
+					if (SUCCEEDED(sourceFrame->GetColorContexts(0,nullptr,&count)) &&
+					    count==1) {
+						IWICColorContext* context=nullptr;
+						if (SUCCEEDED(sourceFrame->GetColorContexts(1,&context,&actual)) &&
+						    context && actual==1) {
+							std::vector<uint8_t> rawIcc;
+							if (SUCCEEDED(HeicColorProfileWic::Read(context,&rawIcc)))
+								sameIcc=(rawIcc==m_IccProfile);
+						}
+						if (context) context->Release();
+					}
+					sourceFrame->Release();
+				}
+			}
 			UINT w=0,h=0;
 			HRESULT hr = pIBitmapSource->GetSize(&w,&h);
-			if (SUCCEEDED(hr) && m_Width == w && m_Height == h) {
+			if (SUCCEEDED(hr) && sameIcc && m_Width == w && m_Height == h) {
 				std::vector<uint8_t> originalBytes;
 				hr = originalSource->ReadFullContent(&originalBytes);
 				originalSource->Release();
