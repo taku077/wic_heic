@@ -21,6 +21,8 @@ struct Stages{
 inline Stages Snapshot(SnapshotFn function){
  unsigned long long d=0,c=0,dc=0,cc=0;
  function(&d,&c,&dc,&cc);
+ std::printf("HEIC_REXT_TIMING_COUNTERS decoder_calls=%llu raw_copy_calls=%llu decode_us=%llu raw_copy_us=%llu\n",
+   dc,cc,d,c);
  Require(dc>=1 && cc>=1 && dc<=1024 && cc<=1024,
          "RExt isolated private WIC instrument did not cover real CopyPixels");
  Stages result;
