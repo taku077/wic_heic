@@ -37,6 +37,7 @@ const auto kRext12BitLut=MakeRext12BitLut();
 namespace {
 std::atomic<unsigned long long> g_rextDecodeUs{0}, g_rextCopyUs{0};
 std::atomic<unsigned long long> g_rextDecodeCalls{0}, g_rextCopyCalls{0};
+std::atomic<unsigned> g_rextResearchWorkers{0};
 unsigned long long RextMicros(LARGE_INTEGER a,LARGE_INTEGER b) noexcept {
  LARGE_INTEGER rate{};
  if(!QueryPerformanceFrequency(&rate) || rate.QuadPart<=0 ||
@@ -44,6 +45,12 @@ unsigned long long RextMicros(LARGE_INTEGER a,LARGE_INTEGER b) noexcept {
  return static_cast<unsigned long long>(
    (double(b.QuadPart-a.QuadPart)*1000000.0)/double(rate.QuadPart));
 }
+}
+extern "C" __declspec(dllexport) unsigned __stdcall WicHeicRextResearchSetWorkers(unsigned count) noexcept {
+ // CI code only; set before any frame is opened and never concurrently.
+ if(count!=0 && count!=1 && count!=2 && count!=4)return 0;
+ g_rextResearchWorkers.store(count,std::memory_order_release);
+ return 1;
 }
 extern "C" __declspec(dllexport) unsigned __stdcall WicHeicRextLookupEnabled() noexcept {
 #ifdef WIC_HEIC_REXT_NBIT_LUT_CI
@@ -484,6 +491,30 @@ void CHeicBitmapFrameDecode::DecodeImage()
 	} else {
 		m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
 	}
+#elif defined(WIC_HEIC_REXT_TIMING_CI)
+ // Strictly unregistered CI-only comparison: unlike v0.4's 8bit>=6MP
+ // adaptive path, exercise single-frame 10bit RExt 1/2/4 thread decoding.
+ // A zero worker count preserves libheif's original default.
+ const unsigned requested=g_rextResearchWorkers.load(std::memory_order_acquire);
+ if(requested!=0 && m_SourceBits==10 &&
+    uint64_t(m_Handle.get_width())*uint64_t(m_Handle.get_height())<=
+       8192ull*8192ull) {
+  heif_decoding_options* options=heif_decoding_options_alloc();
+  if(!options)throw std::bad_alloc();
+  options->num_codec_threads=int(requested);
+  heif_image* decoded=nullptr;
+  const heif_error status=heif_decode_image(m_Handle.get_raw_image_handle(),
+      &decoded,heif_colorspace_RGB,m_chroma,options);
+  heif_decoding_options_free(options);
+  if(status.code!=heif_error_Ok) {
+   if(decoded)heif_image_release(decoded);
+   throw heif::Error(status);
+  }
+  if(!decoded)throw std::runtime_error("RExt CI threads empty image");
+  m_Image=heif::Image(decoded);
+ }else {
+  m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
+ }
 #else
 	m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
 #endif
