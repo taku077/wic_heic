@@ -373,6 +373,23 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		}
 	}
 	if (!pIBitmapSource) return E_POINTER;
+	// Even when the caller explicitly asks for HEVC recompression or a crop,
+	// a source frame from our HEIC decoder may carry EXIF, MakerNote, ICC,
+	// XMP, thumbnails or HDR items. Our raster encoder cannot transfer all
+	// of those items. Never convert an identifiable original HEIC frame to
+	// RGB behind the caller's back and silently discard its metadata.
+	// Transformed IWICBitmapSource wrappers do NOT expose this private IID;
+	// they still need a separate provenance-preserving edit pipeline.
+	IHeicRawSource* originalForRaster = nullptr;
+	if (SUCCEEDED(pIBitmapSource->QueryInterface(
+	        IID_IHeicRawSource, reinterpret_cast<void**>(&originalForRaster))) &&
+	    originalForRaster) {
+		originalForRaster->Release();
+		WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+			m_BitmapTransform,m_HeifCompressionMethod,
+			"raw-heic-raster-would-strip-metadata",WINCODEC_ERR_UNSUPPORTEDOPERATION);
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	}
 	if (!m_Width || !m_Height || m_Created || m_HasPixels || m_WrittenLines)
 		return WINCODEC_ERR_WRONGSTATE;
 
