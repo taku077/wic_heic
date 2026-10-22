@@ -109,6 +109,52 @@ inline Reference FromUnregisteredWic(PrivateEntry getFactory,
  reference.elapsedMs=std::chrono::duration<double,std::milli>(done-start).count();
  return reference;
 }
+// One full-resolution decode per backend confirms all original WIC
+// 24/32/48/64-bpp source pixels survive exact-LUT normalization, not
+// merely the downsampled 32bppPBGRA thumbnail after Fant rounding.
+struct NativeRaster {
+ Bytes bytes;
+ UINT width=0,height=0,bits=0;
+ WICPixelFormatGUID format{};
+};
+inline NativeRaster FullNativeWic(PrivateEntry entry,
+                                 const std::wstring& image,
+                                 IWICImagingFactory* wic){
+ ComPtr<IClassFactory> factory;
+ CheckHr(entry(CLSID_HEICDecoder,IID_IClassFactory,
+    reinterpret_cast<void**>(factory.GetAddressOf())),
+    "native full WIC class factory");
+ ComPtr<IWICBitmapDecoder> decoder;
+ CheckHr(factory->CreateInstance(nullptr,IID_PPV_ARGS(decoder.GetAddressOf())),
+    "native full WIC decoder");
+ ComPtr<IWICStream> stream;
+ CheckHr(wic->CreateStream(stream.GetAddressOf()),"native full WIC stream");
+ CheckHr(stream->InitializeFromFilename(image.c_str(),GENERIC_READ),
+    "native full input read only");
+ CheckHr(decoder->Initialize(stream.Get(),WICDecodeMetadataCacheOnDemand),
+    "native full decoder initialize");
+ ComPtr<IWICBitmapFrameDecode> frame;
+ CheckHr(decoder->GetFrame(0,frame.GetAddressOf()),"native full frame");
+ NativeRaster result;
+ CheckHr(frame->GetSize(&result.width,&result.height),"native full geometry");
+ CheckHr(frame->GetPixelFormat(&result.format),"native full pixel GUID");
+ Require(result.width>0&&result.height>0&&
+         result.width<=8192&&result.height<=8192,
+         "native full raster out of CI bounds");
+ if(IsEqualGUID(result.format,GUID_WICPixelFormat24bppRGB))result.bits=24;
+ else if(IsEqualGUID(result.format,GUID_WICPixelFormat32bppRGBA))result.bits=32;
+ else if(IsEqualGUID(result.format,GUID_WICPixelFormat48bppRGB))result.bits=48;
+ else if(IsEqualGUID(result.format,GUID_WICPixelFormat64bppRGBA))result.bits=64;
+ else throw std::runtime_error("CI primary WIC source format unexpected");
+ const uint64_t stride=uint64_t(result.width)*(result.bits/8);
+ const uint64_t length=stride*result.height;
+ Require(stride<=UINT_MAX&&length<=64ull*1024*1024,
+         "full native WIC raster exceeds isolated memory bound");
+ result.bytes.resize(size_t(length));
+ CheckHr(frame->CopyPixels(nullptr,UINT(stride),UINT(length),
+         result.bytes.data()),"read original WIC full raster");
+ return result;
+}
 inline double Median(std::vector<double> samples) {
  Require(samples.size()==4,"RExt benchmark must have exactly four samples");
  std::sort(samples.begin(),samples.end());
@@ -285,6 +331,17 @@ inline void Run(const std::wstring& providerDll,
     sample.c_str(),Median(directHevc),Median(directRawCopy),Median(directOther),
     Median(refHevc),Median(refRawCopy),Median(refWicOnly),
     Median(refDownstream),Median(refSetup));
+  const NativeRaster fullScalar=FullNativeWic(scalarEntry,file,wic.Get());
+  const NativeRaster fullLut=FullNativeWic(decoderEntry,file,wic.Get());
+  Require(fullScalar.width==fullLut.width &&
+          fullScalar.height==fullLut.height &&
+          fullScalar.bits==fullLut.bits &&
+          IsEqualGUID(fullScalar.format,fullLut.format) &&
+          fullScalar.bytes==fullLut.bytes,
+          "LUT changed original 8/10/12bit full native WIC raster bytes");
+  std::printf("HEIC_REXT_NATIVE_FULL_AB sample=%s original_wic_bits=%u native_bytes=%llu full_native_wic_bytes_identical=1 no_reencoding=1\n",
+      sample.c_str(),fullScalar.bits,
+      static_cast<unsigned long long>(fullScalar.bytes.size()));
   const double scalarCopyMs=Median(baselineCopy),lookupCopyMs=Median(optimizedCopy);
   std::printf("HEIC_REXT_LUT_AB sample=%s trials=4 scalar_native_copy_ms=%.3f lookup_native_copy_ms=%.3f saved_copy_pct=%.3f scalar_total_ms=%.3f lut_total_ms=%.3f pixel_bytes_identical_all_4=1 distinct_scalar_and_lut_binaries=1 production_enabled=0\n",
      sample.c_str(),scalarCopyMs,lookupCopyMs,
@@ -300,6 +357,7 @@ inline void Run(const std::wstring& providerDll,
  CoUninitialize();
  std::puts("HEIC_REXT_DIRECT_PROVIDER_7_OF_7_WIC_FANT_PBGRA_EXACT_PASS");
  std::puts("HEIC_REXT_LUT_VS_SCALAR_7_OF_7_4PASS_WIC_BYTE_EXACT_PASS");
+ std::puts("HEIC_REXT_LUT_VS_SCALAR_7_OF_7_FULL_NATIVE_WIC_PIXEL_EXACT_PASS");
  std::puts("HEIC_REXT_DIRECT_RESEARCH_ONLY_NO_REGISTRY_NO_INSTALL_NO_MSI");
 }
 } // namespace RextDirectCorpus
