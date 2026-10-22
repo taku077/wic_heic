@@ -4,6 +4,10 @@ on:
     branches: [release/wic-photos-1.1.19-audit]
     paths: ['.github/workflows/photos-wic-preview-coexistence.yml', 'wic_heic/**', 'wictest/**', 'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1']
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
