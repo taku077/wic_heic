@@ -75,6 +75,41 @@ inline void SingleRotation(IWICImagingFactory* factory,
     if(w!=expectedW||h!=expectedH)throw std::runtime_error(
         "HEIC rotated dimensions incorrect");
 }
+inline void PreserveCompleteHEICOnDefaultCopy(IWICImagingFactory* factory) {
+    // Linked EXIF/ICC/thumbnail/HDR fixture must be copied byte-for-byte.
+    // The default HEIF encoder option must never discard the source metadata.
+    const wchar_t* sourceFile=L"samples\\fixture-irot3-exif6.heic";
+    const wchar_t* destFile=L"samples\\fixture-wic-default-copy-exact.heic";
+    const auto original=Read(sourceFile);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(sourceFile,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"exact-copy source decoder");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"exact-copy source frame");
+    UINT w=0,h=0;
+    Check(source->GetSize(&w,&h),"exact-copy dimensions");
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"exact-copy encoder");
+    CComPtr<IWICStream> output;
+    Check(factory->CreateStream(&output),"exact-copy output stream");
+    Check(output->InitializeFromFilename(destFile,GENERIC_WRITE),"exact-copy output");
+    Check(encoder->Initialize(output,WICBitmapEncoderNoCache),"exact-copy encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"exact-copy new frame");
+    Check(frame->Initialize(nullptr),"exact-copy default options");
+    Check(frame->SetSize(w,h),"exact-copy set dimensions");
+    Check(frame->WriteSource(source,nullptr),"exact-copy preserve original container");
+    Check(frame->Commit(),"exact-copy frame commit");
+    Check(encoder->Commit(),"exact-copy encoder commit");
+    frame.Release();encoder.Release();output.Release();
+    const auto actual=Read(destFile);
+    if(actual!=original)throw std::runtime_error(
+        "Default WIC HEIC copy lost EXIF/ICC/HDR/thumbnail bytes");
+    if(Read(sourceFile)!=original)throw std::runtime_error("WIC modified original input");
+    printf("WIC_DEFAULT_HEIC_COPY_EXIF_ICC_HDR_FULL_BYTE_EQUALITY_PASS bytes=%zu\\n",actual.size());
+}
+
 inline void RejectAuxiliaryImage(IWICImagingFactory* factory) {
     CComPtr<IWICBitmapDecoder> decoder;
     Check(factory->CreateDecoderFromFilename(
@@ -159,6 +194,7 @@ inline void Run() {
         L"samples\\fixture-lossless-cw270.heic");
     if(Read(L"samples\\fixture-irot3-exif6-noaux.heic")!=original)
         throw std::runtime_error("Original synthetic HEIC was modified");
+    PreserveCompleteHEICOnDefaultCopy(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
