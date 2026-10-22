@@ -82,7 +82,7 @@ jobs:
           $log=@(& $exe 2>&1)
           $log | ForEach-Object {Write-Host $_}
           if($LASTEXITCODE -ne 0){throw 'HEIC metadata-only analyzer failed'}
-          if($log -notmatch 'HEIC_GPU_HVCC_SPS_PROFILE_GUARD_SELFTEST_PASS'){
+          if(-not ($log -match 'HEIC_GPU_HVCC_SPS_PROFILE_GUARD_SELFTEST_PASS')){
             throw 'Main/Main10/RExt/malformed hvcC and SPS unit tests did not pass'
           }
           $profiles=@($log | Where-Object {$_ -match '^HEIC_GPU_HVCC_PROFILE file='})
@@ -106,7 +106,7 @@ jobs:
               throw "HEIC original modified: $stem"
             }
           }
-          if($log -notmatch 'HEIC_GPU_PRECHECK_SUMMARY total=7 provisional_main8=0 provisional_main10=0 fallback=7'){
+          if(-not ($log -match 'HEIC_GPU_PRECHECK_SUMMARY total=7 provisional_main8=0 provisional_main10=0 fallback=7')){
             throw 'Pinned RExt-only HEIC corpus incorrectly registered GPU candidate'
           }
           Write-Host 'HEIC_REAL_HEIF_7_OF_7_REXT_HVCC_SPS_CONFIRMED_GPU_FALLBACK_PASS'
