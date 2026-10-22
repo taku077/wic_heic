@@ -7,6 +7,7 @@ on:
       - 'wictest/isolated_shell/HeicRextDirectCorpus.h'
       - 'wictest/isolated_shell/HeicRextBatchAB.h'
       - 'wictest/isolated_shell/HeicRextSingleMatrix.h'
+      - 'wictest/isolated_shell/HeicRextMaterializedAB.h'
       - 'wictest/isolated_shell/HeicBitmapFrameDecodeProfileCI.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.vcxproj'
@@ -491,4 +492,19 @@ jobs:
               throw "HEIC sample modified: $name"
             }
           }
+          $materialized=@($out|Where-Object {$_ -match '^HEIC_REXT_MATERIALIZED_FANT_AB sample='})
+          if($materialized.Count -ne 6){
+            throw "Missing 3 images x 2 modes materialized WIC experiments"
+          }
+          foreach($line in $materialized){
+            if($line -notmatch 'repeats=4' -or
+               $line -notmatch 'pixels_protected=1 no_msi=1 research_only=1' -or
+               $line -notmatch 'byte_exact=(0|1) eligible_for_product=(0|1)'){
+              throw "Unverified materialization analysis: $line"
+            }
+            if($Matches[1] -eq '0' -and $line -match 'eligible_for_product=1'){
+              throw "Attempted product claim despite a pixel mismatch"
+            }
+          }
+          Write-Host 'HEIC_REXT_MATERIALIZED_PBGRA_QUALITY_GATE_RESEARCH_ONLY_PASS'
           Write-Host 'HEIC_REXT_SINGLE_PHOTO_COMBINED_DECODE_THREADS_AND_LUT_WIC_READONLY_ALL_PASS'
