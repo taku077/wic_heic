@@ -56,7 +56,8 @@ Write-Host "Baseline retained: $beforePath"
 if($CheckOnly) { Write-Output 'WIC_SAFE_INSTALL_CHECK_ONLY_PASS'; return }
 $log=Join-Path $root ('WIC_Install_'+(Get-Date -Format 'yyyyMMdd_HHmmss')+'.log')
 # System installer handles UAC; do not silently force removal or install other software.
-$argsText='/i "'+$msi+'" /passive /norestart /l*v "'+$log+'"'
+$uiMode=if($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_TEMP){'/qn'}else{'/passive'}
+$argsText='/i "'+$msi+'" '+$uiMode+' /norestart /l*v "'+$log+'"'
 $proc=Start-Process -FilePath 'msiexec.exe' -ArgumentList $argsText -Wait -PassThru
 if($proc.ExitCode -ne 0) {
   throw "MSI installer exit code $($proc.ExitCode); no automated rollback was attempted. Log: $log"
