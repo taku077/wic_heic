@@ -269,6 +269,37 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
 	WicHeicDiagnostic::Emit("WriteSourceEnter",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,prc?"cropped":"full");
+	// No pixel or metadata edits: preserve the HEIF container byte-for-byte.
+	// Previously the default encoder option (DontCare) decoded/recompressed
+	// our own source frame and silently discarded EXIF/XMP/MakerNote/HDR.
+	// Only the actual primary decoder frame has IHeicRawSource; a Photos
+	// bitmap/flip-rotator never gains that capability by guessing provenance.
+	// Explicit HEVC compression (2), supplied ICC, cropping or geometry
+	// changes prohibit this fast path.
+	if (pIBitmapSource && !prc && m_BitmapTransform == 0 &&
+	    m_HeifCompressionMethod != 2 && m_IccProfile.empty() &&
+	    !m_LosslessReady && !m_HasPixels && !m_WrittenLines && !m_Created) {
+		IHeicRawSource* originalSource = nullptr;
+		if (SUCCEEDED(pIBitmapSource->QueryInterface(
+		        IID_IHeicRawSource, reinterpret_cast<void**>(&originalSource))) &&
+		    originalSource) {
+			UINT w=0,h=0;
+			HRESULT hr = pIBitmapSource->GetSize(&w,&h);
+			if (SUCCEEDED(hr) && m_Width == w && m_Height == h) {
+				std::vector<uint8_t> originalBytes;
+				hr = originalSource->ReadFullContent(&originalBytes);
+				originalSource->Release();
+				if (FAILED(hr)) return hr;
+				if (originalBytes.empty()) return WINCODEC_ERR_BADIMAGE;
+				m_LosslessBytes = std::move(originalBytes);
+				m_LosslessReady = true;
+				WicHeicDiagnostic::Emit("WriteSourceLossless",
+					m_Width,m_Height,0,m_HeifCompressionMethod,"exact-source-container");
+				return S_OK;
+			}
+			originalSource->Release();
+		}
+	}
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
 		// A decoded RGB bitmap or a WIC flip-rotator has no HEVC bitstream to
 		// preserve. Only source frames from OUR decoder may take this path.
