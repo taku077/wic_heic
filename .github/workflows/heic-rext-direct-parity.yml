@@ -77,11 +77,19 @@ jobs:
           if(-not (Select-String -Path $research -Pattern 'WIC_HEIC_REXT_TIMING_CI' -Quiet)){
             throw 'CI-only decoder research source lacks isolation guard'
           }
+          $stash=Join-Path $env:RUNNER_TEMP 'heic_rext_profile_binaries'
+          if(Test-Path -LiteralPath $stash){throw 'CI benchmark scratch must be new'}
+          New-Item -ItemType Directory -Path $stash | Out-Null
           try {
             Copy-Item -LiteralPath $research -Destination $source -Force
             $env:CL='/DWIC_HEIC_REXT_TIMING_CI'
-            msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
-            if($LASTEXITCODE -ne 0){throw 'CI-only instrumented private decoder failed'}
+            msbuild wic_heic/wic_heic.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64
+            if($LASTEXITCODE -ne 0){throw 'CI private scalar baseline decoder build failed'}
+            Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination (Join-Path $stash 'Scalar.dll') -ErrorAction Stop
+            $env:CL='/DWIC_HEIC_REXT_TIMING_CI /DWIC_HEIC_REXT_NBIT_LUT_CI'
+            msbuild wic_heic/wic_heic.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64
+            if($LASTEXITCODE -ne 0){throw 'CI private exact-LUT decoder build failed'}
+            Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination (Join-Path $stash 'Lut.dll') -ErrorAction Stop
           } finally {
             Remove-Item Env:\CL -ErrorAction SilentlyContinue
             git restore -- $source
@@ -90,7 +98,11 @@ jobs:
           if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $sha){
             throw 'Production source not restored exactly after CI-only build'
           }
-          Write-Host 'HEIC_REXT_CI_INSTRUMENTED_COPY_SOURCE_SHA256_RESTORED'
+          if((Get-FileHash -LiteralPath (Join-Path $stash 'Scalar.dll') -Algorithm SHA256).Hash -eq
+             (Get-FileHash -LiteralPath (Join-Path $stash 'Lut.dll') -Algorithm SHA256).Hash){
+            throw 'Distinct scalar and exact-LUT private decoder DLLs required'
+          }
+          Write-Host 'HEIC_REXT_CI_SCALAR_AND_LUT_BINARIES_BUILT_SOURCE_SHA256_RESTORED'
           foreach($project in @(
             'wictest/isolated_shell/HeicShellFastPreview.vcxproj',
             'wictest/isolated_shell/ShellEmbeddedDirect.vcxproj'
@@ -151,7 +163,9 @@ jobs:
             $src=(Resolve-Path -LiteralPath "wictest/samples/$stem.heic").Path
             $hashes[$stem]=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
           }
-          Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination (Join-Path $root 'WicHeicPrivateCodec.dll') -ErrorAction Stop
+          $stash=Join-Path $env:RUNNER_TEMP 'heic_rext_profile_binaries'
+          Copy-Item -LiteralPath (Join-Path $stash 'Lut.dll') -Destination (Join-Path $root 'WicHeicPrivateCodec.dll') -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $stash 'Scalar.dll') -Destination (Join-Path $root 'WicHeicPrivateCodecScalar.dll') -ErrorAction Stop
           Copy-Item -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/WicHeicFastPreview.dll' -Destination (Join-Path $root 'WicHeicFastPreview.dll') -ErrorAction Stop
           $probe=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/ShellEmbeddedDirect.exe').Path
           $out=@(& $probe --rext-corpus (Join-Path $root 'WicHeicFastPreview.dll') (Join-Path $root 'WicHeicPrivateCodec.dll') (Join-Path $env:GITHUB_WORKSPACE 'wictest\samples') 2>&1)
@@ -184,7 +198,20 @@ jobs:
               throw ('Invalid HEIC profiling scope: '+$stage)
             }
           }
+          $lut=@($out|Where-Object {$_ -match '^HEIC_REXT_LUT_AB sample='})
+          if($lut.Count -ne 7){throw 'Missing seven RExt scalar-versus-LUT benchmarking lines'}
+          foreach($line in $lut){
+            if($line -notmatch 'trials=4' -or
+               $line -notmatch 'pixel_bytes_identical_all_4=1' -or
+               $line -notmatch 'distinct_scalar_and_lut_binaries=1 production_enabled=0'){
+              throw ('RExt LUT introduced possible output mismatch: '+$line)
+            }
+          }
+          if(-not ($out -match 'HEIC_REXT_LUT_VS_SCALAR_7_OF_7_4PASS_WIC_BYTE_EXACT_PASS')){
+            throw 'LUT versus scalar native 16bit normalization parity not proven'
+          }
           Write-Host 'HEIC_REXT_COPYPIXELS_7_OF_7_STAGES_ISOLATED_AND_PIXEL_EXACT_PASS'
+          Write-Host 'HEIC_REXT_EXACT_10_12BIT_LUT_AB_TESTS_PASSED_WITHOUT_PRODUCT_CHANGE'
           foreach($stem in $names){
             $src=(Resolve-Path -LiteralPath "wictest/samples/$stem.heic").Path
             if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne $hashes[$stem]){
