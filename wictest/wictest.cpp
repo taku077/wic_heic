@@ -9,6 +9,7 @@
 #include "GeometryProbe.h"
 #include "EncoderGuardProbe.h"
 #include "ICCProfileProbe.h"
+#include "../wic_heic/HeicThumbnailGeometry.h"
 #include "HighBitDepthProbe.h"
 #include "ThumbnailPerformanceProbe.h"
 #include "DirectThumbnailProviderProbe.h"
@@ -342,6 +343,14 @@ int main()
 
 	try
 	{
+		if (!HeicThumbnailGeometry::Compatible(3024,4032,240,320) ||
+		    !HeicThumbnailGeometry::Compatible(4032,3024,320,240) ||
+		    HeicThumbnailGeometry::Compatible(3024,4032,320,240) ||
+		    HeicThumbnailGeometry::Compatible(4032,3024,240,320) ||
+		    HeicThumbnailGeometry::Compatible(0,4032,240,320)) {
+			throw std::runtime_error("HEIC embedded thumbnail orientation guard failed");
+		}
+		printf("HEIC_THUMBNAIL_ORIENTATION_PARITY_UNIT_PASS\\n");
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
 		GeometryProbe::Run();
