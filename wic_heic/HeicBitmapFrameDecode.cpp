@@ -219,8 +219,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 	DbgLog("%s: (prc=%p, cbStride=%u, cbBufferSize=%u, pbBuffer=%p)", __FUNCTION__, prc, cbStride, cbBufferSize, pbBuffer);
 
 #ifdef WIC_HEIC_REXT_TIMING_CI
+	const bool rextNeedsFirstDecode = !m_Decoded;
 	LARGE_INTEGER rextDecodeStart{},rextDecodeFinish{};
-	QueryPerformanceCounter(&rextDecodeStart);
+	if(rextNeedsFirstDecode)QueryPerformanceCounter(&rextDecodeStart);
 #endif
 	try
 	{
@@ -233,9 +234,11 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 	}
 
 #ifdef WIC_HEIC_REXT_TIMING_CI
-	QueryPerformanceCounter(&rextDecodeFinish);
-	g_rextDecodeUs.fetch_add(RextMicros(rextDecodeStart,rextDecodeFinish));
-	g_rextDecodeCalls.fetch_add(1);
+	if(rextNeedsFirstDecode){
+		QueryPerformanceCounter(&rextDecodeFinish);
+		g_rextDecodeUs.fetch_add(RextMicros(rextDecodeStart,rextDecodeFinish));
+		g_rextDecodeCalls.fetch_add(1);
+	}
 #endif
 	if (!pbBuffer) {
 		DbgLog("%s: pbBuffer is null", __FUNCTION__);
