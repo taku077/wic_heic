@@ -100,6 +100,36 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Preview Shell handler build failed'}
           msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64 /nologo
           if($LASTEXITCODE -ne 0){throw 'Preview MSI build failed'}
+      - name: Prepare one-time opt-in Photos restore field kit on disposable CI runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $stage=Join-Path $env:RUNNER_TEMP 'Photos_WIC_P0_Trial_Integration'
+          if(Test-Path -LiteralPath $stage){throw 'Refuse to overwrite field trial staging'}
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          $files=@{
+            'Installer/(Build)/x64/Release/en-US/WicHeic.msi'='WicHeic-Repair-EXPERIMENTAL-x64.msi'
+            'diagnostics/windows_install/Install_Experimental_WIC.ps1'='Install_Experimental_WIC.ps1'
+            'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1'='Uninstall_WIC_Trial_RestorePreview.ps1'
+            'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1'='WIC_Preflight_ReadOnly.ps1'
+            'diagnostics/photos_trace/WIC_Photos_P0_OneTimeTrial_README_JA.md'='README_JA.md'
+            'wictest/samples/fixture-irot3-exif6-noaux.heic'='Synthetic_Test_Only.heic'
+          }
+          foreach($pair in $files.GetEnumerator()){
+            Copy-Item -LiteralPath $pair.Key -Destination (Join-Path $stage $pair.Value) -ErrorAction Stop
+          }
+          $digest=(Get-FileHash -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Algorithm SHA256).Hash
+          # The x64 Global WIC DLL has been overwritten by the PRIVATE adaptive
+          # build, so take expected public hash ONLY from pinned global stash.
+          $digest=(Get-FileHash -LiteralPath (Join-Path $env:RUNNER_TEMP 'wic_coexist/global.dll') -Algorithm SHA256).Hash
+          [IO.File]::WriteAllText((Join-Path $stage 'EXPECTED_GLOBAL_WIC_DLL_SHA256.txt'),$digest+"\r\n",[Text.Encoding]::ASCII)
+          foreach($p in @('Install_Experimental_WIC.ps1','Uninstall_WIC_Trial_RestorePreview.ps1','WIC_Preflight_ReadOnly.ps1')){
+            $full=(Join-Path $stage $p)
+            $errors=$null;$tokens=$null
+            $null=[Management.Automation.Language.Parser]::ParseFile($full,[ref]$tokens,[ref]$errors)
+            if($errors.Count){throw "Windows PS5.1 syntax guard failed: $p"}
+          }
+          Write-Host 'HEIC_ONE_TIME_TRIAL_KIT_SOURCE_AND_SAFETY_SCRIPTS_PREPARED'
       - name: Verify global decoder-encoder and private preview stay installed independently
         shell: pwsh
         run: |
@@ -166,7 +196,12 @@ jobs:
           try {
             Msi 'i' $preview;$p=$true
             TestGlobal $false;TestPreview $true
-            Msi 'i' $global;$g=$true
+            $stage=Join-Path $env:RUNNER_TEMP 'Photos_WIC_P0_Trial_Integration'
+            & (Join-Path $stage 'Install_Experimental_WIC.ps1') -CheckOnly
+            if(-not $?){throw 'Field trial pre-install gate failed'}
+            & (Join-Path $stage 'Install_Experimental_WIC.ps1')
+            if(-not $?){throw 'Field trial global WIC installation failed'}
+            $g=$true
             TestGlobal $true;TestPreview $true
             # Populate pinned synthetic lossless 90/180/270° fixtures in the
             # disposable runner exactly as the original native WIC CI does.
@@ -189,8 +224,13 @@ jobs:
               throw 'CI input HEIC was changed by WIC interoperability test'
             }
             Write-Host 'HEIC_NATIVE_WIC_DECODE_ENCODE_ROTATE_AND_V04_PREVIEW_COEXIST_PASS'
-            Msi 'x' $global;$g=$false
+            & (Join-Path $stage 'Uninstall_WIC_Trial_RestorePreview.ps1') -CheckOnly
+            if(-not $?){throw 'Field trial pre-uninstall guard failed'}
+            & (Join-Path $stage 'Uninstall_WIC_Trial_RestorePreview.ps1')
+            if(-not $?){throw 'Field trial rollback script failed'}
+            $g=$false
             TestGlobal $false;TestPreview $true
+            Write-Host 'HEIC_FIELD_TRIAL_INSTALL_ROLLBACK_PRESERVES_EXISTING_V04_PASS'
             Msi 'x' $preview;$p=$false
             TestGlobal $false;TestPreview $false
             Write-Host 'HEIC_V040_PREVIEW_THEN_GLOBAL_COINSTALL_AND_INDEPENDENT_ROLLBACK_PASS'
@@ -201,4 +241,28 @@ jobs:
           if(@(git diff --name-only -- 'Installer/' 'wic_heic/').Count -ne 0) {
             throw 'Disposable CI modified the tracked production files.'
           }
-          Write-Host 'NO_USER_PC_TESTED=1 WINDOWS_PHOTOS_EDITOR_UNVERIFIED=1 NO_RELEASE_MSI=1'
+          Write-Host 'NO_USER_PC_TESTED=1 WINDOWS_PHOTOS_EDITOR_UNVERIFIED=1 NO_AUTO_INSTALL=1'
+      - name: Assemble clean one-time opt-in trial package only after both complete passes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $source=Join-Path $env:RUNNER_TEMP 'Photos_WIC_P0_Trial_Integration'
+          $out=Join-Path $env:RUNNER_TEMP 'WIC_Photos_P0_Win10_Trial_Candidate'
+          if(Test-Path -LiteralPath $out){throw 'Field artifact staging collision'}
+          New-Item -ItemType Directory -Path $out | Out-Null
+          foreach($name in @(
+            'WicHeic-Repair-EXPERIMENTAL-x64.msi','Install_Experimental_WIC.ps1',
+            'Uninstall_WIC_Trial_RestorePreview.ps1','WIC_Preflight_ReadOnly.ps1',
+            'EXPECTED_GLOBAL_WIC_DLL_SHA256.txt','README_JA.md','Synthetic_Test_Only.heic'
+          )){
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $out $name) -ErrorAction Stop
+          }
+          if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 7){throw 'Candidate kit incomplete'}
+          Write-Host 'HEIC_PHOTOS_SINGLE_P0_TRIAL_PACKAGE_PREPARED_WINDOWS10_UNVERIFIED'
+      - name: Store ONE optional experimental Windows 10 recovery kit for consented field test
+        uses: actions/upload-artifact@v4
+        with:
+          name: WIC-Photos-P0-TemporaryGlobalWIC-Win10-UNVERIFIED
+          path: ${{ runner.temp }}/WIC_Photos_P0_Win10_Trial_Candidate/
+          if-no-files-found: error
+          retention-days: 14
