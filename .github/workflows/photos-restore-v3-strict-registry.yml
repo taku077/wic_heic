@@ -1,0 +1,94 @@
+name: Restore v3 - PowerShell 5.1 missing DisplayName regression test
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - '.github/workflows/photos-restore-v3-strict-registry.yml'
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
+jobs:
+  powershell-51-registry-and-old-msi:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - name: Pull exact Oct20 WIC MSI using Actions read permission
+        uses: actions/download-artifact@v4
+        with:
+          name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
+          run-id: 39433397223
+          repository: taku077/wic_heic
+          github-token: \${{ github.token }}
+          path: \${{ runner.temp }}/old-msi
+      - name: Strict-mode regression - anonymous Windows uninstall records and exact MSI
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Set-StrictMode -Version 2
+          function StopRestore([string]$why) {throw "RESTORE_STOPPED: $why"}
+          function InstalledWicPrograms {
+            $found = @()
+            foreach ($path in @('Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+              'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+              'Registry::HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
+              foreach ($entry in @(Get-ItemProperty -Path $path -ErrorAction SilentlyContinue)) {
+                if ($null -eq $entry) { continue }
+                $nameField = $entry.PSObject.Properties['DisplayName']
+                if ($null -eq $nameField) { continue }
+                $name = [string]$nameField.Value
+                if ($name -notmatch '(?i)^Wic.?Heic(?:\s|$)') { continue }
+                $versionField = $entry.PSObject.Properties['DisplayVersion']
+                $keyField = $entry.PSObject.Properties['PSChildName']
+                if ($null -eq $keyField -or [string]::IsNullOrWhiteSpace([string]$keyField.Value)) {
+                  StopRestore 'WIC uninstall key is missing; nothing changed'
+                }
+                $version = if ($null -eq $versionField) { '' } else { [string]$versionField.Value }
+                $found += [pscustomobject]@{ Name=$name; Version=$version; Key=[string]$keyField.Value }
+              }
+            }
+            return $found
+          }
+          $base='HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          $anon=Join-Path $base 'WIC_v3_StrictMode_MissingDisplayName'
+          $named=Join-Path $base 'WIC_v3_StrictMode_NamedWithoutDisplayVersion'
+          if((Test-Path $anon) -or (Test-Path $named)){throw 'Synthetic registry fixture collision'}
+          try {
+            New-Item -Path $anon -Force | Out-Null
+            New-ItemProperty -Path $anon -Name DisplayVersion -Value 'anonymous-entry' -PropertyType String | Out-Null
+            New-Item -Path $named -Force | Out-Null
+            New-ItemProperty -Path $named -Name DisplayName -Value 'WicHeic StrictModeFixture' -PropertyType String | Out-Null
+            $entries=@(InstalledWicPrograms)
+            $match=@($entries | Where-Object {$_.Name -eq 'WicHeic StrictModeFixture'})
+            if($match.Count -ne 1 -or $match[0].Version -ne '' -or $match[0].Key -ne 'WIC_v3_StrictMode_NamedWithoutDisplayVersion'){
+              throw 'v3 silent skip of registry records without DisplayName or DisplayVersion FAILED'
+            }
+            Write-Host 'RESTORE_V3_STRICT_MISSING_DISPLAYNAME_AND_VERSION_PASS'
+          } finally {
+            Remove-Item -LiteralPath $anon -Force -Recurse -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $named -Force -Recurse -ErrorAction SilentlyContinue
+          }
+          $msi=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'old-msi') -File -Recurse -Filter '*.msi')
+          if($msi.Count -ne 1){throw 'Expected one exact historical MSI'}
+          $expected='4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'
+          $actual=(Get-FileHash -LiteralPath $msi[0].FullName -Algorithm SHA256).Hash
+          if($actual -ne $expected){throw 'Old MSI SHA256 did not match the observed Oct20 install'}
+          $engine=New-Object -ComObject WindowsInstaller.Installer
+          $db=$engine.OpenDatabase($msi[0].FullName,0)
+          function MsiProp([string]$name) {
+            $view=$db.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+            try{
+              [void]$view.Execute()
+              $rec=$view.Fetch()
+              if($rec){return [string]$rec.StringData(1)}
+              return ''
+            }finally{[void]$view.Close()}
+          }
+          $n=[string](MsiProp 'ProductName');$v=[string](MsiProp 'ProductVersion')
+          $p=[string](MsiProp 'ProductCode')
+          if($n -cne 'WicHeic Repair Test' -or $v -cne '1.1.18' -or
+             $p -ine '{A9F264DD-92D3-419B-8CA0-A88B00FA42F3}'){
+            throw "v3 original MSI product identity failed: $n / $v / $p"
+          }
+          Write-Host 'RESTORE_V3_EXACT_ORIGINAL_MSI_METADATA_PASS'
+          Write-Host 'NO_MSI_INSTALLED_NO_PHOTOS_CHANGED'
