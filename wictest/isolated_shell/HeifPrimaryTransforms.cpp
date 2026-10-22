@@ -84,6 +84,12 @@ int wmain(){
         name,int(itemResult.code),itemResult.message?itemResult.message:"unknown");
     }
     if(raw)heif_release_item_data(ctx,&raw);
+    // Bit depth (e.g., 10bit) does not imply HEVC Main10. The repository
+    // contains 10bit YUV420 HEIC encoded as RExt (profile_idc=4), which
+    // fails D3D11VA initialization on the Intel HD 620. Inspect the actual
+    // per-primary-item HEVCDecoderConfigurationRecord before routing.
+    int hvccProfileIdc=0;
+    bool hvccProfileStrictValid=false;
     const int configCount=heif_item_get_properties_of_type(ctx,id,
       static_cast<heif_item_property_type>(heif_fourcc('h','v','c','C')),nullptr,0);
     std::printf("HEIC_PRIMARY_CODEC_CONFIGURATION file=%ls hvcC_property_count=%d\n",name,configCount);
@@ -98,6 +104,19 @@ int wmain(){
         std::printf("HEIC_PRIMARY_HVCC file=%ls property=%u code=%d payloadBytes=%llu\n",
           name,unsigned(configIds[size_t(entry)]),int(sizeResult.code),
           static_cast<unsigned long long>(bytes));
+        if(configCount==1 && sizeResult.code==heif_error_Ok &&
+           bytes>=23 && bytes<=65536) {
+          std::vector<uint8_t> rawProfile(bytes,0);
+          const heif_error readProfile=heif_item_get_property_raw_data(
+            ctx,id,configIds[size_t(entry)],rawProfile.data());
+          if(readProfile.code==heif_error_Ok &&
+             rawProfile[0]==1 && (rawProfile[1]&0xC0u)==0 &&
+             (rawProfile[21]&3u)!=2u) {
+             // hvcC general_profile_idc: low five bits of byte 1.
+             hvccProfileIdc=int(rawProfile[1]&31u);
+             hvccProfileStrictValid=true;
+          }
+        }
       }
     }
     const int count=heif_item_get_transformation_properties(ctx,id,nullptr,0);
@@ -163,9 +182,18 @@ int wmain(){
     const bool main8=lumaBits==8 && chromaBits==8;
     const bool main10=lumaBits==10 && chromaBits==10;
     const bool bits=main8 || main10;
+    const bool hvcCAllowsGpu=hvccProfileStrictValid &&
+      ((main8 && hvccProfileIdc==1) || (main10 && hvccProfileIdc==2));
     const unsigned rejectionReasons=(geometry?0u:1u) | (bits?0u:2u) |
-       (alpha?4u:0u) | (rawICC?8u:0u) | (safeOrientation?0u:16u);
+       (alpha?4u:0u) | (rawICC?8u:0u) | (safeOrientation?0u:16u) |
+       (hvcCAllowsGpu?0u:32u);
+    // This is still only a codec-property preflight, never a GPU proof:
+    // exact SPS, 48bpp WIC parity, ICC/NCLX and real D3D11 frames require
+    // their own independent runtime verification.
     const bool provisional=rejectionReasons==0;
+    std::printf("HEIC_GPU_HVCC_PROFILE file=%ls hvcC_general_profile_idc=%d valid=%d allowed=%d bits=%d/%d\n",
+      name,hvccProfileIdc,int(hvccProfileStrictValid),int(hvcCAllowsGpu),
+      lumaBits,chromaBits);
     if(provisional && main8)++gpu8Candidates;
     if(provisional && main10)++gpu10Candidates;
     const char* profileName=provisional?(main10?"main10":"main8"):"fallback";
