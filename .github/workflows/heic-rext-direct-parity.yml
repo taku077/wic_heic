@@ -126,7 +126,7 @@ jobs:
           $ErrorActionPreference='Stop'
           msbuild wictest/isolated_shell/HeifRextColorStageAB.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'RExt 10bit native YUV/RGB stage split benchmark failed to build'}
-      - name: Analyze two real RExt HEIC 10bit YUV-versus-RGB decode modes with stable hashes
+      - name: Analyze four real RExt HEIC 10bit YUV-versus-RGB/alpha modes with stable hashes
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -301,8 +301,10 @@ jobs:
             $row=@($times|Where-Object {$_ -match ('^HEIC_REXT_BATCH_MEDIAN workers='+$num+' ')})
             if($row.Count -ne 1 -or
                $row[0] -notmatch 'repeats=4 source_count=7' -or
+               $row[0] -notmatch 'process_cpu_ms=[0-9]+\.[0-9]+' -or
+               $row[0] -notmatch 'process_private_committed_after_mib=[0-9]+\.[0-9]+' -or
                $row[0] -notmatch 'byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0'){
-              throw "Missing verified warm-cache throughput for worker=$num"
+              throw "Missing verified warm-cache, CPU and private memory stats for worker=$num"
             }
           }
           foreach($stem in $names){
