@@ -347,7 +347,7 @@ jobs:
           }
           $modes=@('scalar','lut','lut','scalar')
           $firstRef=$null
-          $wall=@{};$cpu=@{};$commit=@{}
+          $wall=@{};$cpu=@{};$commit=@{};$firstReady=@{};$largeReady=@{}
           for($pass=0;$pass -lt $modes.Count;++$pass){
             $mode=$modes[$pass]
             $origin=if($mode -eq 'lut'){$lut}else{$scalar}
@@ -375,25 +375,32 @@ jobs:
             $rows=@($log | Where-Object {$_ -match '^HEIC_REXT_BATCH_MEDIAN workers='})
             if($rows.Count -ne 3){throw 'Missing per-worker throughput medians'}
             foreach($line in $rows){
-              if($line -notmatch '^HEIC_REXT_BATCH_MEDIAN workers=(1|2|4) repeats=4 source_count=7 warm_cache_total_ms=([0-9.]+) process_cpu_ms=([0-9.]+) process_private_committed_after_mib=([0-9.]+) byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0$'){
+              if($line -notmatch '^HEIC_REXT_BATCH_MEDIAN workers=(1|2|4) repeats=4 source_count=7 warm_cache_total_ms=([0-9.]+) first_thumbnail_ready_ms=([0-9.]+) large_04_thumbnail_ready_ms=([0-9.]+) process_cpu_ms=([0-9.]+) process_private_committed_after_mib=([0-9.]+) byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0$'){
                 throw "Invalid combined batch statistic: $line"
               }
               $workers=[int]$Matches[1]
               $wallValue=[double]$Matches[2]
-              $cpuValue=[double]$Matches[3]
-              $memValue=[double]$Matches[4]
+              $firstValue=[double]$Matches[3]
+              $largeValue=[double]$Matches[4]
+              $cpuValue=[double]$Matches[5]
+              $memValue=[double]$Matches[6]
               if($wallValue -le 0 -or $wallValue -gt 1000000 -or
+                 $firstValue -le 0 -or $firstValue -gt $wallValue -or
+                 $largeValue -le 0 -or $largeValue -gt $wallValue -or
                  $cpuValue -le 0 -or $memValue -le 0){
                 throw 'Invalid timing or memory measurement'
               }
               $key="$mode/$workers"
               if(-not $wall.ContainsKey($key)){
                 $wall[$key]=@();$cpu[$key]=@();$commit[$key]=@()
+                $firstReady[$key]=@();$largeReady[$key]=@()
               }
               $wall[$key]=@($wall[$key])+@($wallValue)
               $cpu[$key]=@($cpu[$key])+@($cpuValue)
               $commit[$key]=@($commit[$key])+@($memValue)
-              Write-Host ("HEIC_REXT_COMBINED_TRIAL mode={0} process_pass={1} workers={2} median_7files_ms={3:F3} cpu_ms={4:F3} private_after_mib={5:F2} all_pixels_exact=1" -f $mode,$pass,$workers,$wallValue,$cpuValue,$memValue)
+              $firstReady[$key]=@($firstReady[$key])+@($firstValue)
+              $largeReady[$key]=@($largeReady[$key])+@($largeValue)
+              Write-Host ("HEIC_REXT_COMBINED_TRIAL mode={0} process_pass={1} workers={2} median_7files_ms={3:F3} first_ready_ms={4:F3} large04_ready_ms={5:F3} cpu_ms={6:F3} private_after_mib={7:F2} all_pixels_exact=1" -f $mode,$pass,$workers,$wallValue,$firstValue,$largeValue,$cpuValue,$memValue)
             }
           }
           function PairMean($v){
@@ -407,8 +414,10 @@ jobs:
               $wallMs=PairMean $wall[$key]
               $cpuMs=PairMean $cpu[$key]
               $memMiB=PairMean $commit[$key]
+              $firstMs=PairMean $firstReady[$key]
+              $largeMs=PairMean $largeReady[$key]
               $saved=100.0*(1.0-$wallMs/$scalar1)
-              Write-Host ("HEIC_REXT_COMBINED_RESULT mode={0} workers={1} independent_processes=2 within_process_repeats=4 seven_images_wall_ms={2:F3} seven_images_cpu_ms={3:F3} private_after_mib={4:F3} saved_from_scalar_sequential_pct={5:F3} same_7_full_PBGRA_images=1 first_paint_not_claimed=1 product_enabled=0" -f $mode,$workers,$wallMs,$cpuMs,$memMiB,$saved)
+              Write-Host ("HEIC_REXT_COMBINED_RESULT mode={0} workers={1} independent_processes=2 within_process_repeats=4 seven_images_wall_ms={2:F3} first_thumbnail_ready_ms={3:F3} large_04_thumbnail_ready_ms={4:F3} seven_images_cpu_ms={5:F3} private_after_mib={6:F3} saved_from_scalar_sequential_pct={7:F3} same_7_full_PBGRA_images=1 first_paint_not_claimed=1 product_enabled=0" -f $mode,$workers,$wallMs,$firstMs,$largeMs,$cpuMs,$memMiB,$saved)
             }
           }
           # Restore the prior CI probe staging layout. Persistent repository
