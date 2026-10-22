@@ -48,6 +48,8 @@ Photo Render(Entry entry,const std::wstring& path,IWICImagingFactory* wic){
  else if(IsEqualGUID(native,GUID_WICPixelFormat64bppRGBA))channels=8;
  else if(IsEqualGUID(native,GUID_WICPixelFormat24bppRGB))channels=3;
  else if(IsEqualGUID(native,GUID_WICPixelFormat32bppRGBA))channels=4;
+ if(channels==0) std::printf("HEIC_REXT_MATERIALIZED_NATIVE_UNSUPPORTED guid_data1=%08X guid_data2=%04X guid_data3=%04X mode=research_only\\n",
+      unsigned(native.Data1),unsigned(native.Data2),unsigned(native.Data3));
  Require(channels!=0,"materialized CI unsupported native scaler format");
  const uint64_t stride=uint64_t(tw)*channels;
  const uint64_t length=stride*th;
