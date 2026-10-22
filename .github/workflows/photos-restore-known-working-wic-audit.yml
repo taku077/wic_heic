@@ -1,0 +1,72 @@
+name: Audit original 1.1.18 MSI versus failed WIC restore (no install)
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - '.github/workflows/photos-restore-known-working-wic-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit-msi:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch ORIGINAL 1.1.18 WIC MSI from previous successful Oct21 run
+        uses: actions/download-artifact@v4
+        with:
+          name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
+          run-id: 39560736899
+          repository: taku077/wic_heic
+          github-token: \${{ github.token }}
+          path: \${{ runner.temp }}/wic_original_20261021
+      - name: Fetch known failing Oct22 trial from prior run, audit without installing
+        uses: actions/download-artifact@v4
+        with:
+          name: WIC-Photos-P0-TemporaryGlobalWIC-Win10-UNVERIFIED
+          run-id: 39773274867
+          repository: taku077/wic_heic
+          github-token: \${{ github.token }}
+          path: \${{ runner.temp }}/wic_failed_20261022
+      - name: Compare original and failed MSI identities without touching registry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $original=(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'wic_original_20261021') -Filter '*.msi' -File -Recurse | Select-Object -First 1).FullName
+          $failed=(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'wic_failed_20261022') -Filter '*.msi' -File -Recurse | Select-Object -First 1).FullName
+          if(!$original -or !$failed){throw 'Both original and failed MSI artifacts must exist.'}
+          $msi=New-Object -ComObject WindowsInstaller.Installer
+          function Props([string]$path){
+            $db=$msi.OpenDatabase($path,0)
+            $map=@{}
+            foreach($name in @('ProductName','ProductVersion','ProductCode','UpgradeCode','Manufacturer')){
+              $view=$db.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+              $view.Execute()
+              $record=$view.Fetch()
+              $map[$name]=if($record){[string]$record.StringData(1)}else{''}
+              $view.Close()
+            }
+            return $map
+          }
+          $a=Props $original
+          $b=Props $failed
+          Write-Host ('PREVIOUS_WIC_MSI_MANIFEST '+($a | ConvertTo-Json -Compress))
+          Write-Host ('FAILED_TRIAL_MSI_MANIFEST '+($b | ConvertTo-Json -Compress))
+          Write-Host 'FORMER_WIN10_REGISTERED_WIC_SHA256=9E9D2F17038C03A5BF8840A8BD43BC4FDA19C91E947C4CD5904A8209051F93D4'
+          Write-Host 'FORMER_WIN10_REGISTERED_PRODUCT_CODE={A9F264DD-92D3-419B-8CA0-A88B00FA42F3}'
+          Write-Host ("PREVIOUS_MSI_FILE_SHA256="+(Get-FileHash $original -Algorithm SHA256).Hash)
+          Write-Host ("FAILED_MSI_FILE_SHA256="+(Get-FileHash $failed -Algorithm SHA256).Hash)
+          if($a.ProductName -ne 'WicHeic Repair Test' -or $b.ProductName -ne 'WicHeic Repair Test'){
+            throw 'Unexpected MSI identity.'
+          }
+          if($a.ProductVersion -ne '1.1.18' -or $b.ProductVersion -ne '1.1.18'){
+            throw 'Unexpected MSI version.'
+          }
+          if(!$a.ProductCode -or !$b.ProductCode){throw 'Missing ProductCode.'}
+          if(!$a.UpgradeCode -or $a.UpgradeCode -ne $b.UpgradeCode){throw 'Unexpected upgrade lineage.'}
+          Write-Host ('MSI_IDENTITIES_AUDITED. PRODUCT_CODE_EQUAL=' + [string]($a.ProductCode -eq $b.ProductCode))
+          Write-Host 'AUDIT_ONLY_NO_MSI_INSTALLED_NO_USER_PC_CHANGED'
