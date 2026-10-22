@@ -22,16 +22,16 @@ jobs:
           name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
           run-id: 39560736899
           repository: taku077/wic_heic
-          github-token: \${{ github.token }}
-          path: \${{ runner.temp }}/wic_original_20261021
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/wic_original_20261021
       - name: Fetch known failing Oct22 trial from prior run, audit without installing
         uses: actions/download-artifact@v4
         with:
           name: WIC-Photos-P0-TemporaryGlobalWIC-Win10-UNVERIFIED
           run-id: 39773274867
           repository: taku077/wic_heic
-          github-token: \${{ github.token }}
-          path: \${{ runner.temp }}/wic_failed_20261022
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/wic_failed_20261022
       - name: Compare original and failed MSI identities without touching registry
         shell: pwsh
         run: |
