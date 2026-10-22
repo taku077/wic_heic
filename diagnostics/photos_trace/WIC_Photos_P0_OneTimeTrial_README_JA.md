@@ -1,0 +1,23 @@
+# Windows 10「フォト」HEIC編集・回転不能：グローバルWIC復旧候補（一度限りの実機検証）
+
+状態：**Windows 10実機の標準「フォト」動作は未確認**。無条件導入用ではない。Windows Server 2022 CIでのみグローバルWICとサムネイル専用v0.4.0の両立、WIC読み書き・回転・画素一致、元画像保護と独立したアンインストールを確認。
+
+## 状態と注意
+2026-10-20にはシステム用 WicHeic Repair Test 1.1.18 のWICデコーダー・エンコーダーが登録されていたが、2026-10-22の新しい診断では消失していた。標準「フォト」バージョンは同じ。
+- HEVCビデオ拡張が現ユーザーの一覧になく、Media FoundationのHEVC復号器0件。**WICを復旧してもフォトのHEVC警告や編集ボタンが直る保証はない。**
+- `WicHeicFastPreview` v0.4.0は**そのまま残す**。HEIC Manager、フォトの関連付け、原本写真は変更しない。
+- 新規作成・削除されるのはこの試験版WICのインストールと専用COM登録に限定。Windows全体へのWIC登録・アンインストールにはUAC管理者承認が必要。
+- **本キットを使用する前に一度だけ実機導入の明確な了承を確認する**。GitHubのCIが成功しただけでは個人PCへの導入承認とは扱わない。
+- 既知の限界：WICが独立テストでlossless rotationに合格しても、標準フォトが同じ経路を使うかは未確認。実画像での回転保存、連続保存や一括回転は禁止。過去に`IMG_4074`での保存劣化・メタデータ消失を経験しているため、この画像には絶対触れない。
+
+## 確認方法（ユーザーが後日承認した場合のみ）
+1. ZIP内の`Install_Experimental_WIC.ps1`を`-CheckOnly`付きで実行し、WICの未登録とv0.4.0の現状を確認（写真に書き込みなし）。
+2. 同じスクリプトをオプションなしで実行すると、新しいWICだけをWindowsに追加する（UAC確認あり）。**既存WICが見つかれば自動的に中止**し、レジストリ強制上書きはしない。
+3. `Synthetic_Test_Only.heic`の**コピー**で標準フォトを開き、警告・編集有効化の有無を確認。編集が有効であれば作業コピーだけ90度回転と「別名保存」を試し、比率・EXIF・元画像ハッシュを点検。コピーの変形や保存失敗があればそれ以上試さない。
+4. 復旧しなかった場合は`Uninstall_WIC_Trial_RestorePreview.ps1`でこの試験用グローバルWICだけを削除する。事前に独立v0.4.0のCOM登録とDLLハッシュを記録し、削除後に**同じかどうか**を検証する。原画像を消さない。
+5. ログに個人PCのパスが含まれるため、共有前に確認する。
+
+## 成果と制約
+- Windows CI: https://github.com/taku077/wic_heic/actions/runs/39771550007
+- MicrosoftによるWindows 10フォトのHEIF・HEVC拡張要件: https://support.microsoft.com/ja-jp/windows/apps/photos/photos-app-video-editor-error-can-t-view-this-file-type
+- 元画像のハッシュ・ファイル時刻・ICC/EXIF/HDRの保持、Windowsフォト経由での90度×4、写真全種の安全性は実機で未証明。製品完成と称しない。
