@@ -81,7 +81,8 @@ if($installed.Count -ne 1 -or $previewMsi.Count -ne 1 -or
 Write-Host 'GLOBAL_WIC_TRIAL_UNINSTALL_PREFLIGHT_PASS; v0.4 baseline preserved.'
 if($CheckOnly){return}
 $log=Join-Path $dir ('WIC_Trial_Uninstall_'+(Get-Date -Format 'yyyyMMdd_HHmmss')+'.log')
-$proc=Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/x "{0}" /passive /norestart /l*v "{1}"' -f $msi,$log) -Wait -PassThru
+$uiMode=if($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_TEMP){'/qn'}else{'/passive'}
+$proc=Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/x "{0}" {1} /norestart /l*v "{2}"' -f $msi,$uiMode,$log) -Wait -PassThru
 if($proc.ExitCode -ne 0){throw "MSI rollback failed: exit $($proc.ExitCode). Inspect log: $log"}
 $afterPath=(& $preflight | Select-Object -Last 1)
 if(!(Test-Path -LiteralPath $afterPath -PathType Leaf)){
