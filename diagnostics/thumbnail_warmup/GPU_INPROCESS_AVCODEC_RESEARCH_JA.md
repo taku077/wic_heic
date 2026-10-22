@@ -226,3 +226,24 @@ Main8に対して、GPUから戻したNV12のY（輝度）をそのまま参照�
 - 実機Intel HD620 GPUで完全画素一致の人工HEVC Main10は実証済み。ただし本テスト群の**実HEICは全件RExt**なので現行GPUパイプラインが高速化する実HEICは7件中0件。GPU経路単体の人工画像約50%短縮をWindows 10 Explorer全HEICの高速化と混同しない。
 - 次の開発で本当に優先すべきは、(1) 現行プライベートWIC/libheif/libde265のソフトウェアRExtフル画像デコードとShell起動経路、(2) Windows 10 Explorer初回表示での効果、(3) 高品質で正しい48bpp/64bpp、ICC、Exif/irot処理。既存研究では埋込サムネイルは固定7件中256pxへ適用0件、libde265 AVX2限定カーネル効果は±0.5%、CPU FFmpeg decoder差は約-1.5%、直接IThumbnailProvider試作は人工HEICで2.1～2.6倍（Explorer実表示は未測定）。
 - **ユーザーの手間削減**：研究途中の小刻みな診断ZIPやMSIを毎回要求しない。可能な解析・ベンチ・CIを先にまとめて実施し、十分な品質と速度改善が見込める段階にだけ実機検証を依頼する。Windows標準フォト、WIC登録、HEIC Manager、実ユーザーHEICファイルは変更しない。
+
+## 2026-10-22：RExt7件の未登録プライベートWIC vs Shell Provider厳密A/Bと10bit復号スレッド数
+
+目的：GPU非対応と実測で判明した固定7 HEIC（すべてRExt）に対して、GPUへの誤投入を避けた状態で初回サムネイルの改善候補を、ユーザーへの繰返しの診断提出を頼まず独立Windows CIで評価する。
+
+### 7件×4回のCOM画像品質と時間
+
+- `ShellEmbeddedDirect.exe --rext-corpus` と `HeicRextDirectCorpus.h` を研究追加。実験用 `WicHeicFastPreview.dll` の `DllGetClassObject → IThumbnailProvider → IInitializeWithStream → GetThumbnail(256)` と、**別にロードする未登録の `WicHeicPrivateCodec.dll` を通じたIWICBitmapDecoder→WIC Fant→32bppPBGRA** の結果を比較。どちらも同一のプライベートWICデコーダー、ユーザーのWICグローバル登録不要。実ファイルは固定7つ、各4回ABBA順に実行、計28回のWIC縮小後PBGRAを**全バイト一致**確認。アルファ付き/不透明、8bit/10bit/12bit、irot画像を含み、メタデータ/画素は読取専用、元の7 HEICのSHA256は前後不変。
+- [成功CI #39729634583](https://github.com/taku077/wic_heic/actions/runs/39729634583) の例：03 HEIC Provider=139.481ms, WIC直接=141.024ms、04 HEIC Provider=130.989ms, WIC直接=131.047ms、05=2.810/2.749ms、06=3.651/3.661ms、07=3.559/3.507ms、irot noaux=83.365/83.665ms、irot aux=159.252/158.864ms。同一API間は誤差程度の差であり、**Provider呼び出しだけがHEVCデコードを速めたという主張は棄却**。古い「WIC自動コンポーネント選択 vs 直接Provider」の2.1～2.6倍差は、今回のWIC private decoder直呼び比較とは対象・経路が違い直接矛盾しない。元のExplorer初回表示は依然未実測。
+
+### 10bit RExt libde265 1/2/4スレッドABBA
+
+- `HeifRextThreadsAB.cpp` / .vcxprojを実装。プライベート未登録libheifが、固定されたアルファなしRExt `04.heic`（2048x2048）・`fixture-irot3-exif6-noaux.heic`（表示1080x1920、HEVC coded1920x1080）のRGB24主画像をワーカー1/2/4スレッドの順序交差で各4回、1ファイル当たり12回復号。**全デコードのRGB全画素ハッシュが一致**していることと元HEIC不変を検証。研究対象はRGB24の完全一致でありWIC 48bpp出力全体の互換性の証明ではない。
+- [成功CI #39730090152](https://github.com/taku077/wic_heic/actions/runs/39730090152)：04画像 1スレッド93.222ms、2スレッド73.511ms、4スレッド69.935ms（2→4のwall 4.863%短縮）。irot noaux画像 1スレッド50.699ms、2スレッド37.362ms、4スレッド34.850ms（2→4のwall 6.724%短縮）。04のCPU使用時間は2スレッド109.375ms→4スレッド132.812ms、irot noauxでは70.312ms→78.125ms。**CPU時間増に対して2→4スレッドwall利得は小さい**。第7世代Core i5/Windows10の実機負荷・複数枚同時処理ではさらに違う可能性があり、10bit/RExtの製品版スレッド数増を採用しない。
+- 同CIで、7 HEICのプライベートWIC/Providerの4回A/B全28テストを再実行し、完全な画素一致、ソースSHA256不変、システムCOM非登録も再確認。
+
+### 技術判断
+
+(1) Intel GPU Main/Main10人工12MPの一部成功（約50%処理時間減）は維持、しかし固定7 HEICはRExtにつき現行GPU不可。(2) 全画像に対するProviderだけの速度利得は今回の未登録WIC直接比較では存在しない。(3) RExtの4スレッド化はこの2画像の内部復号だけ4.9～6.7%程度で、CPU負荷増を伴う。(4) 既存研究ではFFmpeg CPU decoder変更1.5%遅く、AVX2限定改善は±0.5%、大きな埋込サムネイルが無ければ埋込枝は適用できない。よって既存コードを細かく切り替えるMSIを作らない。
+
+**次の本命：12MPの典型的なRExt実HEIC（現在の固定7枚は最大2048x2048）を含む高解像度・画像特性の多様性で、実HEICのWIC CopyPixels内部処理（HEVC復号、色管理・回転、Fantリサイズ、Shell生成）を精密計測し、エクスプローラー初回表示の根本ボトルネックを特定する。** この検証のためにユーザーへ今すぐ画像や診断ZIPの再提出を求めない。画像を公開GitHubへアップロードしない、未登録研究コードでのみ進める。
