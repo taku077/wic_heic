@@ -38,8 +38,27 @@ jobs:
           $ErrorActionPreference='Stop'
           msbuild wic_heic.sln /t:Restore /p:Configuration=Release /p:Platform=x64 /nologo
           if($LASTEXITCODE -ne 0){throw 'Solution restore failed'}
-          msbuild wic_heic.sln /p:Configuration=Release /p:Platform=x64 /nologo /m
-          if($LASTEXITCODE -ne 0){throw 'System WIC build failed'}
+          # Build DLL first, then global MSI with FastPreview.wxs excluded only
+          # from the disposable runner's working tree. Restoring the .wxs file
+          # is mandatory before building the separate v0.4.0 preview MSI.
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Global WIC DLL build failed'}
+          $previewSource='Installer/FastPreview.wxs'
+          $isolatedName='Installer/FastPreview.wxs.ci-global-disabled'
+          if((Test-Path -LiteralPath $isolatedName) -or
+             !(Test-Path -LiteralPath $previewSource)){throw 'Installer isolation preflight failed'}
+          Move-Item -LiteralPath $previewSource -Destination $isolatedName -ErrorAction Stop
+          try {
+            msbuild Installer/Installer.wixproj /p:Configuration=Release /p:Platform=x64 /nologo
+            if($LASTEXITCODE -ne 0){throw 'Global WIC MSI isolated build failed'}
+          } finally {
+            Move-Item -LiteralPath $isolatedName -Destination $previewSource -ErrorAction Stop
+          }
+          if(!(Test-Path -LiteralPath $previewSource) -or
+             (Test-Path -LiteralPath $isolatedName)){
+            throw 'Preview Wix source not restored after global build'
+          }
+          Write-Host 'GLOBAL_WIC_MSI_AND_V04_WIX_SOURCE_ISOLATION_PASS'
           $msi=@(Get-ChildItem -LiteralPath '(Build)' -Filter 'WicHeic.msi' -File -Recurse |
             Where-Object {$_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]'})
           if($msi.Count -ne 1){throw "Expected one global WIC x64 MSI"}
