@@ -23,8 +23,11 @@ inline Stages Snapshot(SnapshotFn function){
  function(&d,&c,&dc,&cc);
  std::printf("HEIC_REXT_TIMING_COUNTERS decoder_calls=%llu raw_copy_calls=%llu decode_us=%llu raw_copy_us=%llu\n",
    dc,cc,d,c);
- Require(dc>=1 && cc>=1 && dc<=1024 && cc<=1024,
-         "RExt isolated private WIC instrument did not cover real CopyPixels");
+ // WIC Fant may request narrow scanline stripes many times: 1080
+ // CopyPixels calls for one 1920x1080 RExt fixture is normal. Actual HEVC
+ // decoding must occur once on a fresh private WIC frame.
+ Require(dc==1 && cc>=1 && cc<=65536,
+         "RExt frame must decode once and allow WIC striped CopyPixels calls");
  Stages result;
  result.hevcRgbMs=double(d)/1000.;
  result.rawWicCopyMs=double(c)/1000.;
