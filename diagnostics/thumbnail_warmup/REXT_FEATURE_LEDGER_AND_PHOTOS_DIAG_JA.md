@@ -49,3 +49,11 @@
 - 04はHEVC+RGB 83.565→58.141ms、WICコピー22.591→10.325ms、残り18.733→19.374ms。アルファ03では下流48.390→48.228msとほぼ不変で、まずalpha/Fantの後段が次のボトルネック候補。
 - CPU時間比は04 1.118倍、回転1.400倍、alpha 1.294倍。増えたCPUコストを隠して高速化達成と呼ばない。
 - ProcessMemoryCountersEx.PrivateUsageは**終了時点**、ピークメモリは未計測。真のExplorer初回描画も未確認。
+
+## 2026-10-22追記：新しい研究技術と採否・WindowsフォトP0
+
+- **実装済（研究用のみ）**：画像内HEVCワーカー1/2/3/4×10/12bit厳密LUT。単一RExt4MPで約29.5～29.7%の非Explorer CI時短。画素完全一致。CPU使用時間増。Windows10実機に未配布。
+- **計測済（研究用のみ）**：WIC後段を分解して、アルファ付き03で初期化約1msとFant/PBGRA等約48msを分離。CI #39763968594成功。
+- **新研究・不採用**：`HeicRextMaterializedAB.h` のnative Fant画素一時実体化後PBGRA変換は3 HEIC×scalar1/LUT4の全6条件で画素完全一致だが、短縮効果は**-1.12%～+0.81%**。LUT4では0.13%改善1件、他2件は悪化。CI #39765570679成功。製品には入れない・同じ案を繰り返さない。
+- **v0.4.0事実**：`Installer/FastPreview.wxs` はShell thumbnail providerだけを全体登録、内部`WicHeicPrivateCodec.dll` はプライベートでPhotos向けグローバルWIC登録なし。過去の別MSIによるシステムWIC登録が別途あるかはユーザー実機読取専用調査待ち。
+- **現時点の最優先P0**：Microsoft標準フォトのHEVC拡張警告と編集・回転不可。`HevcMfReadOnlyProbe.cpp` + `WIC_Preflight_ReadOnly.ps1` をCI #39763691103 と一括読み取り専用診断キットCI #39764370659で検証成功、端末は未調査。未認証HEVCの無理な導入はしない。

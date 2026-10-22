@@ -420,3 +420,22 @@ Main8に対して、GPUから戻したNV12のY（輝度）をそのまま参照�
 - **04の残時間が約19msと横ばい、03 alphaの残時間が約48msと非常に大きく横ばい**。単純なHEVC復号スレッド増とLUT改良を繰返しても、Alpha/Fant下流が支配的な画像では30%一律達成が難しい。次のアルゴリズム研究はalphaのWIC変換・Fant/PBGRA経路の詳細計測と画素完全一致可能な重複除去候補に限る。
 - メモリ値（例: 04で処理終了直後4.578→5.879MiB）は**CIプロセスのその時点のPrivateUsage**であり、各画像専有分やピークメモリではない。**ピーク計測もWindows10実機Explorer初回描画も未実施**。
 - Core i5第7世代実機では4ワーカーのCPU仕事量増を考えると、単一画像29.7%のCI値を実機採用条件とは見なせない。
+
+## 2026-10-22 継続：Fant/PBGRA下流を狙った「先にnative scaler画素を実体化」方式のA/Bは不採用
+
+[成功CI #39765570679](https://github.com/taku077/wic_heic/actions/runs/39765570679)。7件の画質・元ファイルSHA、単一HEVC/LUT従来ガードは維持して、`HeicRextMaterializedAB.h` の研究候補を比較した。WIC native pixel formatを`IWICPixelFormatInfo::GetBitsPerPixel`で実測し、元解像度のデコーダー→Fant縮小を先にWIC native Nbit小画像へ一度実体化→`CreateBitmapFromMemory`→PBGRA変換するルートを元の連結WIC Fant→PBGRAと比べた。**3件×scalar1/LUT4の計6条件で最終256px PBGRAの画素全バイト完全一致**。元HEICには書き込まない。
+
+| 10bit RExt 1枚 | 元の連結WIC | materialized | 相対短縮 |
+|---|---:|---:|---:|
+| 03 Alpha・scalar1 | 132.295ms | 131.581ms | +0.540% |
+| 04 4MP・scalar1 | 123.068ms | 124.053ms | **-0.800%** |
+| irot・scalar1 | 77.212ms | 76.589ms | +0.807% |
+| 03 Alpha・LUT4 | 102.475ms | 103.623ms | **-1.121%** |
+| 04 4MP・LUT4 | 87.082ms | 87.377ms | **-0.339%** |
+| irot・LUT4 | 55.365ms | 55.292ms | +0.131% |
+
+実行順交互化・4回中央値でも利得は微小で、LUT4では逆に遅い。したがって**製品導入不採用**。当初の仮説「Alpha付き48msの後段はWIC scalerの画素供給・フォーマット変換間の再生成による無駄かもしれない」はこの方法では支持されなかった。WIC後段が高速化の有力な新アルゴリズムを持つという主張もまだできない。
+
+[先行成功CI #39763968594](https://github.com/taku077/wic_heic/actions/runs/39763968594) は工程内訳をさらに分解し、03のAlphaでWIC初期化約1msに対してPBGRA/Fantなど下流約47～48ms、04で初期化約1～2ms・下流約18～20msと測定。この時間はWIC COPY内部であり、ヘッダー解析等の初期化を削っても改善は小さい。
+
+**現実的次の方針**：単一RExtのLUT4約29.5～29.7%短縮およびCPU負荷増という限界は維持。これ以上の数%を、単純なピクセル実体化・再配線に求めない。具体的に画質一致を保証できる新しいFant/PBGRA内部アルゴリズムかHEVC/色処理の根本的な実装差の証拠が得られた場合にのみ研究続行。ユーザーの**Windows10フォトHEVC警告／編集・回転不能を現在の最優先P0**とし、別MSIに入れ替えたり画像を変更する実機検証は行わない。
