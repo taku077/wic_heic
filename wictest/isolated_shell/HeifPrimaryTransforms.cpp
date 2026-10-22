@@ -11,6 +11,7 @@
 #include <vector>
 #include <libheif/heif.h>
 #include "HeicHvccProfileGuard.h"
+#include "HeicPrimaryConfigBoxes.h"
 #include <libheif/heif_context.h>
 #include <libheif/heif_properties.h>
 #include <libheif/heif_items.h>
@@ -96,32 +97,18 @@ int wmain(){
     const int configCount=heif_item_get_properties_of_type(ctx,id,
       static_cast<heif_item_property_type>(heif_fourcc('h','v','c','C')),nullptr,0);
     std::printf("HEIC_PRIMARY_CODEC_CONFIGURATION file=%ls hvcC_property_count=%d\n",name,configCount);
-    if(configCount>0 && configCount<4){
-      std::vector<heif_property_id> configIds(size_t(configCount),0);
-      const int actual=heif_item_get_properties_of_type(ctx,id,
-        static_cast<heif_item_property_type>(heif_fourcc('h','v','c','C')),
-        configIds.data(),configCount);
-      for(int entry=0;entry<actual;++entry){
-        size_t bytes=0;
-        const heif_error sizeResult=heif_item_get_property_raw_size(ctx,id,configIds[size_t(entry)],&bytes);
-        std::printf("HEIC_PRIMARY_HVCC file=%ls property=%u code=%d payloadBytes=%llu\n",
-          name,unsigned(configIds[size_t(entry)]),int(sizeResult.code),
-          static_cast<unsigned long long>(bytes));
-        if(configCount==1 && sizeResult.code==heif_error_Ok &&
-           bytes>=23 && bytes<=65536) {
-          std::vector<uint8_t> rawProfile(bytes,0);
-          const heif_error readProfile=heif_item_get_property_raw_data(
-            ctx,id,configIds[size_t(entry)],rawProfile.data());
-          if(readProfile.code==heif_error_Ok){
-            const HeicHvcc::Result checked=HeicHvcc::Inspect(rawProfile);
-            if(checked.valid){
-             hvccProfileIdc=checked.profile;
-             hvccProfileStrictValid=true;
-            }
-          }
-        }
-      }
-    }
+    // The generic heif_item_get_property_raw_* API returns code=5 for
+    // well-known hvcC properties with this pinned libheif version. Use
+    // the bounded HEIF iprp/ipco/ipma primary association parser instead.
+    Require(configCount==1,"Primary hvcC is absent or ambiguous");
+    const std::vector<uint8_t> exactHvcc=
+      HeicPrimaryBoxes::ReadPrimaryHvcc(cpath,id);
+    const HeicHvcc::Result checkedHvcc=HeicHvcc::Inspect(exactHvcc);
+    hvccProfileIdc=checkedHvcc.valid?checkedHvcc.profile:0;
+    hvccProfileStrictValid=checkedHvcc.valid;
+    std::printf("HEIC_PRIMARY_HVCC_VALIDATED file=%ls config_bytes=%llu general_profile_idc=%d sps_profile_idc=%d sps_count=%u valid=%d\n",
+       name,static_cast<unsigned long long>(exactHvcc.size()),hvccProfileIdc,
+       checkedHvcc.spsProfile,checkedHvcc.spsCount,int(hvccProfileStrictValid));
     const int count=heif_item_get_transformation_properties(ctx,id,nullptr,0);
     Require(count>=0 && count<64,"bad count of primary image transforms");
     std::vector<heif_property_id> props(size_t(count),0);
