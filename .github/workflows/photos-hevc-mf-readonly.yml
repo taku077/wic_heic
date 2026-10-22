@@ -57,3 +57,31 @@ jobs:
             throw 'Read-only MF completion guard absent'
           }
           Write-Host 'HEVC_MF_INVENTORY_ISOLATED_WINDOWS_CI_PASS'
+      - name: Verify portable one-click script and assemble read-only diagnostic ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $cmd=Join-Path $env:GITHUB_WORKSPACE 'diagnostics/photos_trace/Run_Photos_HEVC_ReadOnly.cmd'
+          $body=[IO.File]::ReadAllText($cmd)
+          foreach($required in @('WIC_Preflight_ReadOnly.ps1','HevcMfReadOnlyProbe.exe','NoProfile','ReadOnly')){
+            if(-not $body.Contains($required)){throw "Expected one-click diagnostic token absent: $required"}
+          }
+          foreach($forbidden in @('reg add','reg delete','Remove-AppxPackage','Add-AppxPackage','msiexec','del /','format ')){
+            if($body -match [regex]::Escape($forbidden)){throw "Unsafe diagnostic command token: $forbidden"}
+          }
+          $target=Join-Path $env:RUNNER_TEMP 'Photos_HEVC_ReadOnly_Win10_x64'
+          if(Test-Path -LiteralPath $target){throw 'Refuse to overwrite prepared release staging'}
+          New-Item -ItemType Directory -Path $target | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'photos_codec_check\HevcMfReadOnlyProbe.exe') -Destination $target
+          Copy-Item -LiteralPath $cmd -Destination $target
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1' -Destination $target
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/HEVC_MF_READONLY_DIAG_JA.md' -Destination $target
+          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 4){throw 'Read-only test bundle incomplete'}
+          Write-Host 'HEVC_MF_SINGLE_READONLY_DIAG_BUNDLE_PASS'
+      - name: Save optional single diagnostic ZIP for later approved real-machine checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: Photos_HEVC_ReadOnly_Win10_x64
+          path: ${{ runner.temp }}\\Photos_HEVC_ReadOnly_Win10_x64\\
+          if-no-files-found: error
+          retention-days: 14
