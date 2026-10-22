@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/heic-rext-direct-parity.yml'
       - 'wictest/isolated_shell/HeicRextDirectCorpus.h'
+      - 'wictest/isolated_shell/HeicBitmapFrameDecodeProfileCI.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.vcxproj'
       - 'wictest/isolated_shell/ShellEmbeddedDirect.cpp'
@@ -66,10 +67,30 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $env:CL='/DWIC_HEIC_REXT_TIMING_CI'
-          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
-          if($LASTEXITCODE -ne 0){throw 'Instrumented private decoder build failed'}
-          Remove-Item Env:\CL
+          # CI runner checkout ONLY: temporarily substitute a separately
+          # tracked research copy. Restore the original immediately after
+          # build, without touching the repository, production artifacts,
+          # Windows WIC registration, Photos or HEIC Manager.
+          $source='wic_heic/HeicBitmapFrameDecode.cpp'
+          $research='wictest/isolated_shell/HeicBitmapFrameDecodeProfileCI.cpp'
+          $sha=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+          if(-not (Select-String -Path $research -Pattern 'WIC_HEIC_REXT_TIMING_CI' -Quiet)){
+            throw 'CI-only decoder research source lacks isolation guard'
+          }
+          try {
+            Copy-Item -LiteralPath $research -Destination $source -Force
+            $env:CL='/DWIC_HEIC_REXT_TIMING_CI'
+            msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64
+            if($LASTEXITCODE -ne 0){throw 'CI-only instrumented private decoder failed'}
+          } finally {
+            Remove-Item Env:\CL -ErrorAction SilentlyContinue
+            git restore -- $source
+            if($LASTEXITCODE -ne 0){throw 'CI source restoration failed'}
+          }
+          if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $sha){
+            throw 'Production source not restored exactly after CI-only build'
+          }
+          Write-Host 'HEIC_REXT_CI_INSTRUMENTED_COPY_SOURCE_SHA256_RESTORED'
           foreach($project in @(
             'wictest/isolated_shell/HeicShellFastPreview.vcxproj',
             'wictest/isolated_shell/ShellEmbeddedDirect.vcxproj'
