@@ -207,9 +207,25 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetPreview(__RPC__deref_out_opt IW
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetColorContexts(UINT cCount, __RPC__inout_ecount_full_opt(cCount) IWICColorContext **ppIColorContexts, __RPC__out UINT *pcActualCount)
 {
-	DbgLog("%s", __FUNCTION__);
-
-	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	if (!pcActualCount) return E_POINTER;
+	*pcActualCount=0;
+	if (cCount && !ppIColorContexts) return E_POINTER;
+	if (cCount) ppIColorContexts[0]=nullptr;
+	if (!m_Reader) return WINCODEC_ERR_WRONGSTATE;
+	// Applications may request the container-level color profile instead of
+	// its frame profile. Do not claim "unsupported" for a real source ICC:
+	// it caused callers to discard the display color-space on re-export.
+	try {
+		heif::ImageHandle primary=m_Context.get_primary_image_handle();
+		if (primary.empty()) return WINCODEC_ERR_BADIMAGE;
+		CHeicBitmapFrameDecode* frame=new(std::nothrow) CHeicBitmapFrameDecode(this,primary);
+		if (!frame) return E_OUTOFMEMORY;
+		const HRESULT hr=frame->GetColorContexts(cCount,ppIColorContexts,pcActualCount);
+		frame->Release();
+		return hr;
+	} catch (...) {
+		return WINCODEC_ERR_BADIMAGE;
+	}
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail)
