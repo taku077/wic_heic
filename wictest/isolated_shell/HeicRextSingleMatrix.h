@@ -81,7 +81,7 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
           "Unrecognized HEIC input in single WIC test");
   std::vector<BYTE> reference;
   UINT width=0,height=0;
-  for(unsigned threads:{1u,2u,4u}){
+  for(unsigned threads:{1u,2u,3u,4u}){
    // Each source is instantiated afresh; WIC frame decode is never reused.
    // Alternate baseline and LUT in ABBA+BAAB order to reduce drift.
    const unsigned scheme[]={0,1,1,0,1,0,0,1};
