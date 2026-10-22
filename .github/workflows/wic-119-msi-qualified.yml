@@ -4,6 +4,10 @@ on:
     branches: [release/wic-photos-1.1.19-audit]
     paths: ['.github/workflows/wic-119-msi-qualified.yml', 'Installer/Package.wxs', 'wic_heic/**']
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
