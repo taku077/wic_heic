@@ -1,0 +1,59 @@
+name: Windows Photos HEVC Media Foundation read-only diagnostic CI
+on:
+  push:
+    branches: [experiment/heic-gpu-inprocess-avcodec]
+    paths:
+      - 'diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp'
+      - 'diagnostics/photos_trace/HevcMfReadOnlyProbe.vcxproj'
+      - '.github/workflows/photos-hevc-mf-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  read-only-probe:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Compile x64 Windows SDK Media Foundation capability probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          msbuild 'diagnostics/photos_trace/HevcMfReadOnlyProbe.vcxproj' /nologo /m:1 /p:Configuration=Release /p:Platform=x64 /p:OutDir="$env:RUNNER_TEMP\photos_codec_check\" /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Native HEVC/MF read-only probe failed to compile' }
+      - name: Confirm no file inputs or media/registration operations
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $src=[IO.File]::ReadAllText((Resolve-Path 'diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp').Path)
+          foreach($required in @('MFStartup','MFTEnumEx','MFVideoFormat_HEVC','MFT_CATEGORY_VIDEO_DECODER','MFT_CATEGORY_VIDEO_ENCODER','MFShutdown','CoTaskMemFree','CoUninitialize','arguments_not_allowed')){
+            if(-not $src.Contains($required)){throw "Missing read-only requirement $required"}
+          }
+          foreach($forbidden in @('ActivateObject(', 'RegSetValue', 'CreateFile(', 'WriteFile(', 'DeleteFile(', 'Remove-AppxPackage', 'MFTRegister(')){
+            if($src.Contains($forbidden)){throw "Read-only diagnostic boundary violated $forbidden"}
+          }
+          Write-Host 'HEVC_MF_READ_ONLY_SOURCE_GUARD_PASS'
+      - name: Execute isolated enumeration only (never test Photos UI)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=Join-Path $env:RUNNER_TEMP 'photos_codec_check\HevcMfReadOnlyProbe.exe'
+          if(-not (Test-Path -LiteralPath $exe -PathType Leaf)){throw 'Native probe executable absent'}
+          $out=@(& $exe 2>&1)
+          $ret=$LASTEXITCODE
+          $out|ForEach-Object{Write-Host $_}
+          if($ret -ne 0){throw "Media Foundation read-only enumeration failed with code $ret"}
+          $rows=@($out|Where-Object {$_ -match '^HEVC_MF_INVENTORY codec='})
+          if($rows.Count -ne 4){throw 'Expected 4 MF decoder/encoder read-only inventory rows'}
+          foreach($line in $rows){
+            if($line -notmatch 'scope=process_enumeration_only license_not_verified=1 photos_not_verified=1'){
+              throw "Unsafe MF probe conclusion $line"
+            }
+          }
+          if(-not ($out -match 'HEVC_MF_PROBE_COMPLETE no_photos_test=1 no_codec_install=1 no_file_input=1 no_registration_change=1')){
+            throw 'Read-only MF completion guard absent'
+          }
+          Write-Host 'HEVC_MF_INVENTORY_ISOLATED_WINDOWS_CI_PASS'
