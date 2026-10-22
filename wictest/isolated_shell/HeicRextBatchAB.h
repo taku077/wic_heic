@@ -7,9 +7,28 @@
 #include <atomic>
 #include <future>
 #include <utility>
+#include <psapi.h>
+#pragma comment(lib,"psapi.lib")
 namespace RextBatch {
 using Clock=std::chrono::steady_clock;
 constexpr size_t kCount=7;
+double TotalCpuMilliseconds(){
+ FILETIME a{},b{},kernel{},user{};
+ Require(GetProcessTimes(GetCurrentProcess(),&a,&b,&kernel,&user)!=0,
+         "Process CPU time unavailable");
+ auto ticks=[](FILETIME t)->uint64_t{
+   return uint64_t(t.dwLowDateTime)|(uint64_t(t.dwHighDateTime)<<32);
+ };
+ return double(ticks(kernel)+ticks(user))/10000.;
+}
+double PrivateCommitMiB(){
+ PROCESS_MEMORY_COUNTERS_EX m{};
+ m.cb=sizeof(m);
+ Require(GetProcessMemoryInfo(GetCurrentProcess(),
+         reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m),sizeof(m))!=0,
+         "Process private memory counters unavailable");
+ return double(m.PrivateUsage)/(1024.*1024.);
+}
 struct ComScope {
  bool active=false;
  ComScope(){
@@ -67,10 +86,11 @@ void Run(const std::wstring& providerDll,const std::wstring& samplesPath){
  }
  std::printf("HEIC_REXT_BATCH_REFERENCES sample_count=7 strict_full_PBGRA_baselines=7 no_reencoding=1\n");
  for(unsigned workers:{1u,2u,4u}){
-  std::vector<double> trials;
+  std::vector<double> trials,cpuTrials,privateAfter;
   for(unsigned repetition=0;repetition<4;++repetition){
    std::atomic<size_t> next{0};
    std::atomic<size_t> verified{0};
+   const double cpu0=TotalCpuMilliseconds();
    const auto t0=Clock::now();
    std::vector<std::future<void>> tasks;
    tasks.reserve(workers);
@@ -93,12 +113,16 @@ void Run(const std::wstring& providerDll,const std::wstring& samplesPath){
    Require(verified.load()==kCount,"Missing worker thumbnail or pixel parity");
    const double wall=std::chrono::duration<double,std::milli>(
         Clock::now()-t0).count();
+   const double cpu=TotalCpuMilliseconds()-cpu0;
+   const double privateMiB=PrivateCommitMiB();
    trials.push_back(wall);
-   std::printf("HEIC_REXT_BATCH_TRIAL workers=%u repeat=%u source_count=7 warm_cache_wall_ms=%.3f byte_exact_count=7 provider_unregistered=1\n",
-      workers,repetition,wall);
+   cpuTrials.push_back(cpu);
+   privateAfter.push_back(privateMiB);
+   std::printf("HEIC_REXT_BATCH_TRIAL workers=%u repeat=%u source_count=7 warm_cache_wall_ms=%.3f process_cpu_ms=%.3f process_private_committed_after_mib=%.2f byte_exact_count=7 provider_unregistered=1\n",
+      workers,repetition,wall,cpu,privateMiB);
   }
-  std::printf("HEIC_REXT_BATCH_MEDIAN workers=%u repeats=4 source_count=7 warm_cache_total_ms=%.3f byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0\n",
-    workers,Median4(trials));
+  std::printf("HEIC_REXT_BATCH_MEDIAN workers=%u repeats=4 source_count=7 warm_cache_total_ms=%.3f process_cpu_ms=%.3f process_private_committed_after_mib=%.2f byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0\n",
+    workers,Median4(trials),Median4(cpuTrials),Median4(privateAfter));
  }
  FreeLibrary(provider);
  std::puts("HEIC_REXT_BATCH_1_2_4_WORKERS_ALL_7_HEIC_WIC_PIXEL_EXACT_PASS");
