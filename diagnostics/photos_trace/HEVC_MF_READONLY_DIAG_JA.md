@@ -74,3 +74,18 @@ Windows CIでビルド・実行後、必要になった**1回の診断用**に�
 - **重要**：旧1.1.18には標準フォトでHEICの回転保存を実施した際、再エンコード・色深度低下・EXIF消失の既知の不具合がある。単純な無条件復元を完成済み修復と見なさない。ユーザーの元画像には触れず、現行v0.4.0を維持する。
 - 今後、同じWindows隔離CI上でシステムWICとv0.4.0の両方の導入順序・COM DLL登録の独立性・安全なアンインストール後の登録復旧を検証した後、人工画像のみでWindows 10 Photos編集可能性を確認する。
 - 本節はプライバシー保護のため、個人のディレクトリ・氏名・実写真・原本診断ZIP・具体的なファイルパスをGitHubに転載しない。
+
+## 2026-10-22：安全な一時復旧キット完成（Windows CIのみ合格、フォト実機は未確認）
+
+**P0 標準フォトの編集・回転不能の復旧候補が、Windows Server 2022隔離CIのインストール・切り戻し・画像処理試験を通過した。**
+- [CI #39770708757](https://github.com/taku077/wic_heic/actions/runs/39770708757)：グローバルWIC→プレビューv0.4.0と、**プレビューv0.4.0→グローバルWIC**の両順序で、decoder/encoder 64bit COM登録・独立Shell Provider・DLL SHA-256・相互アンインストール後のハッシュ一致に成功。
+- [CI #39771550007](https://github.com/taku077/wic_heic/actions/runs/39771550007)：v0.4.0登録中、実WICの画像デコード・エンコード、synthetic HEIC無再圧縮回転90/180/270、画素完全一致、ICC同一、Exif Orientation、WIC読み戻し検証に成功。
+- [CI #39773274867](https://github.com/taku077/wic_heic/actions/runs/39773274867)：既存v0.4.0を残したまま、`Install_Experimental_WIC.ps1` の既存WIC衝突チェック（v0.4だけは許容）、WICの一時導入、画像試験、`Uninstall_WIC_Trial_RestorePreview.ps1` の試験用WICだけの削除、v0.4 COM関連付けとサーバー/プライベートDLL SHA一致を**実行して合格**。単一の人工12MP 8bit Main HEICを含むオプションの実機テストキットも生成。
+- オプションキット名 `WIC-Photos-P0-TemporaryGlobalWIC-Win10-UNVERIFIED`、artifact ID `12423925765`。**これは配布候補であり正式版・解決確定ではない。** ユーザーの明示的同意なしにWindows 10 PCへはインストールしない。実写真・特に過去復旧済の画像は編集しない。
+
+### 現時点で絶対に主張しない事項
+- CIはWindows Server 2022で、Windows 10のMicrosoft Photos 2026.11090.22001.0を起動・操作していない。**編集ボタン有効化・回転・保存の実機成功はまだ0件**。
+- Microsoft公式ではWindows10フォトにHEIFとHEVCの両拡張が必要な場合がある。新しい読取専用実機診断ではHEVC AppXとMedia Foundation HEVC decoderが検出されず、WICを足すだけで警告が消える保証はない。
+- 初回Explorerサムネイル30%以上短縮もWindows10実描画では未確認。プレビューv0.4.0 COMとDLLの保持は確認できたが、導入中のExplorer初回時間・CPUピークは未計測。
+- JPEG同等の完全な色・全Exif・MakerNote/ICC・XMP/HDR/補助画像保護、PhotosがWIC native lossless経路を実際に選択することは未確認。**既存実写HEICをWindowsフォトで上書き保存させてはいけない**。
+- 将来の実機試験は公開人工HEIC作業コピー、編集・回転有効性、寸法・ハッシュ、復旧スクリプト実行、v0.4サムネイル維持の一度限りのゲートで実施する。
