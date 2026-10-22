@@ -109,9 +109,14 @@ double Median(std::vector<double> a) {
 }
 }
 #include "HeicRextDirectCorpus.h"
+#include "HeicRextBatchAB.h"
 
 int wmain(int argc,wchar_t** argv){
  try{
+  if(argc==4 && std::wcscmp(argv[1],L"--rext-batch-corpus")==0){
+   RextBatch::Run(argv[2],argv[3]);
+   return 0;
+  }
   if(argc==5 && std::wcscmp(argv[1],L"--rext-corpus")==0){
    RextDirectCorpus::Run(argv[2],argv[3],argv[4]);
    return 0;
