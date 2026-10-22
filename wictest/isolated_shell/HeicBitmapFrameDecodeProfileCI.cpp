@@ -45,6 +45,13 @@ unsigned long long RextMicros(LARGE_INTEGER a,LARGE_INTEGER b) noexcept {
    (double(b.QuadPart-a.QuadPart)*1000000.0)/double(rate.QuadPart));
 }
 }
+extern "C" __declspec(dllexport) unsigned __stdcall WicHeicRextLookupEnabled() noexcept {
+#ifdef WIC_HEIC_REXT_NBIT_LUT_CI
+ return 1;
+#else
+ return 0;
+#endif
+}
 extern "C" __declspec(dllexport) void __stdcall WicHeicRextTimingReset() noexcept {
  g_rextDecodeUs.store(0);
  g_rextCopyUs.store(0);
