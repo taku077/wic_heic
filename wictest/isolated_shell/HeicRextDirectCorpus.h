@@ -11,6 +11,24 @@ namespace RextDirectCorpus {
 using Bytes=std::vector<BYTE>;
 using Clock=std::chrono::steady_clock;
 using PrivateEntry=HRESULT(STDAPICALLTYPE*)(REFCLSID,REFIID,LPVOID*);
+using ResetFn=void(__stdcall*)();
+using SnapshotFn=void(__stdcall*)(unsigned long long*,unsigned long long*,
+                                  unsigned long long*,unsigned long long*);
+struct Stages{
+ double hevcRgbMs=0,rawWicCopyMs=0;
+ unsigned long long hevcCalls=0,rawCopyCalls=0;
+};
+inline Stages Snapshot(SnapshotFn function){
+ unsigned long long d=0,c=0,dc=0,cc=0;
+ function(&d,&c,&dc,&cc);
+ Require(dc>=1 && cc>=1 && dc<=1024 && cc<=1024,
+         "RExt isolated private WIC instrument did not cover real CopyPixels");
+ Stages result;
+ result.hevcRgbMs=double(d)/1000.;
+ result.rawWicCopyMs=double(c)/1000.;
+ result.hevcCalls=dc;result.rawCopyCalls=cc;
+ return result;
+}
 inline void CheckHr(HRESULT hr,const char* stage){
  if(FAILED(hr)) {
   std::printf("REXT_PROVIDER_FAIL stage=%s hr=0x%08X\n",stage,unsigned(hr));
@@ -34,7 +52,7 @@ struct Reference {
  Bytes pixels;
  UINT width=0,height=0;
  WICPixelFormatGUID originalFormat{};
- double elapsedMs=0;
+ double elapsedMs=0, wicCopyPixelsMs=0;
 };
 inline Reference FromUnregisteredWic(PrivateEntry getFactory,
                                     const std::wstring& image,
@@ -76,10 +94,13 @@ inline Reference FromUnregisteredWic(PrivateEntry getFactory,
          WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),
          "WIC PBGRA initialise");
  reference.pixels.resize(size_t(bytes));
+ const auto wicCopyStart=Clock::now();
  CheckHr(converter->CopyPixels(nullptr,reference.width*4,
          UINT(bytes),reference.pixels.data()),"WIC reference CopyPixels");
- reference.elapsedMs=std::chrono::duration<double,std::milli>(
-   Clock::now()-start).count();
+ const auto done=Clock::now();
+ reference.wicCopyPixelsMs=std::chrono::duration<double,std::milli>(
+   done-wicCopyStart).count();
+ reference.elapsedMs=std::chrono::duration<double,std::milli>(done-start).count();
  return reference;
 }
 inline double Median(std::vector<double> samples) {
@@ -115,6 +136,12 @@ inline void Run(const std::wstring& providerDll,
  const auto decoderEntry=reinterpret_cast<PrivateEntry>(
      GetProcAddress(codec,"DllGetClassObject"));
  Require(entry&&decoderEntry,"private COM class factory export missing");
+ const auto reset=reinterpret_cast<ResetFn>(
+   GetProcAddress(codec,"WicHeicRextTimingReset"));
+ const auto snapshot=reinterpret_cast<SnapshotFn>(
+   GetProcAddress(codec,"WicHeicRextTimingSnapshot"));
+ Require(reset&&snapshot,
+         "Research-only RExt timing exports absent: refuse uninstrumented test");
  ComPtr<IWICImagingFactory> wic;
  CheckHr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
     IID_PPV_ARGS(wic.GetAddressOf())),"WIC imaging factory");
@@ -129,6 +156,8 @@ inline void Run(const std::wstring& providerDll,
     (attr&FILE_ATTRIBUTE_DIRECTORY)==0 &&
     (attr&FILE_ATTRIBUTE_REPARSE_POINT)==0,"unexpected HEIC file");
   std::vector<double> directTime,referenceTime;
+  std::vector<double> directHevc,directRawCopy,directOther;
+  std::vector<double> refHevc,refRawCopy,refWicOnly,refDownstream,refSetup;
   UINT lastWidth=0,lastHeight=0;
   // ABBA-like alternation. Two separate implementations, both using the
   // same UNREGISTERED WIC decoder and the exact original Fant->PBGRA.
@@ -136,13 +165,37 @@ inline void Run(const std::wstring& providerDll,
    const bool referenceFirst=(pass==0||pass==3);
    Reference ref;
    Result direct;
+   Stages directStages,refStages;
    if(referenceFirst) {
+    reset();
     ref=FromUnregisteredWic(decoderEntry,file,wic.Get());
+    refStages=Snapshot(snapshot);
+    reset();
     direct=Capture(entry,file,256);
+    directStages=Snapshot(snapshot);
    } else {
+    reset();
     direct=Capture(entry,file,256);
+    directStages=Snapshot(snapshot);
+    reset();
     ref=FromUnregisteredWic(decoderEntry,file,wic.Get());
+    refStages=Snapshot(snapshot);
    }
+   const double refRest=ref.wicCopyPixelsMs-
+                          refStages.hevcRgbMs-refStages.rawWicCopyMs;
+   const double directRest=direct.elapsedMs-
+                          directStages.hevcRgbMs-directStages.rawWicCopyMs;
+   Require(refRest>=-2.0 && directRest>=-2.0 &&
+           refStages.hevcRgbMs>=0 && directStages.hevcRgbMs>=0,
+           "RExt stage timing is physically inconsistent");
+   refHevc.push_back(refStages.hevcRgbMs);
+   refRawCopy.push_back(refStages.rawWicCopyMs);
+   refWicOnly.push_back(ref.wicCopyPixelsMs);
+   refDownstream.push_back(refRest);
+   refSetup.push_back(ref.elapsedMs-ref.wicCopyPixelsMs);
+   directHevc.push_back(directStages.hevcRgbMs);
+   directRawCopy.push_back(directStages.rawWicCopyMs);
+   directOther.push_back(directRest);
    Require(ref.width==direct.width && ref.height==direct.height &&
      direct.pixels.size()==ref.pixels.size(),
      "RExt direct provider WIC dimensions or stride mismatch");
@@ -177,6 +230,10 @@ inline void Run(const std::wstring& providerDll,
   std::printf("HEIC_REXT_DIRECT_AB sample=%s passes=4 exact_bytes_all_passes=1 provider_median_ms=%.3f private_wic_median_ms=%.3f dimensions=%ux%u no_registry=1\n",
     sample.c_str(),providerMs,referenceMs,
     unsigned(lastWidth),unsigned(lastHeight));
+  std::printf("HEIC_REXT_STAGES sample=%s passes=4 provider_hevc_rgb_ms=%.3f provider_native_copy_ms=%.3f provider_other_ms=%.3f reference_hevc_rgb_ms=%.3f reference_native_copy_ms=%.3f reference_wic_copy_pixels_ms=%.3f reference_wic_downstream_ms=%.3f reference_setup_ms=%.3f data_scope=private_WIC_only source_unchanged=1\n",
+    sample.c_str(),Median(directHevc),Median(directRawCopy),Median(directOther),
+    Median(refHevc),Median(refRawCopy),Median(refWicOnly),
+    Median(refDownstream),Median(refSetup));
   ++approved;
  }
  Require(approved==7,"seven RExt examples not covered");
