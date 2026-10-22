@@ -93,11 +93,13 @@ void Run(const std::wstring& providerDll,const std::wstring& samplesPath){
  // CPU clock frequency bias. Do not compare sequentially grouped modes.
  constexpr unsigned schedule[]={1,2,4,4,2,1,1,4,2,2,4,1};
  std::vector<double> trials[5],cpuTrials[5],privateAfter[5];
+ std::vector<double> firstReady[5],firstLargeReady[5];
  unsigned attempts[5]={};
  for(unsigned workers:schedule){
   const unsigned repetition=attempts[workers]++;
    std::atomic<size_t> next{0};
    std::atomic<size_t> verified{0};
+   std::array<double,kCount> completedMs{};
    const double cpu0=TotalCpuMilliseconds();
    const auto t0=Clock::now();
    std::vector<std::future<void>> tasks;
@@ -113,6 +115,10 @@ void Run(const std::wstring& providerDll,const std::wstring& samplesPath){
        Require(result.width==item.w && result.height==item.h &&
                result.pixels==item.pixels,
                "Concurrent provider changed RExt WIC Fant/PBGRA bytes");
+       // Each index is claimed exactly once by the atomic queue: disjoint
+       // array elements are safe to write concurrently and read after joins.
+       completedMs[index]=std::chrono::duration<double,std::milli>(
+          Clock::now()-t0).count();
        verified.fetch_add(1);
       }
     }));
@@ -123,16 +129,24 @@ void Run(const std::wstring& providerDll,const std::wstring& samplesPath){
         Clock::now()-t0).count();
    const double cpu=TotalCpuMilliseconds()-cpu0;
    const double privateMiB=PrivateCommitMiB();
+   for(const double completed:completedMs)
+     Require(completed>0 && completed<=wall+10.,
+       "Incomplete/invalid ready time for one exact RExt thumbnail");
+   const double first=*std::min_element(completedMs.begin(),completedMs.end());
+   const double large04Ready=completedMs[1];
+   firstReady[workers].push_back(first);
+   firstLargeReady[workers].push_back(large04Ready);
    trials[workers].push_back(wall);
    cpuTrials[workers].push_back(cpu);
    privateAfter[workers].push_back(privateMiB);
-   std::printf("HEIC_REXT_BATCH_TRIAL workers=%u repeat=%u source_count=7 warm_cache_wall_ms=%.3f process_cpu_ms=%.3f process_private_committed_after_mib=%.2f byte_exact_count=7 provider_unregistered=1\n",
-      workers,repetition,wall,cpu,privateMiB);
+   std::printf("HEIC_REXT_BATCH_TRIAL workers=%u repeat=%u source_count=7 warm_cache_wall_ms=%.3f first_thumbnail_ready_ms=%.3f large_04_thumbnail_ready_ms=%.3f process_cpu_ms=%.3f process_private_committed_after_mib=%.2f byte_exact_count=7 provider_unregistered=1\n",
+      workers,repetition,wall,first,large04Ready,cpu,privateMiB);
  }
  for(unsigned workers:{1u,2u,4u}){
   Require(attempts[workers]==4,"Unbalanced throughput modes");
-  std::printf("HEIC_REXT_BATCH_MEDIAN workers=%u repeats=4 source_count=7 warm_cache_total_ms=%.3f process_cpu_ms=%.3f process_private_committed_after_mib=%.2f byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0\n",
-    workers,Median4(trials[workers]),Median4(cpuTrials[workers]),Median4(privateAfter[workers]));
+  std::printf("HEIC_REXT_BATCH_MEDIAN workers=%u repeats=4 source_count=7 warm_cache_total_ms=%.3f first_thumbnail_ready_ms=%.3f large_04_thumbnail_ready_ms=%.3f process_cpu_ms=%.3f process_private_committed_after_mib=%.2f byte_exact_all=1 explorer_first_paint_unverified=1 product_enabled=0\n",
+    workers,Median4(trials[workers]),Median4(firstReady[workers]),
+    Median4(firstLargeReady[workers]),Median4(cpuTrials[workers]),Median4(privateAfter[workers]));
  }
  FreeLibrary(provider);
  std::puts("HEIC_REXT_BATCH_1_2_4_WORKERS_ALL_7_HEIC_WIC_PIXEL_EXACT_PASS");
