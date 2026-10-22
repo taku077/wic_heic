@@ -93,7 +93,7 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
    // Each source is instantiated afresh; WIC frame decode is never reused.
    // Alternate baseline and LUT in ABBA+BAAB order to reduce drift.
    const unsigned scheme[]={0,1,1,0,1,0,0,1};
-   std::vector<double> wall[2],cpu[2],decode[2],nativeCopy[2],remaining[2],privateAfter[2];
+   std::vector<double> wall[2],cpu[2],decode[2],nativeCopy[2],remaining[2],privateAfter[2],setup[2],wicOther[2];
    for(unsigned turn:scheme){
     Codec& codec=codecs[turn];
     Require(codec.set(threads)==1,
@@ -116,6 +116,15 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
             "Invalid nested HEVC RGB / WIC copy stage counters");
     const double residualMs=wallMs-decodeMs-nativeCopyMs;
     const double restMs=(residualMs>0.0)?residualMs:0.0;
+    // WIC reference starts its CopyPixels clock AFTER decoder/frame, scaler and
+    // converter initialization. This identifies whether alpha costs live in
+    // setup or in Fant/PBGRA processing (never presume which without CI).
+    const double setupRaw=wallMs-image.wicCopyPixelsMs;
+    const double wicOtherRaw=image.wicCopyPixelsMs-decodeMs-nativeCopyMs;
+    Require(setupRaw>=-2.0 && wicOtherRaw>=-2.0,
+            "Invalid WIC setup/downstream timing boundaries");
+    const double setupMs=setupRaw>0.0?setupRaw:0.0;
+    const double wicOtherMs=wicOtherRaw>0.0?wicOtherRaw:0.0;
     // Snapshot AFTER the request; never call this a process peak.
     const double privateMiB=RextBatch::PrivateCommitMiB();
     Require(privateMiB>0.0,"Invalid private committed memory snapshot");
@@ -134,6 +143,8 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
     decode[turn].push_back(decodeMs);
     nativeCopy[turn].push_back(nativeCopyMs);
     remaining[turn].push_back(restMs);
+    setup[turn].push_back(setupMs);
+    wicOther[turn].push_back(wicOtherMs);
     privateAfter[turn].push_back(privateMiB);
    }
    for(unsigned turn:{0u,1u}){
@@ -146,6 +157,9 @@ void Run(const std::wstring& scalarPath,const std::wstring& lutPath,
       file.label,threads,turn?"lut":"scalar",
       Median4(decode[turn]),Median4(nativeCopy[turn]),
       Median4(remaining[turn]),Median4(privateAfter[turn]));
+    std::printf("HEIC_REXT_SINGLE_WIC_SUBSTAGES sample=%s libheif_threads=%u color=%s repeats=4 setup_before_copy_ms=%.3f downstream_wic_fant_pbgra_ms=%.3f exact_256px_pbgra=1 medians_not_additive=1 alpha_route_not_assumed=1 research_only=1\n",
+      file.label,threads,turn?"lut":"scalar",
+      Median4(setup[turn]),Median4(wicOther[turn]));
    }
   }
  }
