@@ -8,6 +8,8 @@ on:
       - 'wictest/isolated_shell/HeicBitmapFrameDecodeProfileCI.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.cpp'
       - 'wictest/isolated_shell/HeifRextThreadsAB.vcxproj'
+      - 'wictest/isolated_shell/HeifRextColorStageAB.cpp'
+      - 'wictest/isolated_shell/HeifRextColorStageAB.vcxproj'
       - 'wictest/isolated_shell/ShellEmbeddedDirect.cpp'
       - 'wictest/isolated_shell/HeicTrialThumbnail.cpp'
       - 'wictest/isolated_shell/HeicShellFastPreview.vcxproj'
@@ -117,6 +119,47 @@ jobs:
           $ErrorActionPreference='Stop'
           msbuild wictest/isolated_shell/HeifRextThreadsAB.vcxproj /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'RExt thread-count research test failed compilation'}
+      - name: Build isolated native 10bit YUV versus RGB HEIC decoder research probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeifRextColorStageAB.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'RExt 10bit native YUV/RGB stage split benchmark failed to build'}
+      - name: Analyze two real RExt HEIC 10bit YUV-versus-RGB decode modes with stable hashes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:GITHUB_WORKSPACE 'wictest\samples'
+          $names=@('04','fixture-irot3-exif6-noaux')
+          $before=@{}
+          foreach($name in $names){
+            $src=(Resolve-Path -LiteralPath (Join-Path $root ($name+'.heic'))).Path
+            $before[$name]=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+          }
+          $exe=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/HeifRextColorStageAB.exe').Path
+          $logs=@(& $exe $root 2>&1)
+          $code=$LASTEXITCODE
+          $logs|ForEach-Object {Write-Host $_}
+          if($code -ne 0){throw 'RExt YUV RGB decode profiling encountered an unsafe error'}
+          if(-not ($logs -match 'HEIC_REXT_COLOR_2FILES_2WORKERS_2FORMATS_4REPEATS_VALID_CI_ONLY_PASS')){
+            throw 'All RExt native YUV and RGB decode modes were not observed'
+          }
+          $rows=@($logs|Where-Object {$_ -match '^HEIC_REXT_COLOR_SPLIT sample='})
+          if($rows.Count -ne 4){throw 'Four stage split measurements are required'}
+          foreach($line in $rows){
+            if($line -notmatch 'repeats=4' -or
+               $line -notmatch 'each_route_stable_hash=1' -or
+               $line -notmatch 'equivalent_image_color_not_claimed=1 production_enabled=0'){
+              throw ('Invalid RExt decoder profiling route: '+$line)
+            }
+          }
+          foreach($name in $names){
+            $src=(Resolve-Path -LiteralPath (Join-Path $root ($name+'.heic'))).Path
+            if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne $before[$name]){
+              throw ('Original RExt HEIC file changed: '+$name)
+            }
+          }
+          Write-Host 'HEIC_REXT_YCBCR420_VS_RGB48_SPLIT_FOUR_STABLE_READONLY_CASES_PASS'
       - name: Verify raw ten-bit RExt decoder threading effects with exact full-RGB parity
         shell: pwsh
         run: |
