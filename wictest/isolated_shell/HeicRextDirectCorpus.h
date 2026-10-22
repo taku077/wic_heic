@@ -152,8 +152,17 @@ inline void Run(const std::wstring& providerDll,
    const bool hasAlpha=
     IsEqualGUID(ref.originalFormat,GUID_WICPixelFormat32bppRGBA)||
     IsEqualGUID(ref.originalFormat,GUID_WICPixelFormat64bppRGBA);
-   Require(direct.alpha==(hasAlpha?WTSAT_ARGB:WTSAT_RGB),
-     "RExt WTS_ALPHATYPE flag not compatible with source WIC format");
+   // The isolated preview intentionally declares ARGB even for opaque
+   // thumbnails to retain real Shell cache premultiplication semantics.
+   // The alpha flag therefore cannot be inferred solely from source bits.
+   Require(direct.alpha==WTSAT_ARGB ||
+      (!hasAlpha && direct.alpha==WTSAT_RGB),
+      "RExt WTS_ALPHATYPE flag incompatible with WIC alpha");
+   if(!hasAlpha){
+    for(size_t n=3;n<direct.pixels.size();n+=4)
+     Require(direct.pixels[n]==255,
+       "Opaque HEIC exported a non-opaque premultiplied alpha byte");
+   }
    lastWidth=ref.width;lastHeight=ref.height;
    directTime.push_back(direct.elapsedMs);
    referenceTime.push_back(ref.elapsedMs);
