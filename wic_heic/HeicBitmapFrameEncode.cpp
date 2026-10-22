@@ -322,6 +322,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 				return S_OK;
 			}
 			originalSource->Release();
+			// Never fall through to RGB re-encoding of our own HEIC after a
+			// rejected metadata-preserving copy: this silently strips EXIF,
+			// XMP, HDR gain maps and embedded thumbnails.
+			WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,0,
+				m_HeifCompressionMethod,"unsafe-source-reencode",
+				WINCODEC_ERR_UNSUPPORTEDOPERATION);
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 		}
 	}
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
