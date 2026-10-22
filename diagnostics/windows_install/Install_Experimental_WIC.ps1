@@ -33,8 +33,18 @@ if($before.Schema -ne 1 -or @($before.Registrations).Count -ne 12) {
   throw 'Incomplete WIC registry snapshot; installation blocked.'
 }
 $occupied=@($before.Registrations | Where-Object { -not [string]::IsNullOrWhiteSpace($_.InprocServer32) })
-$oldMsi=@($before.WicHeicMsi)
-if($occupied.Count -gt 0 -or $oldMsi.Count -gt 0) {
+# The v0.4.0 Shell preview MSI is deliberately independent and must NOT
+# trigger the collision guard for this system-wide decoder/encoder repair.
+# Reject every other matching WicHeic MSI (including an old global WIC).
+$allMsi=@($before.WicHeicMsi)
+$knownPreview=@($allMsi | Where-Object {
+ $_.Name -eq 'WicHeic Fast Thumbnail Preview (Experimental)' -and $_.Version -eq '0.4.0'
+})
+$otherMsi=@($allMsi | Where-Object {
+ -not ($_.Name -eq 'WicHeic Fast Thumbnail Preview (Experimental)' -and $_.Version -eq '0.4.0')
+})
+if($knownPreview.Count -gt 1){throw 'Unexpected multiple v0.4.0 preview MSI entries.'}
+if($occupied.Count -gt 0 -or $otherMsi.Count -gt 0) {
   Write-Warning 'INSTALL_BLOCKED_EXISTING_WIC: Existing WIC codec detected.'
   Write-Host 'Your original WIC installer/restore method must be verified BEFORE any replacement.'
   Write-Host 'No install/uninstall or WIC registry changes were made.'
