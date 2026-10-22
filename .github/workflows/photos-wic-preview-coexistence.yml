@@ -2,7 +2,7 @@ name: Windows Photos global WIC and v0.4 private preview coexistence
 on:
   push:
     branches: [release/wic-photos-1.1.19-audit]
-    paths: ['.github/workflows/photos-wic-preview-coexistence.yml', 'wic_heic/**', 'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1']
+    paths: ['.github/workflows/photos-wic-preview-coexistence.yml', 'wic_heic/**', 'wictest/**', 'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1']
   workflow_dispatch:
 permissions:
   contents: read
