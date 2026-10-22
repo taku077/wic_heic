@@ -108,8 +108,14 @@ double Median(std::vector<double> a) {
  return (a[a.size()/2]+a[a.size()/2-1])/2.;
 }
 }
+#include "HeicRextDirectCorpus.h"
+
 int wmain(int argc,wchar_t** argv){
  try{
+  if(argc==5 && std::wcscmp(argv[1],L"--rext-corpus")==0){
+   RextDirectCorpus::Run(argv[2],argv[3],argv[4]);
+   return 0;
+  }
   Require(argc==4,"usage: ShellDll syntheticBase syntheticWithThumb");
   const std::wstring base=argv[2],with=argv[3];
   Guard(base,L"wicfast_baseline_4032x3024.heic");
