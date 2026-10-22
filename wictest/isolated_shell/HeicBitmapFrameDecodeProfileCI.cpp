@@ -9,6 +9,10 @@
 #include <new>
 #endif
 #include "PhotosWicTrace.h"
+#ifdef WIC_HEIC_REXT_TIMING_CI
+#include <stdexcept>
+#include <new>
+#endif
 #ifdef WIC_HEIC_REXT_NBIT_LUT_CI
 #include <array>
 // CI research only: never compile this fast branch into a production codec.
