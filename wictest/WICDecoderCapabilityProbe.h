@@ -410,6 +410,59 @@ inline void VerifyPrimarySelectionWhenPitmChanges(IWICImagingFactory* factory) {
     raw->Release();
     if(secondary!=WINCODEC_ERR_UNSUPPORTEDOPERATION || !copied.empty())
         throw std::runtime_error("WIC secondary frame exposed the primary's HEIF bytes");
+    // Actual WIC encoder integration, not only a private RAW-source probe.
+    // With pitm=2, copying selected frame zero must retain the ENTIRE
+    // original container, including its new primary association, exactly.
+    // A secondary frame MUST NOT silently produce the unrelated primary
+    // container. Both outputs are memory streams; no files are touched.
+    auto verifyWrite=[&](IWICBitmapFrameDecode* selected,bool primary) {
+        CComPtr<IWICBitmapEncoder> encoder;
+        if(FAILED(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder)))
+            throw std::runtime_error("Primary-switch WIC encoder missing");
+        CComPtr<IStream> memory;
+        if(FAILED(CreateStreamOnHGlobal(nullptr,TRUE,&memory)))
+            throw std::runtime_error("Primary-switch WIC output memory missing");
+        if(FAILED(encoder->Initialize(memory,WICBitmapEncoderNoCache)))
+            throw std::runtime_error("Primary-switch WIC encoder init failed");
+        CComPtr<IWICBitmapFrameEncode> outputFrame;
+        if(FAILED(encoder->CreateNewFrame(&outputFrame,nullptr)) ||
+           FAILED(outputFrame->Initialize(nullptr)))
+            throw std::runtime_error("Primary-switch WIC output frame init failed");
+        UINT sw=0,sh=0;
+        if(FAILED(selected->GetSize(&sw,&sh)) ||
+           FAILED(outputFrame->SetSize(sw,sh)))
+            throw std::runtime_error("Primary-switch output dimensions failed");
+        const HRESULT writeHr=outputFrame->WriteSource(selected,nullptr);
+        if(!primary) {
+            if(writeHr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+                throw std::runtime_error("Secondary HEIC frame was copied as full primary container");
+            STATSTG st{};
+            if(FAILED(memory->Stat(&st,STATFLAG_NONAME)) ||
+               st.cbSize.QuadPart!=0)
+                throw std::runtime_error("Rejected secondary wrote output bytes");
+            puts("WIC_PRIMARY_SWITCH_SECONDARY_LOSSLESS_COPY_REJECT_PASS");
+            return;
+        }
+        if(FAILED(writeHr) || FAILED(outputFrame->Commit()) ||
+           FAILED(encoder->Commit()))
+            throw std::runtime_error("Primary-switch lossless WIC copy failed");
+        STATSTG st{};
+        if(FAILED(memory->Stat(&st,STATFLAG_NONAME)) ||
+           st.cbSize.QuadPart!=bytes.size())
+            throw std::runtime_error("Primary-switch lossless output byte length changed");
+        LARGE_INTEGER zero{};
+        if(FAILED(memory->Seek(zero,STREAM_SEEK_SET,nullptr)))
+            throw std::runtime_error("Primary-switch output rewind failed");
+        std::vector<BYTE> copiedResult(bytes.size());
+        ULONG n=0;
+        if(FAILED(memory->Read(copiedResult.data(),ULONG(copiedResult.size()),&n)) ||
+           n!=copiedResult.size() || copiedResult!=bytes)
+            throw std::runtime_error("Primary-switch HEIC lossless output lost source bytes");
+        puts("WIC_PRIMARY_SWITCH_LOSSLESS_WIC_COPY_BYTE_EQUAL_PASS");
+    };
+    verifyWrite(first,true);
+    verifyWrite(second,false);
     puts("WIC_PRIMARY_HEIC_FRAME_ZERO_INVARIANT_PASS");
 }
 inline void Run() {
