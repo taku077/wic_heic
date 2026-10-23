@@ -6,6 +6,8 @@ private:
 	std::atomic<uint32_t> m_Count;
 	heif::Context m_Context;
 	CHeifStreamReader* m_Reader;
+	// Reader allocation alone is not proof that HEIF parsing succeeded.
+	bool m_Initialized;
 
 public:
 	CHeicBitmapDecoder();
