@@ -433,7 +433,7 @@ jobs:
                 "WIC_PHOTOS_8BIT_${kind}_RGB_CHANNEL_TOTALS",
                 "WIC_PHOTOS_8BIT_${kind}_ADJACENT_CHANGES"
               )
-              $metrics=${}
+              $metrics=@{}
               foreach($key in $keys) {
                 $pair=@()
                 foreach($label in @('ORIGINAL118','RESEARCH')){
