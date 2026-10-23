@@ -1,4 +1,5 @@
 #pragma once
+#include <wincodecsdk.h>
 // Read-only HEIC frame metadata block contract. Public disposable synthetic
 // Exif fixture only; no user photos, output files, registry, or MSI actions.
 namespace PhotosMetadataBlockProbe {
