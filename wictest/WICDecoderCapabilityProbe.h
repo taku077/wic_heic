@@ -313,6 +313,18 @@ inline void Survey() {
         CComPtr<IWICMetadataQueryWriter> writer;
         hr=vendorEncoder->GetMetadataQueryWriter(&writer);
         printf("WIC_PHOTOS_EDITOR_VENDOR_ENCODER_METADATA_WRITER_HRESULT=0x%08X\n",unsigned(hr));
+        // Exercise the legal WIC lifecycle on both historical and
+        // research implementations. Earlier A/B accidentally called
+        // CreateNewFrame BEFORE Initialize: old 1.1.18 accepted this
+        // invalid order, while corrected research rejects it correctly.
+        // The observation here is about GUI-relevant *valid* WIC APIs.
+        CComPtr<IStream> surveyOutput;
+        hr=CreateStreamOnHGlobal(nullptr,TRUE,&surveyOutput);
+        if(FAILED(hr)||!surveyOutput)
+            throw std::runtime_error("Survey encoder memory stream missing");
+        hr=vendorEncoder->Initialize(surveyOutput,WICBitmapEncoderNoCache);
+        if(FAILED(hr))
+            throw std::runtime_error("Survey encoder initialization failed");
         CComPtr<IWICBitmapFrameEncode> newFrame;
         hr=vendorEncoder->CreateNewFrame(&newFrame,nullptr);
         printf("WIC_PHOTOS_EDITOR_CREATE_FRAME_HRESULT=0x%08X\n",unsigned(hr));
