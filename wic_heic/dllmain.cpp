@@ -151,12 +151,10 @@ HRESULT RegisterDecoder(const std::wstring& dllPath)
 				8,
 				4
 			},
-			{
-				"\xff\xff\xff\xff\xff\xff\xff\xff",
-				"ftypavif", // AV1 image
-				8,
-				4
-			},
+			// Deliberately DO NOT claim ftypavif here. AVIF requires an
+			// AV1 decoder, but this HEIC codec build only includes HEVC
+			// (libde265). Registering AVIF made WIC falsely match AVIF
+			// during codec arbitration before QueryCapability validation.
 		};
 
 		for (size_t i = 0; i < _countof(patterns); i++) {
