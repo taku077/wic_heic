@@ -1,4 +1,8 @@
 #pragma once
+#include <thread>
+#include <atomic>
+#include <array>
+#include <exception>
 // Windows Photos GUI owns zoom/next/previous controls. This regression
 // verifies the WIC data contract those controls rely on: independent file
 // opens, full-resolution CopyPixels and exact cropped regions. Synthetic
@@ -53,6 +57,79 @@ inline void Probe(IWICImagingFactory* fac,const wchar_t* path) {
     printf("WIC_PHOTOS_FULLRES_ZOOM_REGION_EXACT_PASS width=%u height=%u bpp=%u\n",
            w,h,bpp*8u);
 }
+// Synthetic-only MTA stress: all worker threads share ONE decoded WIC frame.
+// Creating the frame inside an MTA thread avoids crossing the main test's
+// STA boundary with an unmarshaled COM interface. Cold-start CopyPixels
+// races are where the previous unprotected m_Decoded/m_Image writes occurred.
+inline void VerifySharedFrameConcurrentMta() {
+    std::exception_ptr failure;
+    std::thread harness([&] {
+        const HRESULT apartment=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+        if(FAILED(apartment)) {
+            failure=std::make_exception_ptr(
+                std::runtime_error("MTA synthetic harness COM init failed"));
+            return;
+        }
+        try {
+            {
+                CComPtr<IWICImagingFactory> factory;
+                if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
+                    CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,
+                    reinterpret_cast<void**>(&factory))))
+                    throw std::runtime_error("MTA frame test factory unavailable");
+                CComPtr<IWICBitmapDecoder> decoder;
+                if(FAILED(factory->CreateDecoderFromFilename(
+                    L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,
+                    GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder)))
+                    throw std::runtime_error("MTA frame test HEIC decoder unavailable");
+                CComPtr<IWICBitmapFrameDecode> shared;
+                if(FAILED(decoder->GetFrame(0,&shared)))
+                    throw std::runtime_error("MTA frame test synthetic frame missing");
+                constexpr size_t n=8;
+                constexpr UINT width=48,height=48,stride=width*3;
+                const WICRect box{0,0,INT(width),INT(height)};
+                std::array<std::vector<BYTE>,n> pixels;
+                std::array<HRESULT,n> results{};
+                std::atomic<unsigned> ready{0};
+                std::atomic<bool> fire{false};
+                std::vector<std::thread> workers;
+                workers.reserve(n);
+                for(size_t i=0;i<n;i++) {
+                    pixels[i].resize(size_t(stride)*height);
+                    workers.emplace_back([&,i] {
+                        const HRESULT apartmentWorker=CoInitializeEx(
+                            nullptr,COINIT_MULTITHREADED);
+                        ready.fetch_add(1,std::memory_order_release);
+                        while(!fire.load(std::memory_order_acquire))
+                            std::this_thread::yield();
+                        if(SUCCEEDED(apartmentWorker)) {
+                            results[i]=shared->CopyPixels(&box,stride,
+                                UINT(pixels[i].size()),pixels[i].data());
+                            CoUninitialize();
+                        } else {
+                            results[i]=apartmentWorker;
+                        }
+                    });
+                }
+                while(ready.load(std::memory_order_acquire)!=n)
+                    std::this_thread::yield();
+                fire.store(true,std::memory_order_release);
+                for(auto& worker:workers)worker.join();
+                for(size_t i=0;i<n;i++) {
+                    if(FAILED(results[i])||pixels[i]!=pixels[0])
+                        throw std::runtime_error(
+                            "Concurrent MTA CopyPixels corrupted common HEIC frame");
+                }
+                puts("WIC_PHOTOS_SHARED_FRAME_MTA_COPYPIXELS_8WAY_IDENTICAL_PASS");
+            }
+        } catch(...) {
+            failure=std::current_exception();
+        }
+        CoUninitialize();
+    });
+    harness.join();
+    if(failure)std::rethrow_exception(failure);
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -63,6 +140,7 @@ inline void Run() {
     Probe(factory,L"samples\\fixture-irot3-exif6-noaux.heic");
     Probe(factory,L"samples\\fixture-irot3-exif6.heic");
     Probe(factory,L"samples\\fixture-irot3-exif6-noaux.heic");
+    VerifySharedFrameConcurrentMta();
     puts("WIC_PHOTOS_MULTIFILE_NAVIGATION_DECODE_REGRESSION_PASS");
 }
 }
