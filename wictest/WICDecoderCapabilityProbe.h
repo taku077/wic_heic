@@ -465,65 +465,75 @@ inline void VerifyPrimarySelectionWhenPitmChanges(IWICImagingFactory* factory) {
     verifyWrite(second,false);
     puts("WIC_PRIMARY_HEIC_FRAME_ZERO_INVARIANT_PASS");
 }
-// Historical v1.1.18 advertised CanDecodeThumbnail for every HEIC,
-// even if GetThumbnail returned CODECNOTHUMBNAIL. The current codec should
-// instead deliver a real, orientation-correct thumbnail for a synthetic HEIC
-// without an embedded thumbnail. The primary HEIF image, not a secondary
-// item or arbitrary first top-level item, must be the source.
-inline void VerifyGeneratedThumbnailFallback(IWICImagingFactory* factory) {
+// The WIC specification says CanDecodeThumbnail is ONLY for real embedded
+// global/frame thumbnails. When none exists, WIC callers can scale the
+// decoded primary themselves. Do NOT copy historical 1.1.18's dishonest
+// advertised thumbnail flag or force a costly synthesized thumbnail into
+// IWICBitmapDecoder::GetThumbnail. Measure the standards-compliant fallback
+// against a public HEIC with no embedded thumbnail.
+inline void VerifyWicScaleFallbackWithoutEmbeddedThumbnail(IWICImagingFactory* factory) {
     CComPtr<IWICBitmapDecoder> decoder;
     HRESULT hr=factory->CreateDecoderFromFilename(
         L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
         WICDecodeMetadataCacheOnDemand,&decoder);
-    if(FAILED(hr)||!decoder)throw std::runtime_error("Thumbnail fallback synthetic decoder missing");
-    CComPtr<IWICBitmapFrameDecode> first;
-    if(FAILED(decoder->GetFrame(0,&first)))
-        throw std::runtime_error("Thumbnail fallback primary missing");
+    if(FAILED(hr)||!decoder)
+        throw std::runtime_error("WIC nonembedded thumbnail source missing");
+    CComPtr<IWICBitmapFrameDecode> primary;
+    if(FAILED(decoder->GetFrame(0,&primary)))
+        throw std::runtime_error("WIC nonembedded thumbnail primary missing");
+    CComPtr<IWICBitmapSource> absent;
+    HRESULT containerHr=decoder->GetThumbnail(&absent);
+    const bool containerMissing=containerHr==WINCODEC_ERR_CODECNOTHUMBNAIL && !absent;
+    HRESULT frameHr=primary->GetThumbnail(&absent);
+    const bool frameMissing=frameHr==WINCODEC_ERR_CODECNOTHUMBNAIL && !absent;
+    if(!containerMissing||!frameMissing)
+        throw std::runtime_error("Absent HEIC thumbnail was falsely returned as embedded");
+    CComPtr<IWICStream> stream;
+    if(FAILED(factory->CreateStream(&stream)) ||
+       FAILED(stream->InitializeFromFilename(
+          L"samples\\fixture-irot3-exif6-noaux.heic",GENERIC_READ)))
+        throw std::runtime_error("WIC thumbnail capability stream failed");
+    CComPtr<IWICBitmapDecoder> queryDecoder;
+    if(FAILED(factory->CreateDecoder(GUID_ContainerFormatHEIC,
+       &GUID_VendorPrsyahmi,&queryDecoder)))
+        throw std::runtime_error("WIC thumbnail capability codec missing");
+    DWORD flags=0;
+    if(FAILED(queryDecoder->QueryCapability(stream,&flags)) ||
+       (flags&WICBitmapDecoderCapabilityCanDecodeThumbnail))
+        throw std::runtime_error("WIC claimed an embedded thumbnail when absent");
     UINT fw=0,fh=0;
-    if(FAILED(first->GetSize(&fw,&fh))||fw==0||fh==0)
-        throw std::runtime_error("Thumbnail fallback primary geometry missing");
+    if(FAILED(primary->GetSize(&fw,&fh))||fw<2||fh<2)
+        throw std::runtime_error("WIC primary dimensions invalid");
     const UINT longSide=(fw>fh?fw:fh);
-    const UINT tw=(fw*256ull+longSide/2)/longSide>0?
-        UINT((uint64_t(fw)*256ull+longSide/2)/longSide):1;
-    const UINT th=(fh*256ull+longSide/2)/longSide>0?
-        UINT((uint64_t(fh)*256ull+longSide/2)/longSide):1;
-    CComPtr<IWICBitmapSource> containerThumb;
-    CComPtr<IWICBitmapSource> frameThumb;
-    const HRESULT contHr=decoder->GetThumbnail(&containerThumb);
-    const HRESULT frameHr=first->GetThumbnail(&frameThumb);
-    printf("WIC_PHOTOS_GENERATED_THUMBNAIL_HRESULTS container=0x%08X frame=0x%08X\\n",
-        unsigned(contHr),unsigned(frameHr));
-    if(FAILED(contHr)||FAILED(frameHr)||!containerThumb||!frameThumb)
-        throw std::runtime_error("Valid HEIC had no usable WIC thumbnail fallback");
-    UINT w=0,h=0,fw2=0,fh2=0;
-    if(FAILED(containerThumb->GetSize(&w,&h))||
-       FAILED(frameThumb->GetSize(&fw2,&fh2))||
-       w!=tw || h!=th || fw2!=w || fh2!=h || w>256 || h>256)
-        throw std::runtime_error("HEIC thumbnail fallback geometry or orientation incorrect");
-    CComPtr<IWICBitmapScaler> refScale;
-    if(FAILED(factory->CreateBitmapScaler(&refScale)) ||
-       FAILED(refScale->Initialize(first,w,h,WICBitmapInterpolationModeFant)))
-        throw std::runtime_error("Thumbnail fallback reference scaler missing");
-    auto rgb=[&](IWICBitmapSource* source) {
-        CComPtr<IWICBitmapSource> converted;
-        if(FAILED(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,source,&converted)))
-            throw std::runtime_error("Thumbnail RGB conversion failed");
-        std::vector<BYTE> bytes(size_t(w)*h*3);
-        if(FAILED(converted->CopyPixels(nullptr,w*3,UINT(bytes.size()),bytes.data())))
-            throw std::runtime_error("Thumbnail full CopyPixels failed");
-        return bytes;
-    };
-    if(rgb(containerThumb)!=rgb(refScale) || rgb(frameThumb)!=rgb(refScale))
-        throw std::runtime_error("Generated HEIC thumbnail differs from primary-image reference");
-    // A generated raster must NOT expose full original HEIF bytes as if it
-    // were a lossless primary source; this would silently mis-save a preview.
+    const UINT tw=UINT((uint64_t(fw)*256ull+longSide/2)/longSide);
+    const UINT th=UINT((uint64_t(fh)*256ull+longSide/2)/longSide);
+    if(!tw||!th||tw>256||th>256)
+        throw std::runtime_error("WIC scaler fallback geometry overflow");
+    CComPtr<IWICBitmapScaler> scaled;
+    if(FAILED(factory->CreateBitmapScaler(&scaled)) ||
+       FAILED(scaled->Initialize(primary,tw,th,WICBitmapInterpolationModeFant)))
+        throw std::runtime_error("WIC primary fallback scaling failed");
+    UINT w=0,h=0;
+    if(FAILED(scaled->GetSize(&w,&h))||w!=tw||h!=th)
+        throw std::runtime_error("WIC fallback scaler returned wrong geometry");
+    CComPtr<IWICBitmapSource> rgb;
+    if(FAILED(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,scaled,&rgb)))
+        throw std::runtime_error("WIC scaled HEIC RGB conversion failed");
+    std::vector<BYTE> pixels(size_t(tw)*th*3);
+    if(FAILED(rgb->CopyPixels(nullptr,tw*3,UINT(pixels.size()),pixels.data())))
+        throw std::runtime_error("WIC scaled HEIC readback failed");
+    BYTE lo=255,hi=0;
+    for(BYTE v:pixels) {if(v<lo)lo=v;if(v>hi)hi=v;}
+    if(lo==hi)throw std::runtime_error("HEIC primary thumbnail produced no pixel variation");
+    // A scaled raster must not masquerade as the original HEIF bitstream.
     IHeicRawSource* raw=nullptr;
-    HRESULT rawHr=containerThumb->QueryInterface(
+    HRESULT rawHr=scaled->QueryInterface(
         IID_IHeicRawSource,reinterpret_cast<void**>(&raw));
     if(raw)raw->Release();
     if(SUCCEEDED(rawHr))
-        throw std::runtime_error("Generated thumbnail exposed lossless HEIF source");
-    puts("WIC_PHOTOS_GENERATED_THUMBNAIL_RGB_MATCH_PASS");
+        throw std::runtime_error("Scaled HEIC preview leaked raw-source provenance");
+    printf("WIC_PHOTOS_SPEC_COMPLIANT_NO_EMBEDDED_THUMBNAIL_AND_RGB_FALLBACK_PASS size=%ux%u mask=0x%X\\n",
+        tw,th,unsigned(flags));
 }
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
@@ -531,7 +541,7 @@ inline void Run() {
         CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,
         (void**)&factory)))throw std::runtime_error("Capability factory unavailable");
     VerifyPrimarySelectionWhenPitmChanges(factory);
-    VerifyGeneratedThumbnailFallback(factory);
+    VerifyWicScaleFallbackWithoutEmbeddedThumbnail(factory);
     Verify(factory,L"samples\\fixture-irot3-exif6.heic",true,true);
     Verify(factory,L"samples\\fixture-irot3-exif6-noaux.heic",true,true);
     Verify(factory,L"samples\\01.png",false,false);
