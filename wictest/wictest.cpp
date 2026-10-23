@@ -340,7 +340,15 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bo
 			throw std::exception("Failed to SetPixelFormat");
 		}
 
-		if (syntheticRasterRotation) {
+		// The smoke fixture may be a PNG/GIF, whose pixel-only conversion
+		// to a NEW synthetic HEIC is deliberate, not a fidelity-preserving
+		// edit to existing HEIC. The product WriteSource now requires proven
+		// original HEIF provenance; these synthetic transcodes must explicitly
+		// use WritePixels instead of a potentially metadata-stripping fallback.
+		const bool syntheticNonHeic = srcFile.size() >= 4 &&
+			(srcFile.compare(srcFile.size()-4,4,L".png")==0 ||
+			 srcFile.compare(srcFile.size()-4,4,L".gif")==0);
+		if (syntheticRasterRotation || syntheticNonHeic) {
 			// This is a synthetic geometry-only conversion. A materialized
 			// IWICBitmap may also have come from a real HEIC with metadata,
 			// so the product encoder's WriteSource must reject it. These
@@ -365,6 +373,8 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bo
 			std::vector<BYTE> bytes(static_cast<size_t>(total));
 			hr=normalized->CopyPixels(nullptr,UINT(stride),UINT(total),bytes.data());
 			if (FAILED(hr)) throw std::exception("Synthetic rotated CopyPixels failed");
+			if (syntheticNonHeic)
+				puts("WIC_SYNTHETIC_NONHEIC_TRANSCODE_EXPLICIT_PIXELS_NO_METADATA_PARITY");
 			hr=pFrameEncode->WritePixels(height,UINT(stride),UINT(total),bytes.data());
 			if (FAILED(hr)) throw std::exception("Synthetic rotated WritePixels failed");
 		} else {
