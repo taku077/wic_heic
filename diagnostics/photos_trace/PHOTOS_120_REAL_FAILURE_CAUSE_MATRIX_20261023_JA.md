@@ -452,3 +452,12 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - WIC decoderの`GetPixelFormat`は24bpp RGB、32bpp RGBA、48bpp RGB、64bpp RGBAを返せるのに、従来の`RegisterDecoder`には24bpp RGBしか記録されていなかった。`IWICBitmapDecoderInfo::GetPixelFormats`を先に調べるアプリは正しい画素形式を発見できない。合成人工10bit WICテスト`45ce0404123ad4200a6848f574574596b50c7c4d`、製品レジストリ登録修正`2f4b4042e87ff76c840f797d5fe38f8e7998c7b5`。**Decoder登録のみ**であり、実際に高ビット深度HEICをエンコードできる保証がないEncoder側には広げない。
 - [**隔離CI #39995711285 — SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/39995711285)：WIC decoder登録画素形式`count=4 rgb24=1 rgba32=1 rgb48=1 rgba64=1`、8個の同時`CopyPixels`が全件`S_OK`でハッシュ`90C01259A9A8D128`一致、4回90度の全画素一致、旧版A/B、ICC保持、COMインストール/削除独立性の既存試験も合格。**実Windows 10 Photos GUIの警告解除・編集ボタン・安全保存が復旧したわけではない。**
 - **続きの検証**：Encoder側の32bpp RGBA8対応はWIC APIでの受付だけでは認定しない。人工RGBAを`WritePixels`してHEICへCommitした後、フレームを開き直して画素形式とアルファの変化を確認する回帰試験を追加（`b142490ea9788ca26966544353792d1bb8db9553`）。この追試が成功するまではEncoderの登録形式は変更しない。研究版のMSI配布ゲートは閉鎖を継続。
+
+### 上記の画素形式登録・MTA検証の最終CI結果（2026-10-24）
+
+[**CI #39995711285**](https://github.com/taku077/wic_heic/actions/runs/39995711285)：**全工程SUCCESS**。Microsoft WinSDKの実GUIDをWIC decoder `Formats`へ追加し、標準WICコンポーネント情報から`WIC_HEIC_DECODER_REGISTERED_PIXEL_FORMATS count=4 rgb24=1 rgba32=1 rgb48=1 rgba64=1`を取得。直接10bit人工HEIC読込と4形式のデコーダー登録が整合した。
+
+- 同じ**10bit人工HEIC**の同一frameへ8並列`CopyPixels`：8workerとも`HRESULT=0x00000000`、FNV64=`90C01259A9A8D128`で完全一致。`WIC_PHOTOS_SHARED_FRAME_MTA_COPYPIXELS_8WAY_IDENTICAL_PASS`。従前の「MTA race」失敗は24bpp用stride指定という**テスト不備が影響していた**。この1件の合格はすべての並列/長時間/アプリ側のアクセス安全性を保証するものではない。
+- `WIC_PRIMARY_SWITCH_LOSSLESS_WIC_COPY_BYTE_EQUAL_PASS`、ICC 3144bytes正確な往復、主画像認識、完全バイト同一の無再圧縮処理、4回90度の`6220800`RGBバイト完全一致、旧1.1.18とのWIC合成画像A/B、フォト用MSI配布ブロックいずれも維持。
+- 最新コード修正`2f4b4042e87ff76c840f797d5fe38f8e7998c7b5`、テスト入力stride修正`174a1a79a4051e754ea4a0cb4e982babf845df31`。今回ユーザーPCで旧1.1.18の入替・再導入・画像保存はしていない。
+- **Windows 10 Photos GUIのHEVC警告/編集可否は未合格**。登録画素形式の不足は確実に修正されたが、フォト内部のHEVC利用権限とは別であり、因果を断定しない。元進捗42%からの増分はあくまで保守的な暫定評価とする。
