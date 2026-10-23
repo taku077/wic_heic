@@ -126,7 +126,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Initialize(__RPC__in_opt IProp
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetSize(UINT uiWidth, UINT uiHeight)
 {
-	if (m_Created || m_HasPixels || m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
+	if (!m_OptionsInitialized || m_Created || m_HasPixels || m_LosslessReady || m_Committed)
+		return WINCODEC_ERR_WRONGSTATE;
 	if (!uiWidth || !uiHeight || uiWidth > 20000 || uiHeight > 20000)
 		return E_INVALIDARG;
 	m_Width = uiWidth;
@@ -164,7 +165,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 	if (!pPixelFormat) {
 		return E_INVALIDARG;
 	}
-	if (m_Created || m_HasPixels || m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
+	if (!m_OptionsInitialized || m_Created || m_HasPixels || m_LosslessReady || m_Committed)
+		return WINCODEC_ERR_WRONGSTATE;
 
 	if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat24bppRGB)) {
 		m_PixelFormat = *pPixelFormat;
@@ -217,7 +219,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
-	if (m_Created || m_HasPixels || m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
+	if (!m_OptionsInitialized || m_Created || m_HasPixels || m_LosslessReady || m_Committed)
+		return WINCODEC_ERR_WRONGSTATE;
 	std::vector<uint8_t> profile;
 	HRESULT hr = HeicColorProfileWic::ReadArray(cCount, ppIColorContext, &profile);
 	if (FAILED(hr)) {
@@ -246,6 +249,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetThumbnail(__RPC__in_opt IWI
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UINT cbStride, UINT cbBufferSize, __RPC__in_ecount_full(cbBufferSize) BYTE *pbPixels)
 {
 	WicHeicDiagnostic::Emit("WritePixelsEnter",m_Width,lineCount,m_BitmapTransform,m_HeifCompressionMethod,"raster");
+	if (!m_OptionsInitialized) return WINCODEC_ERR_WRONGSTATE;
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
 		DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE WritePixels transform=%u compression=%u",unsigned(m_BitmapTransform),unsigned(m_HeifCompressionMethod));
 		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
@@ -339,6 +343,7 @@ static bool RequestedICCMatchesSource(IWICBitmapSource* bitmap,
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
 	WicHeicDiagnostic::Emit("WriteSourceEnter",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,prc?"cropped":"full");
+	if (!m_OptionsInitialized) return WINCODEC_ERR_WRONGSTATE;
 	// A captured lossless container is immutable. A second source write must
 	// never be accepted and then silently ignored by EncoderCommit.
 	if (m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
@@ -617,6 +622,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 {
 	WicHeicDiagnostic::Emit("FrameCommit",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,m_LosslessReady?"lossless":"raster");
+	if (!m_OptionsInitialized) return WINCODEC_ERR_WRONGSTATE;
 	if (m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	if (m_LosslessReady && !m_LosslessBytes.empty()) {
 		m_Committed = true;
