@@ -53,6 +53,48 @@ inline void Verify(IWICImagingFactory* factory, const wchar_t* path,
     printf("WIC_CAPABILITY_STREAM_VERIFIED_CURSOR_RESTORED format=%s mask=0x%X\n",
            isHeic?"HEIC":"PNG",(unsigned)capabilities);
 }
+// Additional A/B only for a PUBLIC SYNTHETIC HEIC with an embedded ICC.
+// Earlier probes observed ONLY an ICC-absent fixture, so they could not
+// distinguish "the API changed in general" from "only zero-ICC differs".
+// This performs no save, no register writes, and never reads user photography.
+// The historical codec is allowed to return errors; record rather than mask.
+inline void SurveySyntheticIccForPhotosEditor(IWICImagingFactory* factory) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    const HRESULT created=factory->CreateDecoderFromFilename(
+        L"samples\\icc-roundtrip.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder);
+    printf("WIC_PHOTOS_ICC_PRESENT_DECODER_HRESULT=0x%08X\n",(unsigned)created);
+    if(FAILED(created)||!decoder)
+        throw std::runtime_error("Synthetic ICC HEIC cannot be opened");
+    UINT containerCount=0;
+    const HRESULT containerHr=decoder->GetColorContexts(0,nullptr,&containerCount);
+    printf("WIC_PHOTOS_ICC_PRESENT_CONTAINER_HRESULT=0x%08X\n",(unsigned)containerHr);
+    printf("WIC_PHOTOS_ICC_PRESENT_CONTAINER_COUNT=%u\n",containerCount);
+    CComPtr<IWICBitmapFrameDecode> frame;
+    const HRESULT frameHr=decoder->GetFrame(0,&frame);
+    if(FAILED(frameHr)||!frame)
+        throw std::runtime_error("Synthetic ICC HEIC frame missing");
+    UINT frameCount=0;
+    const HRESULT frameColors=frame->GetColorContexts(0,nullptr,&frameCount);
+    printf("WIC_PHOTOS_ICC_PRESENT_FRAME_HRESULT=0x%08X\n",(unsigned)frameColors);
+    printf("WIC_PHOTOS_ICC_PRESENT_FRAME_COUNT=%u\n",frameCount);
+    if(SUCCEEDED(frameColors) && frameCount>0) {
+        IWICColorContext* profile=nullptr;
+        UINT returned=0;
+        HRESULT fetch=frame->GetColorContexts(1,&profile,&returned);
+        CComPtr<IWICColorContext> holder;
+        holder.Attach(profile);
+        printf("WIC_PHOTOS_ICC_PRESENT_PROFILE_FETCH_HRESULT=0x%08X\n",(unsigned)fetch);
+        printf("WIC_PHOTOS_ICC_PRESENT_PROFILE_RETURNED=%u\n",returned);
+        if(SUCCEEDED(fetch) && profile) {
+            WICColorContextType type=WICColorContextUninitialized;
+            HRESULT typeHr=profile->GetType(&type);
+            printf("WIC_PHOTOS_ICC_PRESENT_PROFILE_TYPE_HRESULT=0x%08X\n",(unsigned)typeHr);
+            printf("WIC_PHOTOS_ICC_PRESENT_PROFILE_TYPE=%u\n",(unsigned)type);
+        }
+    }
+    puts("WIC_PHOTOS_ICC_PRESENT_AB_OBSERVATION_COMPLETE_PASS");
+}
 // Read-only capability survey. It is deliberately compatible with the
 // historical v1.1.18 DLL, which violates current arbitration invariants;
 // no correctness assertions are made inside this observer. Used ONLY on
@@ -209,6 +251,7 @@ inline void Survey() {
             throw std::runtime_error("Survey unexpectedly wrote memory stream bytes");
     }
     puts("WIC_PHOTOS_EDITOR_MEMONLY_ROTATOR_AB_SURVEY_COMPLETE_PASS");
+    SurveySyntheticIccForPhotosEditor(factory);
     puts("WIC_PHOTOS_EDITOR_COM_API_SURVEY_COMPLETE_PASS");
     printf("WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS\n");
 }
