@@ -54,6 +54,18 @@ inline void Run() {
     printf("WIC_ENCODER_OVERLAPPING_FRAME_HRESULT=0x%08X\\n",unsigned(nextFrameHr));
     if(nextFrameHr!=WINCODEC_ERR_WRONGSTATE || tooEarlyNextFrame)
         throw std::runtime_error("Encoder accepted overlapping active frames");
+    // A frame must be initialized with its WIC encoder options before
+    // geometry, format, or ICC configuration is accepted.
+    HRESULT preSize=frame->SetSize(H,W);
+    GUID preFormat=GUID_WICPixelFormat24bppRGB;
+    HRESULT preFormatHr=frame->SetPixelFormat(&preFormat);
+    HRESULT preColorHr=frame->SetColorContexts(0,nullptr);
+    printf("WIC_FRAME_PREINIT_SETTERS_HRESULT size=0x%08X format=0x%08X icc=0x%08X\\n",
+        unsigned(preSize),unsigned(preFormatHr),unsigned(preColorHr));
+    if(preSize!=WINCODEC_ERR_WRONGSTATE ||
+       preFormatHr!=WINCODEC_ERR_WRONGSTATE ||
+       preColorHr!=WINCODEC_ERR_WRONGSTATE)
+        throw std::runtime_error("Frame settings accepted before frame Initialize");
     Check(frame->Initialize(nullptr),"Init frame");
     HRESULT thumbnailHr=frame->SetThumbnail(source);
     if(thumbnailHr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
