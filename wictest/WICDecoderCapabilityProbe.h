@@ -61,6 +61,20 @@ inline void Run() {
     Verify(factory,L"samples\\fixture-irot3-exif6.heic",true,true);
     Verify(factory,L"samples\\fixture-irot3-exif6-noaux.heic",true,true);
     Verify(factory,L"samples\\01.png",false,false);
+    // The codec is explicitly constructed here to ensure malformed formats
+    // return BADIMAGE rather than an invented out-of-memory condition.
+    CComPtr<IWICBitmapDecoder> invalid;
+    if(FAILED(CoCreateInstance(CLSID_HEICDecoder,nullptr,CLSCTX_INPROC_SERVER,
+          IID_IWICBitmapDecoder,(void**)&invalid)))
+        throw std::runtime_error("Malformed-HEIF decoder activation failed");
+    CComPtr<IWICStream> png;
+    if(FAILED(factory->CreateStream(&png)) ||
+       FAILED(png->InitializeFromFilename(L"samples\\01.png",GENERIC_READ)))
+        throw std::runtime_error("Malformed HEIF fixture open failed");
+    HRESULT bad=invalid->Initialize(png,WICDecodeMetadataCacheOnDemand);
+    if(bad!=WINCODEC_ERR_BADIMAGE)
+        throw std::runtime_error("Malformed HEIF must return WINCODEC_ERR_BADIMAGE");
+    puts("WIC_PHOTOS_MALFORMED_HEIF_REPORTS_BADIMAGE_NOT_OOM_PASS");
     printf("WIC_PHOTOS_DECODER_ARBITRATION_CONTRACT_PASS\n");
 }
 }
