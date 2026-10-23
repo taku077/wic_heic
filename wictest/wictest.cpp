@@ -266,12 +266,21 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bo
 
 		IWICBitmapSource* sourceToEncode = static_cast<IWICBitmapSource*>(pFrameDecode.p);
 		CComPtr<IWICBitmapFlipRotator> rotatedSource;
+		CComPtr<IWICBitmap> syntheticRasterRotation;
 		if (rotate90) {
 			hr = pFactory->CreateBitmapFlipRotator(&rotatedSource);
 			if (FAILED(hr)) throw std::exception("Failed to create WIC flip rotator");
 			hr = rotatedSource->Initialize(sourceToEncode, WICBitmapTransformRotate90);
 			if (FAILED(hr)) throw std::exception("Failed to rotate WIC bitmap source");
-			sourceToEncode = static_cast<IWICBitmapSource*>(rotatedSource.p);
+			// This function is a CI-only synthetic geometry test, not a
+			// production HEIC photo editor. Explicitly materialize rotated
+			// RGB pixels so we can compare geometry independent of metadata.
+			// Do not feed a WIC flip-rotator directly into the HEIC encoder:
+			// it cannot preserve original HEIC Exif/ICC/HDR provenance.
+			hr = pFactory->CreateBitmapFromSource(rotatedSource,
+				WICBitmapCacheOnLoad, &syntheticRasterRotation);
+			if (FAILED(hr)) throw std::exception("Failed to materialize synthetic raster");
+			sourceToEncode = static_cast<IWICBitmapSource*>(syntheticRasterRotation.p);
 			UINT previousWidth = width;
 			width = height;
 			height = previousWidth;
