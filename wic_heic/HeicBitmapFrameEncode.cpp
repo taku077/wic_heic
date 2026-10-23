@@ -272,6 +272,41 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// A captured lossless container is immutable. A second source write must
 	// never be accepted and then silently ignored by EncoderCommit.
 	if (m_LosslessReady) return WINCODEC_ERR_WRONGSTATE;
+	if (!pIBitmapSource) return E_POINTER;
+	// IWICBitmapFrameEncode::WriteSource explicitly allows callers to omit
+	// SetSize and SetPixelFormat. Windows' canonical HEIF no-recompression
+	// example does exactly that. Infer absent settings only from this source,
+	// never from a filename, previously viewed photo, global state or cache.
+	// Source rotation is reflected in the *output* dimensions.
+	if ((!m_Width) != (!m_Height)) return WINCODEC_ERR_WRONGSTATE;
+	if (!m_Width) {
+		UINT sourceW=0,sourceH=0;
+		HRESULT hr=pIBitmapSource->GetSize(&sourceW,&sourceH);
+		if (FAILED(hr)) return hr;
+		if (!sourceW || !sourceH) return E_INVALIDARG;
+		if (prc) {
+			if (prc->X<0 || prc->Y<0 || prc->Width<=0 || prc->Height<=0 ||
+			    uint64_t(prc->X)+UINT(prc->Width)>sourceW ||
+			    uint64_t(prc->Y)+UINT(prc->Height)>sourceH)
+				return E_INVALIDARG;
+			sourceW=UINT(prc->Width);
+			sourceH=UINT(prc->Height);
+		}
+		HRESULT set=SetSize((m_BitmapTransform&1)?sourceH:sourceW,
+		                    (m_BitmapTransform&1)?sourceW:sourceH);
+		if (FAILED(set)) return set;
+		WicHeicDiagnostic::Emit("WriteSourceAutoSize",m_Width,m_Height,
+			m_BitmapTransform,m_HeifCompressionMethod,"source-geometry");
+	}
+	if (m_Chroma==heif_chroma_undefined) {
+		WICPixelFormatGUID sourceFormat{};
+		HRESULT hr=pIBitmapSource->GetPixelFormat(&sourceFormat);
+		if (FAILED(hr)) return hr;
+		hr=SetPixelFormat(&sourceFormat);
+		if (FAILED(hr)) return hr;
+		WicHeicDiagnostic::Emit("WriteSourceAutoPixelFormat",m_Width,m_Height,
+			m_BitmapTransform,m_HeifCompressionMethod,"source-format");
+	}
 	// No pixel or metadata edits: preserve the HEIF container byte-for-byte.
 	// Previously the default encoder option (DontCare) decoded/recompressed
 	// our own source frame and silently discarded EXIF/XMP/MakerNote/HDR.
