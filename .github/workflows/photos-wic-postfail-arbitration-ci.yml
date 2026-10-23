@@ -317,6 +317,7 @@ jobs:
               if($output -notmatch 'WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS'){throw 'Survey incomplete'}
               $m=[regex]::Match($output,'WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x([a-fA-F0-9]+)')
               if(!$m.Success){throw 'Survey failed to return capability mask'}
+              $script:abSurveys[$label]=$output
               Write-Host ('WIC_PHOTOS_AB_'+$label+'='+$output.Replace([Environment]::NewLine,';'))
               return [Convert]::ToUInt32($m.Groups[1].Value,16)
             } finally {
@@ -324,6 +325,7 @@ jobs:
               Pop-Location
             }
           }
+          $script:abSurveys=@{}
           $installed=''
           try {
             Msi i $old[0].FullName
@@ -340,6 +342,49 @@ jobs:
             if(($newMask -band 0x4) -eq 0 -or ($newMask -band 0x1) -ne 0){throw ('Invalid new capability mask '+$newMask)}
             Write-Host ('WIC_PHOTOS_AB_HISTORIC_MASK=0x{0:X}' -f $oldMask)
             Write-Host ('WIC_PHOTOS_AB_RESEARCH_MASK=0x{0:X}' -f $newMask)
+            # Narrow the actual observed WIC differences without presuming
+            # that any single flag controls Microsoft Photos GUI behavior.
+            $stableMetrics=@(
+              'WIC_PHOTOS_CAPABILITY_SURVEY_DEFAULT_IS_CUSTOM',
+              'WIC_PHOTOS_EDITOR_CONTAINER_MATCHES_PRIVATE',
+              'WIC_PHOTOS_EDITOR_DECODER_PREVIEW_HRESULT',
+              'WIC_PHOTOS_EDITOR_CONTAINER_METADATA_HRESULT',
+              'WIC_PHOTOS_EDITOR_CONTAINER_COLORCONTEXTS_COUNT',
+              'WIC_PHOTOS_EDITOR_FRAME_COLORCONTEXTS_COUNT',
+              'WIC_PHOTOS_EDITOR_FRAME_METADATA_HRESULT',
+              'WIC_PHOTOS_EDITOR_DEFAULT_ENCODER_HRESULT',
+              'WIC_PHOTOS_EDITOR_DEFAULT_ENCODER_METADATA_WRITER_HRESULT',
+              'WIC_PHOTOS_EDITOR_VENDOR_ENCODER_HRESULT',
+              'WIC_PHOTOS_EDITOR_VENDOR_ENCODER_METADATA_WRITER_HRESULT',
+              'WIC_PHOTOS_EDITOR_CREATE_FRAME_HRESULT',
+              'WIC_PHOTOS_EDITOR_FRAME_METADATA_WRITER_HRESULT'
+            )
+            foreach($key in $stableMetrics) {
+              $values=@()
+              foreach($label in @('ORIGINAL118','RESEARCH')){
+                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)'
+                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
+                if(-not $match.Success){throw ('Missing editor observation: '+$label+' '+$key)}
+                $values+= $match.Groups[1].Value.Trim()
+              }
+              if($values[0] -cne $values[1]){
+                throw ('Previously stable editor API differs unexpectedly: '+$key+' '+($values -join ' vs '))
+              }
+            }
+            Write-Host 'WIC_PHOTOS_EDITOR_13_API_STABLE_ACROSS_118_AND_RESEARCH_PASS'
+            foreach($kind in @('CONTAINER','FRAME')){
+              $key='WIC_PHOTOS_EDITOR_'+$kind+'_COLORCONTEXTS_HRESULT'
+              $oldMatch=[regex]::Match([string]$script:abSurveys['ORIGINAL118'],
+                  '(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)')
+              $newMatch=[regex]::Match([string]$script:abSurveys['RESEARCH'],
+                  '(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)')
+              if(-not $oldMatch.Success -or -not $newMatch.Success -or
+                 $oldMatch.Groups[1].Value -cne '0x88982F81' -or
+                 $newMatch.Groups[1].Value -cne '0x00000000'){
+                throw ('Unexpected color-context A/B diff: '+$key)
+              }
+            }
+            Write-Host 'WIC_PHOTOS_COLORCONTEXT_ONLY_REPORTED_HRESULT_CHANGE_PASS'
             Write-Host 'PHOTOS_WIC_SYNTHETIC_118_VS_RESEARCH_ARBITRATION_AB_PASS'
             Write-Host 'WINDOWS10_PHOTOS_GUI_NOT_TESTED_MSI_RELEASE_WITHHELD'
           } finally {

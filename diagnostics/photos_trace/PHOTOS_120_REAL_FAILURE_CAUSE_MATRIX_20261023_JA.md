@@ -53,3 +53,26 @@ CIは公開人工HEICだけで実行し、元画像にもユーザーPCにもア
 - ただし変化したのはWICの複数API実装箇所であり、QueryCapability `SameEncoder` 1→0だけが原因だと確定しない。少なくとも公開人工HEICでは旧版／修正版ともにWindows WICの自動デコーダー選択に成功した。
 - **標準フォト上でJPEG同等の無劣化回転保存・EXIF/ICC/HDR保持は未検証である。** UIのボタン復活と画像保全の完成を混同しない。
 - 実機には現在v1.1.18が復元されている。これを保持し、必要性が固まるまで別MSIを配布・導入しない。ユーザーの写真に触れない。v0.4.0は現時点でアンインストール済み。
+
+## 追加A/B：編集・保存API計測で差をさらに限定（2026-10-23）
+[CI #39942508191](https://github.com/taku077/wic_heic/actions/runs/39942508191)：歴史的v1.1.18と修正版で同じ公開人工HEICを使い、以下のWIC APIを読取専用で照会した。両方のMSIは使い捨てWindows Server 2022ランナーでのみ導入し、ユーザーへMSIを配布していない。
+
+| API | 旧v1.1.18 | 修正版 |
+|---|---|---|
+| WICの自作デコーダー自動選択 | 成功 | 成功 |
+| HEICコンテナーGUID | 同じ | 同じ |
+| Decoder.GetPreview | `0x88982F81` (非対応) | 同じ |
+| Decoder.GetMetadataQueryReader | `0x88982F81` (非対応) | 同じ |
+| **Decoder.GetColorContexts（プロファイル0件）** | **`0x88982F81`** | **`0x00000000`** |
+| **Frame.GetColorContexts（プロファイル0件）** | **`0x88982F81`** | **`0x00000000`** |
+| Frame.GetMetadataQueryReader | `S_OK` | 同じ |
+| WICエンコーダー自動選択・明示選択 | `S_OK` | 同じ |
+| Encoder.GetMetadataQueryWriter | `0x88982F81` (非対応) | 同じ |
+| Encoder.CreateNewFrame | `S_OK` | 同じ |
+| FrameEncode.GetMetadataQueryWriter | `0x80004001` (`E_NOTIMPL`) | 同じ |
+
+加えて既知の差分は `QueryCapability` が `0x15`→`0x0C`。**フォトに関係する今回観測したAPIのうち、実際に応答が異なるのは能力値と空のカラープロファイル列挙の成否**。これらのどちらがPhotos警告・編集ボタンを制御するかは未判明。
+
+留意点：旧版の `SameEncoder` は他社のiPhone HEICに無条件で立ててよいものではない。旧版に合わせて偽装する「修正」は仕様違反となるため行わない。フレームの `GetMetadataQueryWriter` が両版で未実装であることは、**UIの復活とは別の保存品質・EXIF/ICC保持の問題**。これを理由にして旧版もJPEG品質の保存が完成したと説明しない。
+
+実機でPhotosのHEVC警告を消すには、旧v1.1.18のA-B-A確認に加えて**本物のWindows 10標準フォトが、どのDLL・WIC APIを呼び、どのエラーで編集を制限しているか**の記録が必要。Windows ServerのCIにはPhotos 2026の実UIがないため、今回のA/Bデータだけで完成を主張しない。
