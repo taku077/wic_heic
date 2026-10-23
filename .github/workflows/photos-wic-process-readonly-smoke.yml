@@ -42,6 +42,7 @@ jobs:
           $reports=@(Get-ChildItem 'diagnostics/photos_trace' -Filter 'Photos_WIC_Process_ReadOnly_*.json' -File)
           if($reports.Count -ne 2){throw 'Each invocation must write exactly one new report without overwriting existing files'}
           Write-Host 'PHOTOS_WIC_ONECLICK_NO_ADMIN_NO_IMAGE_ACCESS_CI_PASS'
+          Write-Host 'Windows Server smoke cannot prove actual Win10 Photos codec routing.'
       - name: Package two-file read-only Photos WIC process diagnostic
         uses: actions/upload-artifact@v4
         with:
@@ -51,4 +52,3 @@ jobs:
             diagnostics/photos_trace/Run_Photos_WIC_Process_ReadOnly.cmd
           if-no-files-found: error
           retention-days: 30
-          Write-Host 'This Windows Server 2022 test cannot prove Win10 Photos module loading.'
