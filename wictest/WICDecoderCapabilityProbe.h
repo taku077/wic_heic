@@ -144,24 +144,24 @@ inline void Survey() {
     // or paths are written into CI output. Both versions use this exact probe.
     UINT frameCount=0;
     hr=automatic->GetFrameCount(&frameCount);
-    printf("WIC_PHOTOS_PIXEL_FRAMECOUNT_HRESULT=0x%08X\\n",(unsigned)hr);
-    printf("WIC_PHOTOS_PIXEL_FRAMECOUNT=%u\\n",frameCount);
+    printf("WIC_PHOTOS_PIXEL_FRAMECOUNT_HRESULT=0x%08X\n",(unsigned)hr);
+    printf("WIC_PHOTOS_PIXEL_FRAMECOUNT=%u\n",frameCount);
     if(FAILED(hr)||frameCount==0)
         throw std::runtime_error("Synthetic HEIC has no WIC frames");
     CComPtr<IWICBitmapFrameDecode> pixelFrame;
     hr=automatic->GetFrame(0,&pixelFrame);
-    printf("WIC_PHOTOS_PIXEL_GETFRAME_HRESULT=0x%08X\\n",(unsigned)hr);
+    printf("WIC_PHOTOS_PIXEL_GETFRAME_HRESULT=0x%08X\n",(unsigned)hr);
     if(FAILED(hr)||!pixelFrame)
         throw std::runtime_error("Synthetic HEIC frame cannot be obtained");
     UINT frameWidth=0,frameHeight=0;
     hr=pixelFrame->GetSize(&frameWidth,&frameHeight);
-    printf("WIC_PHOTOS_PIXEL_GETSIZE_HRESULT=0x%08X\\n",(unsigned)hr);
-    printf("WIC_PHOTOS_PIXEL_SIZE=%ux%u\\n",frameWidth,frameHeight);
+    printf("WIC_PHOTOS_PIXEL_GETSIZE_HRESULT=0x%08X\n",(unsigned)hr);
+    printf("WIC_PHOTOS_PIXEL_SIZE=%ux%u\n",frameWidth,frameHeight);
     if(FAILED(hr)||frameWidth==0||frameHeight==0)
         throw std::runtime_error("Synthetic HEIC frame geometry missing");
     CComPtr<IWICBitmapSource> rgb;
     hr=WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,pixelFrame,&rgb);
-    printf("WIC_PHOTOS_PIXEL_RGB24_CONVERT_HRESULT=0x%08X\\n",(unsigned)hr);
+    printf("WIC_PHOTOS_PIXEL_RGB24_CONVERT_HRESULT=0x%08X\n",(unsigned)hr);
     if(FAILED(hr)||!rgb)
         throw std::runtime_error("Synthetic HEIC full-frame RGB24 conversion failed");
     const uint64_t strideBytes=uint64_t(frameWidth)*3ull;
@@ -172,7 +172,7 @@ inline void Survey() {
     std::vector<BYTE> readback(static_cast<size_t>(fullBytes));
     hr=rgb->CopyPixels(nullptr,static_cast<UINT>(strideBytes),
                        static_cast<UINT>(fullBytes),readback.data());
-    printf("WIC_PHOTOS_PIXEL_FULLRES_COPY_HRESULT=0x%08X\\n",(unsigned)hr);
+    printf("WIC_PHOTOS_PIXEL_FULLRES_COPY_HRESULT=0x%08X\n",(unsigned)hr);
     if(FAILED(hr))
         throw std::runtime_error("Synthetic HEIC full-resolution CopyPixels failed");
     uint64_t fingerprint=14695981039346656037ull; // FNV-1a 64
@@ -180,9 +180,9 @@ inline void Survey() {
         fingerprint^=sample;
         fingerprint*=1099511628211ull;
     }
-    printf("WIC_PHOTOS_PIXEL_FULLRES_BYTES=%llu\\n",
+    printf("WIC_PHOTOS_PIXEL_FULLRES_BYTES=%llu\n",
         static_cast<unsigned long long>(fullBytes));
-    printf("WIC_PHOTOS_PIXEL_READBACK_FNV64=%016llX\\n",
+    printf("WIC_PHOTOS_PIXEL_READBACK_FNV64=%016llX\n",
         static_cast<unsigned long long>(fingerprint));
     puts("WIC_PHOTOS_SYNTHETIC_FULLRES_RGB_READBACK_PASS");
     // Observation-only editor preflight matrix. These probes use only an
