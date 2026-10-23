@@ -380,3 +380,17 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 Microsoft公式サポートではWindows 10フォトにHEIFとHEVCの両拡張が必要となる場合を記載している：https://support.microsoft.com/en-us/windows/apps/photos/photos-app-video-editor-error-can-t-view-this-file-type 。**第三者WICコーデックを登録するだけで標準フォト独自のHEVC依存・使用許諾確認を満たすと断定しない**。旧`v1.1.18`の誤った`QueryCapability=0x15`を無条件復帰しない：`SameEncoder`は同ベンダーによる符号化を実際に認識した場合の値であり、`CanDecodeThumbnail`は現に取得できるサムネイルを要する。公式：https://learn.microsoft.com/en-us/windows/win32/api/wincodec/ne-wincodec-wicbitmapdecodercapabilities 。
 
 **進捗表示**：39％据え置き。これは原因候補の排除・実機診断の前進であるが、ユーザーが求める標準フォト機能ゲートの解決はまだ達成していない。
+
+## WICエンコーダーの二段階Commit実装不備・初期化順序の検証と修正（2026-10-24）
+
+**背景**：標準Photos GUIの保存経路は未観測だが、研究版`CHeicBitmapEncoder`と`CHeicBitmapFrameEncode`のWIC公開API呼出し順序に独立した不具合がある。Microsoft公式は`IWICBitmapFrameEncode::Commit`で各フレームを確定した後でのみ`IWICBitmapEncoder::Commit`を行い、成功したフレームは再編集・再初期化できず、エンコーダー保存成功後も新しいフレームを作成できないと定める。参照：
+https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapencoder-commit
+https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapframeencode-commit
+https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapencoder-createnewframe
+
+1. **最初の不具合 RED**：公開人工RGB 192x320を`WritePixels`ですべて渡しただけの状態（`frame.Commit()`未実施）で`encoder.Commit()`が **`S_OK`**、出力HEICをコミットしてしまう。[失敗CI #39986448240](https://github.com/taku077/wic_heic/actions/runs/39986448240) `WIC_ENCODER_COMMIT_BEFORE_FRAME_COMMIT_HRESULT=0x00000000`。入力原画像を使わず既存生成グリッドと専用CIテスト出力だけに限定。
+2. **修正**：フレームに`m_Committed`を導入、フレーム`Commit`が成功した場合のみ真にし、重複フレーム`Commit`と確定後のプロパティ編集を拒否。親のエンコーダーは全フレームの`m_Committed`を確認するまで元ストリームに1バイトも書かない。コード`89237e7de82410c912fffdcaa7f421263debdf0d`、`4ef7bccf8800998b0cc1dbca064deb0f5589c899`、`69b9b14a017afb238997fb46bed829d659735bea`。[成功CI #39986838426](https://github.com/taku077/wic_heic/actions/runs/39986838426)：早期Commitは`0x88982F04`（WRONGSTATE）、出力0バイト、正規順序なら通常保存成功。4回転画素一致、ICC、HEIC主画像完全コピー、旧1.1.18とのA/B継続試験もPASS。
+3. **次の不具合 RED**：`encoder.Initialize`より前に`CreateNewFrame`を実行すると不正にも`S_OK`。コミット`aa9f3fb94cfee057f65354b462a94bf3342b5b3e`、[失敗CI #39987345759](https://github.com/taku077/wic_heic/actions/runs/39987345759) `WIC_ENCODER_PREINIT_CREATE_FRAME_HRESULT=0x00000000`。さらに保存完了後の新規フレームや前フレーム未確定での重複作成も許していた。
+4. **修正**：エンコーダーに`m_Committed`を追加。`CreateNewFrame`はエンコーダー未初期化・確定済み・前フレーム未確定なら`WINCODEC_ERR_WRONGSTATE`、保存完了後のICC変更も拒否。成功した親`Commit`でのみ確定状態にする。コード`dd9134de2863059f06a20a21fe604e313c95f855`、`0749c1115f48c2590e61a0556b55ca01cce5a472`。
+5. **過去A/B試験の誤った前提を是正**：旧1.1.18と研究版の「13 API安定比較」自体がエンコーダー`Initialize`を省略した後に`CreateNewFrame`を行っていた。この旧版の不正受理を研究版へ強制するのは不合理なため、比較プローブで公開人工WICメモリストリームを明示的に`Initialize`した後に作成（`a04ad2a87b397277f97878b6112b026121015afc`）。新しい仕様違反を無効化するのではなく、**公式のWIC順序で旧・新の両方を比較**。[成功CI #39988330685](https://github.com/taku077/wic_heic/actions/runs/39988330685)：`WIC_ENCODER_PREINIT_CREATE_FRAME_HRESULT=0x88982F04`、`WIC_ENCODER_OVERLAPPING_FRAME_HRESULT=0x88982F04`、`WIC_ENCODER_POSTCOMMIT_CREATE_FRAME_HRESULT=0x88982F04`、エンコーダー早期Commit拒否、正規保存・ICC・4回転全RGB画素一致、旧版との合成人工HEIC A/BすべてPASS。
+6. **既知の制限**：これらはWIC公開契約とメタデータ保存の安全性を改善したもので、標準フォトのHEVC拡張警告・編集ボタン無効化が解消したという証明ではない。さらにPhotosが指定するWIC frame のメタデータ更新を完全にサポートしたわけでもない。Windows10 Photos GUIとJPEG同等の無再圧縮回転は未合格、**ユーザー向けMSI配布禁止継続**。
