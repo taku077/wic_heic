@@ -463,6 +463,11 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		}
 	}
 	if (!pIBitmapSource) return E_POINTER;
+	// A materialized IWICBitmap is ALSO unsafe: CreateBitmapFromSource
+	// can flatten a rotated HEIC to bare pixels, discarding EXIF, ICC,
+	// auxiliary images and the relationship to its original bitstream.
+	// Legitimate new RGB image creation must use the explicit WritePixels
+	// encoding API; WriteSource cannot distinguish it from flattened HEIC.
 	// WIC raster wrappers may hide a HEIC source's provenance. A flip-rotator
 	// alone is not sufficient to guard this: wrapping it in a format converter,
 	// scaler or clipper hides the IWICBitmapFlipRotator interface from the HEIC
@@ -475,13 +480,15 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		&IID_IWICBitmapFlipRotator,
 		&IID_IWICFormatConverter,
 		&IID_IWICBitmapScaler,
-		&IID_IWICBitmapClipper
+		&IID_IWICBitmapClipper,
+		&IID_IWICBitmap
 	};
 	const char* const unsafeWicRasterLabels[] = {
 		"wic-fliprotator-without-heic-provenance",
 		"wic-formatconverter-without-heic-provenance",
 		"wic-scaler-without-heic-provenance",
-		"wic-clipper-without-heic-provenance"
+		"wic-clipper-without-heic-provenance",
+		"wic-bitmap-materialized-without-heic-provenance"
 	};
 	for (size_t i=0; i<sizeof(unsafeWicRasterInterfaces)/sizeof(unsafeWicRasterInterfaces[0]); ++i) {
 		IUnknown* wrapped=nullptr;
