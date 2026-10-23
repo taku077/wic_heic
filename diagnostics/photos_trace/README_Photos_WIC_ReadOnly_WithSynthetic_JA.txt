@@ -1,0 +1,26 @@
+Windows 10 標準「フォト」 HEIC 読み取り専用調査キット
+================================================
+
+このZIPには4ファイル入っています。
+  1. Synthetic_Test_Only.heic  : GitHubの公開試験用HEIC（実写真ではありません）
+  2. Run_Photos_WIC_Process_ReadOnly.cmd : ワンクリック診断起動
+  3. Photos_WIC_Process_ReadOnly.ps1 : 読み取り専用の診断スクリプト
+  4. README_Photos_WIC_ReadOnly_WithSynthetic_JA.txt : 本説明書
+
+手順（1回の確認だけ）:
+  1. 4ファイルを同じ新規ローカルフォルダへ展開します。
+  2. Synthetic_Test_Only.heic を右クリック→「プログラムから開く」→標準「フォト」で開きます。
+     編集・回転・保存は一切行いません。実写真は使わないでください。
+  3. 標準フォトを開いた状態で Run_Photos_WIC_Process_ReadOnly.cmd をダブルクリックします。
+     管理者として実行する必要はありません。PowerShellの実行ポリシーを永続変更しません。
+  4. 同じフォルダに Photos_WIC_Process_ReadOnly_日付_PID.json が新規保存されます。
+     JSONだけをアップロードしてください。
+
+安全性: MSI、WIC、HEIC Manager、v0.4.0、Windowsの関連付け、HEVC拡張の導入状況、
+        画像の内容・撮影情報はスクリプトでは変更・収集しません。
+        フォトが試験用HEICを表示する操作は、通常の画像閲覧として行われます。
+限界: DLLが表示されない場合も、別プロセスで読み込まれた可能性があり、未使用の証明ではありません。
+        この診断だけでHEVC警告の原因や編集ボタンの制御を断定しません。
+
+このキットはv1.1.18の現在の動作確認用です。
+失敗したv1.1.20を再インストールする必要はありません。
