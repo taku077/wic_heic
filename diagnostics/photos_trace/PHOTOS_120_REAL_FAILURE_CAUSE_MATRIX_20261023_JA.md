@@ -403,3 +403,11 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - 製品修正`b1c0de561851aebe22b51434dc96985e8040e48f`、`8c80675575eb17b71c78896f75dc4d3befbe3af4`：`m_Initialized`を導入し、HEIF解析が最後まで成功した場合のみ真。GetFrameCount/GetFrame/GetColorContexts/GetThumbnail/CopyOriginalBytesで解析成功確認。フレーム数は失敗時も0に初期化。
 - [**成功CI #39989287630**](https://github.com/taku077/wic_heic/actions/runs/39989287630)：`WIC_DECODER_UNOPENED_FRAME_QUERIES count_hr=0x88982F04 count=0 frame_hr=0x88982F04`、`WIC_DECODER_FAILED_INIT_FRAME_QUERIES count_hr=0x88982F04 count=0 frame_hr=0x88982F04`、`WIC_DECODER_FRAME_QUERIES_REQUIRE_SUCCESSFUL_INITIALIZATION_PASS`。従来のHEIC画像・主画像の完全コピー・ICC・ロスレス4回90度画素一致、旧v1.1.18とのWIC A/Bも全工程PASS。
 - **範囲**：これは画像の不正入力後の状態矛盾を直すもので、Windows 10 PhotosのHEVC警告／編集ボタンの修復が実機で確認されたわけではない。ユーザー写真はテスト対象外、ユーザーPCの設定は変更せず、研究版MSIの配布禁止を維持。
+
+## フレームInitialize前の無条件Setter成功：WIC frame lifecycleを修正（2026-10-24）
+
+**新規RED検証**：`IWICBitmapFrameEncode::Initialize`前に、研究版`CHeicBitmapFrameEncode`が`SetSize`、`SetPixelFormat`、`SetColorContexts(0)`をすべて`S_OK`で受理した。Microsoft公式はフレーム`Initialize`がオプション確定の最初の手順であり、後続の出力形状・ICC変更に先行すると定める。https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapframeencode 。公開人工RGBだけで検査。テストコミット`9c55ef4aeeb43618c3b4b7ef3f3904f49198f365`、[**赤CI #39989860749**](https://github.com/taku077/wic_heic/actions/runs/39989860749)：`WIC_FRAME_PREINIT_SETTERS_HRESULT size=0x00000000 format=0x00000000 icc=0x00000000`。
+- 製品修正 `7e664a5b41e9e8b25ea2f21435e4339650f39254`、DPI追加漏れを修正`cfff80507dbca54eac295e4d5784a502814e835a`。`m_OptionsInitialized`が真でない限り`SetSize`、`SetPixelFormat`、`SetColorContexts`、`SetResolution`、`WriteSource`、`WritePixels`、`Frame.Commit`を`WINCODEC_ERR_WRONGSTATE`で拒否。
+- [**緑CI #39990292766**](https://github.com/taku077/wic_heic/actions/runs/39990292766)：`WIC_FRAME_PREINIT_SETTERS_HRESULT size=0x88982F04 format=0x88982F04 icc=0x88982F04`。旧・新WIC比較、EXIF/ICC、HEIC主画像、失敗時出力不変、4回90度の6,220,800バイトRGB一致、公開人工HEIC生成・読戻し試験全てPASS。ユーザーPCへMSI導入・レジストリ変更なし。
+- Windows10 PhotosのHEVC警告と編集ボタンは未解決。WIC内部契約に合致したことをGUI動作の証明とは扱わない。
+
