@@ -129,34 +129,10 @@ foreach($p in $candidates) {
   VisibleHostedChildWindowCount=$hostedWindows
  })
 }
-# This classification deliberately does not claim which process handled
-# the open image or which API controls Photos' edit buttons. It only relates
-# live, visible Photos process/window PIDs to mapped custom WIC modules.
+# Interpret the visible Photos PID to DLL mapping without claiming which
+# process generated a particular message in Windows Photos.
 $visiblePhotos=@($processes | Where-Object {
- ($_.Name -match '^(Microsoft[.]Photos|Photos|PhotosApp)
- Schema=2
- CollectedAtUtc=[DateTime]::UtcNow.ToString('o')
- WindowsBuild=[string]$os.CurrentBuild
- WindowScan=$windowScan
- VisiblePhotosWicCorrelation=$correlation
- PhotosProcessModuleSnapshot=@($processes.ToArray())
- RegisteredCustomWicDllHashes=$wics
- Interpretation='A codec module mapped in one Photos process does not prove it belongs to the visible editor. Window counts are an instantaneous PID correlation, not proof of which codec the editor used or why controls are disabled. No module loaded now is NOT proof that none was used before.'
- FileContentsOrPhotosAccessed=$false
- PersistentSystemChanges=$false
-}
-$file=Join-Path $dir ('Photos_WIC_Process_ReadOnly_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+$PID+'.json')
-$payload=$report|ConvertTo-Json -Depth 6
-$buf=(New-Object Text.UTF8Encoding($false)).GetBytes($payload)
-$stream=[IO.File]::Open($file,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
-try {$stream.Write($buf,0,$buf.Length)}finally {$stream.Dispose()}
-Write-Host 'PHOTOS_WIC_PROCESS_WINDOW_CORRELATION_READONLY_PASS'
-Write-Host ('PhotosProcessCandidates='+$processes.Count)
-Write-Host ('WindowScan='+$windowScan)
-Write-Host ('VisiblePhotosWicCorrelation='+$correlation)
-Write-Host "Report=$file"
-Write-Host 'This report cannot by itself establish why editing is disabled.'
-) -and
+ ($_.Name -match '^(Microsoft[.]Photos|Photos|PhotosApp)$') -and
  ($_.VisibleTopLevelWindowCount -gt 0 -or $_.VisibleHostedChildWindowCount -gt 0)
 })
 $visibleWithCustom=@($visiblePhotos | Where-Object {
@@ -180,6 +156,7 @@ $report=[ordered]@{
  CollectedAtUtc=[DateTime]::UtcNow.ToString('o')
  WindowsBuild=[string]$os.CurrentBuild
  WindowScan=$windowScan
+ VisiblePhotosWicCorrelation=$correlation
  PhotosProcessModuleSnapshot=@($processes.ToArray())
  RegisteredCustomWicDllHashes=$wics
  Interpretation='A codec module mapped in one Photos process does not prove it belongs to the visible editor. Window counts are an instantaneous PID correlation, not proof of which codec the editor used or why controls are disabled. No module loaded now is NOT proof that none was used before.'
@@ -194,5 +171,6 @@ try {$stream.Write($buf,0,$buf.Length)}finally {$stream.Dispose()}
 Write-Host 'PHOTOS_WIC_PROCESS_WINDOW_CORRELATION_READONLY_PASS'
 Write-Host ('PhotosProcessCandidates='+$processes.Count)
 Write-Host ('WindowScan='+$windowScan)
+Write-Host ('VisiblePhotosWicCorrelation='+$correlation)
 Write-Host "Report=$file"
 Write-Host 'This report cannot by itself establish why editing is disabled.'
