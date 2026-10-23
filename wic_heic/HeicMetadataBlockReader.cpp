@@ -139,7 +139,8 @@ public:
 };
 
 CHeicMetadataBlockReader::CHeicMetadataBlockReader(heif::ImageHandle handle)
-	: m_Handle(handle)
+	: m_Count(1)
+	, m_Handle(handle)
 {
 	m_MetadataBlock = m_Handle.get_list_of_metadata_block_IDs();
 }
@@ -230,8 +231,16 @@ HRESULT STDMETHODCALLTYPE CHeicMetadataBlockReader::GetReaderByIndex(UINT nIndex
 		return E_INVALIDARG;
 	}
 
-	std::vector<uint8_t> buffer = m_Handle.get_metadata(m_MetadataBlock[nIndex]);
-	std::string type = m_Handle.get_metadata_type(m_MetadataBlock[nIndex]);
+	std::vector<uint8_t> buffer;
+	std::string type;
+	try {
+		buffer = m_Handle.get_metadata(m_MetadataBlock[nIndex]);
+		type = m_Handle.get_metadata_type(m_MetadataBlock[nIndex]);
+	} catch (const std::bad_alloc&) {
+		return E_OUTOFMEMORY;
+	} catch (...) {
+		return WINCODEC_ERR_BADIMAGE;
+	}
 	size_t payloadOffset = 0;
 	GUID metadataType = GUID_MetadataFormatXMP;
 
@@ -249,6 +258,9 @@ HRESULT STDMETHODCALLTYPE CHeicMetadataBlockReader::GetReaderByIndex(UINT nIndex
 		}
 	}
 
+	// Reject truncated EXIF (four-byte item header) and oversized metadata.
+	if (buffer.empty() || buffer.size() < payloadOffset || buffer.size() > UINT_MAX)
+		return WINCODEC_ERR_BADIMAGE;
 	IStream* pStream = SHCreateMemStream(buffer.data() + payloadOffset, static_cast<UINT>(buffer.size() - payloadOffset));
 	if (!pStream) {
 		return E_OUTOFMEMORY;
@@ -276,6 +288,7 @@ HRESULT STDMETHODCALLTYPE CHeicMetadataBlockReader::GetReaderByIndex(UINT nIndex
 		hr, *ppIMetadataReader, (int)m_MetadataBlock.size(), (int)buffer.size(), (int)payloadOffset);
 
 	pStream->Release();
+	pFactory->Release();
 
 	return hr;
 }
