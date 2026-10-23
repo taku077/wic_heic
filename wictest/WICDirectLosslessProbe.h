@@ -599,6 +599,80 @@ inline void CanonicalWicWriteSourceWithoutSetSizeOrPixelFormat(IWICImagingFactor
     puts("WIC_CANONICAL_IMPLICIT_EXIF_ICC_AUXILIARY_BYTE_PRESERVATION_PASS");
 }
 
+// Explicit ICC removal or a replacement profile is a real color edit, not
+// permission to return the original HEIC container unchanged. That request
+// must fail until a verified ICC edit pipeline exists; the WIC caller must
+// never receive S_OK when its ICC edit was silently ignored.
+inline void RejectExplicitIccChangeInLosslessPaths(IWICImagingFactory* factory) {
+    const wchar_t* profileSample=L"samples\\icc-roundtrip.heic";
+    const wchar_t* rotateSample=L"samples\\fixture-irot3-exif6-noaux.heic";
+    CComPtr<IWICBitmapDecoder> iccDecoder;
+    Check(factory->CreateDecoderFromFilename(profileSample,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&iccDecoder),"ICC guard open fixture");
+    CComPtr<IWICBitmapFrameDecode> iccFrame;
+    Check(iccDecoder->GetFrame(0,&iccFrame),"ICC guard original frame");
+    UINT contexts=0;
+    Check(iccFrame->GetColorContexts(0,nullptr,&contexts),"ICC guard count");
+    if(contexts!=1)throw std::runtime_error("ICC fixture lacks source ICC");
+    CComPtr<IWICColorContext> externalProfile;
+    IWICColorContext* raw=nullptr;UINT actual=0;
+    Check(iccFrame->GetColorContexts(1,&raw,&actual),"ICC guard read profile");
+    externalProfile.Attach(raw);
+    if(actual!=1 || !externalProfile)throw std::runtime_error("ICC source unavailable");
+
+    for(unsigned mode=0;mode<3;++mode) {
+        // 0 = encoder-level explicit ICC removal for an ICC-bearing copy
+        // 1 = frame-level explicit ICC removal for an ICC-bearing copy
+        // 2 = frame-level foreign ICC applied to a lossless 90 degree HEIC
+        const bool rotate=(mode==2);
+        const wchar_t* src=rotate?rotateSample:profileSample;
+        CComPtr<IWICBitmapDecoder> decoder;
+        Check(factory->CreateDecoderFromFilename(src,nullptr,GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand,&decoder),"ICC guard open input");
+        CComPtr<IWICBitmapFrameDecode> frameSrc;
+        Check(decoder->GetFrame(0,&frameSrc),"ICC guard get input");
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"ICC guard encoder");
+        CComPtr<IStream> output;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&output),"ICC guard output in RAM");
+        Check(encoder->Initialize(output,WICBitmapEncoderNoCache),
+            "ICC guard encoder init");
+        if(mode==0)
+            Check(encoder->SetColorContexts(0,nullptr),
+                "ICC guard encoder explicit removal");
+        CComPtr<IWICBitmapFrameEncode> frame;
+        CComPtr<IPropertyBag2> options;
+        Check(encoder->CreateNewFrame(&frame,&options),"ICC guard frame");
+        if(rotate){
+            if(!options)throw std::runtime_error("ICC guard no transform bag");
+            PROPBAG2 opt{};opt.pstrName=const_cast<LPOLESTR>(L"BitmapTransform");
+            VARIANT value{};value.vt=VT_UI1;value.bVal=1;
+            Check(options->Write(1,&opt,&value),"ICC guard CW90");
+        }
+        Check(frame->Initialize(options),"ICC guard frame init");
+        if(mode==1)
+            Check(frame->SetColorContexts(0,nullptr),
+                "ICC guard frame explicit removal");
+        if(rotate) {
+            IWICColorContext* profileArr[]={externalProfile};
+            Check(frame->SetColorContexts(1,profileArr),
+                "ICC guard request unrelated profile");
+        }
+        // WIC canonical WriteSource: no SetSize / SetPixelFormat.
+        const HRESULT hr=frame->WriteSource(frameSrc,nullptr);
+        printf("WIC_EXPLICIT_ICC_EDIT_MUST_NOT_BE_SILENT mode=%u hr=0x%08X\n",
+            mode,unsigned(hr));
+        if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+            throw std::runtime_error("HEIC lossless path silently ignored ICC edit");
+        STATSTG stat{};
+        Check(output->Stat(&stat,STATFLAG_NONAME),"ICC guard output size");
+        if(stat.cbSize.QuadPart!=0)
+            throw std::runtime_error("ICC guard wrote bytes after rejected edit");
+    }
+    puts("WIC_LOSSLESS_EXPLICIT_ICC_REMOVAL_AND_REPLACEMENT_GUARD_PASS");
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -622,6 +696,7 @@ inline void Run() {
     RejectMutationsAfterLosslessCapture(factory);
     FourTurnsOnlyInMemory(factory);
     CanonicalWicWriteSourceWithoutSetSizeOrPixelFormat(factory);
+    RejectExplicitIccChangeInLosslessPaths(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
 }
 }
