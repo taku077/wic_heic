@@ -246,7 +246,7 @@ jobs:
             # The native HEIF encoder was chosen but failed to instantiate;
             # test whether ArbitrationPriority can safely prefer ours.
             $nativeCls='{0DBECEC1-9EB3-4860-9C6F-DDBE86634575}'
-            $relative="SOFTWARE\\Classes\\CLSID\\$nativeCls"
+            $relative="SOFTWARE\Classes\CLSID\$nativeCls"
             $nativeKey=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($relative,$true)
             if($null -eq $nativeKey){throw 'Lab: Windows native HEIF encoder key missing'}
             $oldValue=$nativeKey.GetValue('ArbitrationPriority',$null)
