@@ -106,6 +106,27 @@ void CheckRotatedExifFixture()
         orientation,(unsigned)value.vt);
     PropVariantClear(&value);
     if (orientation!=1) throw std::exception("fixture: duplicate rotation still exposed");
+    // Regression for metadata block-reader COM reference management. The
+    // query reader must remain valid after its temporary block-reader
+    // creation reference is released; repeated Photos metadata queries
+    // must not destabilize Explorer or the image viewer.
+    for (int iteration=0; iteration<256; ++iteration) {
+        CComPtr<IWICMetadataQueryReader> again;
+        hr=frame->GetMetadataQueryReader(&again);
+        if(FAILED(hr) || !again)
+            throw std::runtime_error("Repeated WIC metadata reader creation failed");
+        PROPVARIANT reread;
+        PropVariantInit(&reread);
+        hr=again->GetMetadataByName(L"/app1/ifd/{ushort=274}",&reread);
+        const bool good=SUCCEEDED(hr) &&
+            ((reread.vt==VT_UI2 && reread.uiVal==1) ||
+             (reread.vt==VT_UI4 && reread.ulVal==1));
+        PropVariantClear(&reread);
+        if(!good)
+            throw std::runtime_error("Repeated WIC EXIF orientation query failed");
+    }
+    printf("WIC_METADATA_READER_256_CREATE_QUERY_RELEASE_PASS\\n");
+
 
     CComPtr<IWICBitmapSource> pixels;
     hr=frame->QueryInterface(IID_IWICBitmapSource,(void**)&pixels);
