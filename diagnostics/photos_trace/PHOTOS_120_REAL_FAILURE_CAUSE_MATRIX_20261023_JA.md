@@ -352,3 +352,17 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 | `QueryCapability` mask | `0x15`（サムネイル無条件） | `0x0C`（実装に即した申告） |
 
 **推論の制約**：両フレームとも旧版と研究版でハッシュ不一致。**単純に0番と1番を取り違えただけでは今回のRGB差は説明できない**。ただし、旧MSIと研究CIビルドのネイティブライブラリ差・色管理・ソース選択など他要因は未除外。「原因特定済み」と扱わない。サムネイルAPIのフル画像スケールが可能でも、PhotosのHEVC警告・編集ボタンが修復したことの証明にはならない。実機GUIの承認ゲートとMSI配布禁止を維持する。
+
+## Windows 10実機の可視Photos PIDとWIC DLLの相関：Schema 2の実測 → SHA検証追加（2026-10-24）
+
+2026-10-24 00:39 JST頃、ユーザー提供の`Photos_WIC_Process_ReadOnly` **Schema 2 JSON** を検証した。Windows 10 build19045、`WindowScan=OK`、`VisiblePhotosWicCorrelation=VISIBLE_PHOTOS_PROCESS_HAS_CUSTOM_WIC_MODULE`。可視トップレベル/子ウィンドウのある`Photos.exe`に `windowscodecs.dll` と `wic_heic.dll` が同時にマップされ、もう1つのウィンドウなし`Photos.exe`は`windowscodecs.dll`のみ、`ApplicationFrameHost`は`windowscodecs.dll`のみが検出された。対象の元JSONは`FileContentsOrPhotosAccessed=false`および`PersistentSystemChanges=false`。**個々のPID、実パス、ユーザー環境のSHA256、画像ファイル名、画像内容はGitHubに転載しない。**
+
+今回の反証：`wic_heic.dll`が見えたのは表示と無関係なバックグラウンドPhotosだけ、という仮説は当該時点では支持されない。実際の**可視Photosプロセス**が自作DLLをロードしている。なおDllロードの事実だけでは、全画面画像読込、編集可否判定、回転保存、HEVC MFTの有無、サムネイル／プレビュー／フル画像のどの経路でDLLが使われたかは証明できない。以前からある旧`v1.1.18`の画像変形・回転保存失敗を「正常」と判断してはならない。未検証WIC MSIはユーザーPCに導入しない。
+
+不足した観測：Schema 2ではWICレジストリ登録**先**のDLLはSHA256を取得するが、Photosの`Process.Modules`側はbasenameしか収集していない。DLLが以前ロードされたままか／別のファイルパスから同名DLLがロードされたかは未判明。対応する**ディスク上のDLLファイル**同士の照合（メモリ中のバイト列ではない）を読み取り専用で追加した。プロセス記録の`MappedCustomWicDllRegisteredFileMatch`に、`MATCHES_REGISTERED_ON_DISK_SHA256`／`DIFFERS_FROM_REGISTERED_ON_DISK_SHA256`／`MODULE_FILE_HASH_UNAVAILABLE`／`MODULE_NOT_OBSERVED`のいずれかを追記し、パス・プロセス毎のハッシュ値は記録しない。一般の画像・タイトル・ウィンドウ内容を読まない。Windows 10 Photosへの**モジュール実在とAPI呼出しは別**という解釈は維持。
+
+- コード・修正コミット `e3c41ea0e2f98c040399cf719bcae7ccec146298`、`0c6f674d31d30be6b369eea16275773a057e7e6a`、`fc0b9bd3f071224be07c5f33cf6db667a716bf97`。当初はPowerShell構文破損をCI検出したため**配布せず**、既知のCI合格スクリプトから安全に再構成：`2397c4f00bf8562223977dd2683e2948a5b0f661`。
+- [隔離CI #39980980119](https://github.com/taku077/wic_heic/actions/runs/39980980119) **SUCCESS**：PS5.1実行・構文、`PHOTOS_WIC_MAPPED_DLL_SHA256_ONLY_PRIVACY_GUARD_PASS`、ウィンドウPID相関、安全なCMDランチャー、公開人工HEICを含む4ファイルZIP（SHA検証）を合格。アーティファクト`Photos-WIC-ReadOnly-NoAdmin-WithSyntheticHEIC-4Files`、ID`12514160076`。Windows Server 2022 CI上にPhotosアプリはなく、**実ユーザー環境でのDLL照合結果は未取得**。
+- 新観測で「登録ファイルと読込みファイルのSHA不一致」が出た場合は、再インストールより先に競合・旧DLL残存・プロセスキャッシュを疑う。「一致」であればその仮説は弱まり、より本質的なWIC機能申告・Photos内部のHEVC/編集経路へ重点を移す。モジュールのディスク照合「一致」も、Photosから個々のWIC APIを呼んだ事実や画質・保存の証明にはならない。
+
+**完成率**：この実機情報と診断機能自体は有益だが、元のP0達成条件である「HEVC警告を研究版で消す」「Photos GUI編集と安全保存を実機で成功させる」はまだ未達。自動CIと実機機能達成率を混同せず、過去の39%から数値を無条件に増やさない。
