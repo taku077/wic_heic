@@ -367,6 +367,110 @@ inline void RejectWrappedRotationWithLostHeicProvenance(IWICImagingFactory* fact
     puts("WIC_WRAPPED_RASTER_ROTATION_METADATA_LOSS_GUARD_PASS");
 }
 
+// Regression: third-party IWICBitmapSource proxies can hide ALL familiar
+// WIC wrapper interfaces while forwarding pixel data from a rotated HEIC.
+// Nothing in the pixel-only IWICBitmapSource contract proves that EXIF,
+// MakerNote, ICC, thumbnails or auxiliary HEIF data survived that wrapper.
+// Test only public synthetic input and an in-memory destination.
+class OpaqueSyntheticWicSource final : public IWICBitmapSource {
+    std::atomic<ULONG> references{1};
+    CComPtr<IWICBitmapSource> delegate;
+public:
+    explicit OpaqueSyntheticWicSource(IWICBitmapSource* source):delegate(source){}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+        if(!out)return E_POINTER;
+        *out=nullptr;
+        if(IsEqualIID(iid,IID_IUnknown) ||
+           IsEqualIID(iid,IID_IWICBitmapSource)){
+            *out=static_cast<IWICBitmapSource*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override {return ++references;}
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count=--references;
+        if(!count)delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE GetSize(UINT* w,UINT* h) override {
+        return delegate->GetSize(w,h);
+    }
+    HRESULT STDMETHODCALLTYPE GetPixelFormat(WICPixelFormatGUID* format) override {
+        return delegate->GetPixelFormat(format);
+    }
+    HRESULT STDMETHODCALLTYPE GetResolution(double* x,double* y) override {
+        return delegate->GetResolution(x,y);
+    }
+    HRESULT STDMETHODCALLTYPE CopyPalette(IWICPalette* palette) override {
+        return delegate->CopyPalette(palette);
+    }
+    HRESULT STDMETHODCALLTYPE CopyPixels(const WICRect* r,UINT stride,
+                                      UINT bytes,BYTE* buffer) override {
+        return delegate->CopyPixels(r,stride,bytes,buffer);
+    }
+};
+inline void RejectOpaqueSourceWithNoHeicProvenance(IWICImagingFactory* factory) {
+    const wchar_t* fixture=L"samples\\fixture-irot3-exif6-noaux.heic";
+    const auto original=Read(fixture);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(fixture,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"opaque HEIC decoder");
+    CComPtr<IWICBitmapFrameDecode> primary;
+    Check(decoder->GetFrame(0,&primary),"opaque HEIC primary");
+    CComPtr<IWICBitmapFlipRotator> rotated;
+    Check(factory->CreateBitmapFlipRotator(&rotated),"opaque HEIC rotator");
+    Check(rotated->Initialize(primary,WICBitmapTransformRotate90),
+          "opaque HEIC rotation");
+    CComPtr<IWICBitmapSource> opaque;
+    opaque.Attach(new OpaqueSyntheticWicSource(rotated));
+    UINT w=0,h=0;
+    Check(opaque->GetSize(&w,&h),"opaque HEIC width and height");
+    IHeicRawSource* raw=nullptr;
+    const HRESULT rawHr=opaque->QueryInterface(IID_IHeicRawSource,
+        reinterpret_cast<void**>(&raw));
+    if(raw)raw->Release();
+    if(SUCCEEDED(rawHr))
+        throw std::runtime_error("Opaque bitmap leaked original HEIF source");
+    for(unsigned compression : {0u,2u}) {
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"opaque HEIC encoder");
+        CComPtr<IStream> memory;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&memory),
+              "opaque output memory stream");
+        Check(encoder->Initialize(memory,WICBitmapEncoderNoCache),
+              "opaque encoder initialize");
+        CComPtr<IWICBitmapFrameEncode> frame;
+        CComPtr<IPropertyBag2> options;
+        Check(encoder->CreateNewFrame(&frame,&options),
+              "opaque HEIC output frame");
+        if(compression==2) {
+            PROPBAG2 key{};
+            key.pstrName=const_cast<LPOLESTR>(L"HeifCompressionMethod");
+            VARIANT value{};value.vt=VT_UI1;value.bVal=2;
+            Check(options->Write(1,&key,&value),
+                  "opaque explicit HEVC compression");
+        }
+        Check(frame->Initialize(options),"opaque HEIC frame init");
+        Check(frame->SetSize(w,h),"opaque HEIC size");
+        GUID format=GUID_WICPixelFormat24bppRGB;
+        Check(frame->SetPixelFormat(&format),"opaque HEIC pixel format");
+        const HRESULT result=frame->WriteSource(opaque,nullptr);
+        printf("WIC_OPAQUE_HEIC_SOURCE_REJECT compression=%u hr=0x%08X\\n",
+               compression,unsigned(result));
+        if(result!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+            throw std::runtime_error("Opaque HEIC raster silently accepted despite unknown provenance");
+        STATSTG state{};
+        Check(memory->Stat(&state,STATFLAG_NONAME),"opaque output stat");
+        if(state.cbSize.QuadPart!=0)
+            throw std::runtime_error("Opaque HEIC rejection left output bytes");
+    }
+    if(Read(fixture)!=original)
+        throw std::runtime_error("Opaque HEIC test altered synthetic source");
+    puts("WIC_OPAQUE_BITMAPSOURCE_HEIC_PROVENANCE_GUARD_PASS");
+}
 inline void RejectUnsafeOriginalHeicRasterFallback(IWICImagingFactory* factory) {
     // Regression for a metadata-loss loophole: explicit HEVC and cropped
     // WriteSource previously bypassed the exact-source safeguard and
@@ -857,6 +961,7 @@ inline void Run() {
     RejectRasterOnlyRotation(factory);
     RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(factory);
     RejectWrappedRotationWithLostHeicProvenance(factory);
+    RejectOpaqueSourceWithNoHeicProvenance(factory);
     RejectUnsafeOriginalHeicRasterFallback(factory);
     RejectMutationsAfterLosslessCapture(factory);
     RejectUnsupportedDpiChanges(factory);
