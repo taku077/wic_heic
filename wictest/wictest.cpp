@@ -19,6 +19,7 @@
 #include "NativeLosslessProbe.h"
 #include "WICDirectLosslessProbe.h"
 #include "WICDecoderCapabilityProbe.h"
+#include "WICComFactoryProbe.h"
 #include "PhotosNavigationZoomProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
@@ -376,6 +377,7 @@ int main()
 		printf("HEIC_THUMBNAIL_ORIENTATION_PARITY_UNIT_PASS\\n");
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
+		WICComFactoryProbe::Run();
 		WICDecoderCapabilityProbe::Run();
 		PhotosNavigationZoomProbe::Run();
 		GeometryProbe::Run();
