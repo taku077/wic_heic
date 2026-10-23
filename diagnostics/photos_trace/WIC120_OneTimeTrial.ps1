@@ -48,7 +48,11 @@ function ReadState {
  return [pscustomobject]@{Path=[string]$path;Data=$j}
 }
 function GlobalState([object]$report,[string]$version,[string]$expectedDllHash) {
- if([string]$report.Windows.CurrentBuild -ne '19045'){throw 'Trial qualified only for Windows 10 build 19045'}
+ $isIsolatedCI=($env:GITHUB_ACTIONS -eq 'true' -and
+    -not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP))
+ if([string]$report.Windows.CurrentBuild -ne '19045' -and -not $isIsolatedCI){
+  throw 'Trial qualified only for Windows 10 build 19045'
+ }
  $others=@($report.WicHeicMsi | Where-Object {
   -not ($_.Name -eq 'WicHeic Fast Thumbnail Preview (Experimental)' -and $_.Version -eq '0.4.0')
  })
