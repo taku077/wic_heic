@@ -28,7 +28,7 @@ jobs:
           $items=@(Get-ChildItem 'diagnostics/photos_trace' -Filter 'Photos_WIC_Process_ReadOnly_*.json' -File)
           if($items.Count -ne 1){throw 'Diagnostic must create exactly one new JSON'}
           $j=Get-Content -LiteralPath $items[0].FullName -Encoding UTF8 -Raw | ConvertFrom-Json
-          if($j.Schema -ne 2 -or $j.PersistentSystemChanges -ne $false -or $j.FileContentsOrPhotosAccessed -ne $false){
+          if($j.Schema -ne 3 -or $j.PersistentSystemChanges -ne $false -or $j.FileContentsOrPhotosAccessed -ne $false){
             throw 'Read-only JSON schema/safety assertions failed'
           }
           if($j.WindowScan -notin @('OK','UNAVAILABLE')){throw 'Window probe must declare its observation quality'}
@@ -41,6 +41,16 @@ jobs:
           }
 
           foreach($proc in @($j.PhotosProcessModuleSnapshot)){
+            $allowed=@('MODULE_NOT_OBSERVED','MODULE_FILE_HASH_UNAVAILABLE',
+              'MATCHES_REGISTERED_ON_DISK_SHA256',
+              'DIFFERS_FROM_REGISTERED_ON_DISK_SHA256')
+            if($proc.MappedCustomWicDllRegisteredFileMatch -notin $allowed){
+              throw 'Mapped WIC module disk-hash comparison missing/invalid'
+            }
+            if(@($proc.RelevantModuleBasenames) -notcontains 'wic_heic.dll' -and
+              $proc.MappedCustomWicDllRegisteredFileMatch -ne 'MODULE_NOT_OBSERVED'){
+              throw 'Unloaded module falsely has mapped file identity'
+            }
             if($proc.VisibleTopLevelWindowCount -lt 0 -or $proc.VisibleHostedChildWindowCount -lt 0){
               throw 'Visible window associations must be nonnegative'
             }
@@ -51,6 +61,10 @@ jobs:
           foreach($forbidden in @('GetWindowText(', 'PrintWindow(', 'BitBlt(', 'CopyFromScreen(')){
             if($body.Contains($forbidden)){throw ('Unexpected privacy-invasive API: '+$forbidden)}
           }
+          if($body.Contains('MappedModuleFilePath') -or $body.Contains('WindowTitle')){
+            throw 'Report must not contain mapped DLL path or window title'
+          }
+          Write-Host 'PHOTOS_WIC_MAPPED_DLL_SHA256_ONLY_PRIVACY_GUARD_PASS'
           Write-Host 'PHOTOS_VISIBLE_UWP_WINDOW_PID_MAP_PRIVACY_GUARD_PASS'
           Write-Host 'PHOTOS_PROCESS_WIC_READONLY_PS51_SMOKE_PASS'
       - name: Exercise identical one-click CMD launcher without privilege or photo access
