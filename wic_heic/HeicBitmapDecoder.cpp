@@ -69,14 +69,59 @@ ULONG STDMETHODCALLTYPE CHeicBitmapDecoder::Release(void)
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::QueryCapability(__RPC__in_opt IStream *pIStream, __RPC__out DWORD *pdwCapability)
 {
-	DbgLog("%s", __FUNCTION__);
-
-	// https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder
-	if (!pdwCapability) {
-		return E_POINTER;
+	// WIC calls this method to arbitrate among codecs claiming the same HEIF
+	// container. Older builds claimed SameEncoder and Thumbnail for EVERY file,
+	// including iPhone HEIC without an embedded thumbnail and even non-HEIF
+	// streams. This violates IWICBitmapDecoder and can confuse Photos.
+	if (!pdwCapability || !pIStream) return E_POINTER;
+	*pdwCapability = 0;
+	LARGE_INTEGER zero{};
+	ULARGE_INTEGER original{};
+	HRESULT hr = pIStream->Seek(zero, STREAM_SEEK_CUR, &original);
+	if (FAILED(hr)) return hr;
+	DWORD capabilities = 0;
+	try {
+		// Read from the supplied stream, not m_Context: arbitration may run
+		// before Initialize. CHeifStreamReader seeks to offset zero.
+		CHeifStreamReader reader(pIStream);
+		heif::Context context;
+		context.read_from_reader(reader);
+		const auto ids = context.get_list_of_top_level_image_IDs();
+		if (!ids.empty()) {
+			// A parsed primary is not a guarantee all auxiliary/sequence images
+			// can be decoded. Do not overclaim CanDecodeAllImages.
+			auto frame = context.get_image_handle(ids.front());
+			if (!frame.empty() && frame.get_width() > 0 &&
+			    frame.get_height() > 0) {
+				capabilities |= WICBitmapDecoderCapabilityCanDecodeSomeImages;
+				// Metadata is enumerated by our IWICMetadataBlockReader.
+				(void)frame.get_list_of_metadata_block_IDs();
+				capabilities |= WICBitmapDecoderCapabilityCanEnumerateMetadata;
+				const auto thumbnails = frame.get_list_of_thumbnail_IDs();
+				if (!thumbnails.empty()) {
+					auto thumbnail = frame.get_thumbnail(thumbnails.front());
+					if (!thumbnail.empty() && HeicThumbnailGeometry::Compatible(
+					        frame.get_width(),frame.get_height(),
+					        thumbnail.get_width(),thumbnail.get_height())) {
+						capabilities |= WICBitmapDecoderCapabilityCanDecodeThumbnail;
+					}
+				}
+			}
+		}
+	} catch (...) {
+		// An unsupported or malformed stream is not an HEIC capability claim.
+		capabilities = 0;
 	}
-
-	*pdwCapability = WICBitmapDecoderCapabilitySameEncoder | WICBitmapDecoderCapabilityCanDecodeSomeImages | WICBitmapDecoderCapabilityCanDecodeThumbnail;
+	// The WIC specification requires the caller's seek position to be
+	// unchanged, including when parsing fails; otherwise subsequent decoder
+	// candidates may receive the stream at the wrong offset.
+	LARGE_INTEGER restore{};
+	restore.QuadPart = original.QuadPart;
+	hr = pIStream->Seek(restore, STREAM_SEEK_SET, nullptr);
+	if (FAILED(hr)) return hr;
+	*pdwCapability = capabilities;
+	WicHeicDiagnostic::Emit("DecoderQueryCapability",
+		UINT(capabilities),0,0,0,"stream-verified");
 	return S_OK;
 }
 
