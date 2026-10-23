@@ -442,3 +442,13 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - この試験以前から同ブランチで追加された「同一WICフレームを8スレッドから一斉に`CopyPixels`」の試験が、初回はラムダ式のMSVCキャプチャでビルド失敗。実行後も「8スレッドの画素不一致」で失敗したが、**元のstrideは24bpp（`width*3`）なのに人工HEICは48bpp**であり、テスト自体のバッファ指定ミスだった可能性が高い。ステージング人工HEICのWICフレーム形式を確認し`width*6`で再計測する修正`174a1a79a4051e754ea4a0cb4e982babf845df31`。診断用に**人工画素のみ**各ワーカのHRESULTとFNV64を出力（`60d83c200d2704aa46fa9e24b46d59eba22e177c`）。ユーザー写真、ウィンドウ内容、端末上の画像は取得しない。
 - CI依存性を見分けるため、`HighBitDepthProbe::Run`を並列コピー試験より前に実行するよう変更`edb907feb5f864ef99900a5d8257844aad52ddfb`。**並列テスト修正の最終CI結果と登録形式の最終CI結果は、この節を記録した時点で未確定。**
 - **保留事項**：本修正はWICランタイム・登録能力の齟齬を修正するものであり、現ユーザーWindows10 PhotosのHEVC拡張警告／編集／回転保存が直った証拠ではない。旧v1.1.18の誤ったサムネイル／SameEncoder能力申告を復活させず、研究版MSI配布禁止を維持。
+
+## 同一HEICフレームのMTA並列CopyPixelsと登録画素形式（2026-10-24）
+
+**検証対象**：Windows 10 PhotosのWIC経由フル画素読取り・10/12bitサンプルの能力検出を安全にする。いずれも公開合成人工HEICのみ。旧版v1.1.18ではGUI回転保存に別の未解決問題がある。現行ユーザー実機は変更しない。
+
+- `CHeicBitmapFrameDecode::DecodeImage`では`m_Decoded`、`m_Image`、`m_Stride`、`m_PlaneInterleaved`の初期化に同期がなく、同一フレームの複数`CopyPixels`でデータ競合があり得た。各フレームに`std::mutex m_DecodeMutex`を置き**初回復号と出版だけ排他**、別フレーム・別画像の既存並列復号は触らず、完了した画像の同時読み取りを可能にする修正`a23d5eb1bece6e917f8e6dfd4dfa5435d7bc654d`、`acef5c546c83fc32d288a7765b0a9746c640f24a`。
+- Windows MTA上で1個の人工HEIC WIC frameに対する8スレッド同時`CopyPixels`を追加。CI試験の最初の失敗は**プロダクト競合の証拠ではない**。対象HEICは高ビット深度`48bppRGB`だが、テストが8bit用`24bppRGB`の行サイズを渡していたため、WICから不正なバッファ要求として拒否されていた。各スレッドの戻り値/合成画像ハッシュ診断と行サイズを是正（`5fa5a80cbdf9704bf0fd70e760e78b056ff215ca`、`3f576c61d625173b9ae7d534a2429d9ebc44a94a`、`dd2b66c21e22398d4ed545648b8ec85d09c141cc`、`922a5eef213d1796cae73099accbde8aaa69c7e2`、`60d83c200d2704aa46fa9e24b46d59eba22e177c`、`174a1a79a4051e754ea4a0cb4e982babf845df31`）。
+- WIC decoderの`GetPixelFormat`は24bpp RGB、32bpp RGBA、48bpp RGB、64bpp RGBAを返せるのに、従来の`RegisterDecoder`には24bpp RGBしか記録されていなかった。`IWICBitmapDecoderInfo::GetPixelFormats`を先に調べるアプリは正しい画素形式を発見できない。合成人工10bit WICテスト`45ce0404123ad4200a6848f574574596b50c7c4d`、製品レジストリ登録修正`2f4b4042e87ff76c840f797d5fe38f8e7998c7b5`。**Decoder登録のみ**であり、実際に高ビット深度HEICをエンコードできる保証がないEncoder側には広げない。
+- [**隔離CI #39995711285 — SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/39995711285)：WIC decoder登録画素形式`count=4 rgb24=1 rgba32=1 rgb48=1 rgba64=1`、8個の同時`CopyPixels`が全件`S_OK`でハッシュ`90C01259A9A8D128`一致、4回90度の全画素一致、旧版A/B、ICC保持、COMインストール/削除独立性の既存試験も合格。**実Windows 10 Photos GUIの警告解除・編集ボタン・安全保存が復旧したわけではない。**
+- **続きの検証**：Encoder側の32bpp RGBA8対応はWIC APIでの受付だけでは認定しない。人工RGBAを`WritePixels`してHEICへCommitした後、フレームを開き直して画素形式とアルファの変化を確認する回帰試験を追加（`b142490ea9788ca26966544353792d1bb8db9553`）。この追試が成功するまではEncoderの登録形式は変更しない。研究版のMSI配布ゲートは閉鎖を継続。
