@@ -296,3 +296,16 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 - 追加保存検証 `308a6941b3744c9d05c97d44142bb2b8c0554bf9`：`pitm=2`になった合成人工HEICについて、WICエンコーダーの実際の`WriteSource/Commit`が元コンテナーと**全バイト一致**すること、非主画像は`WINCODEC_ERR_UNSUPPORTEDOPERATION`で拒否され、出力ストリームが0バイトに留まることを検証する。[成功CI #39969954772](https://github.com/taku077/wic_heic/actions/runs/39969954772) **全工程SUCCESS**。ログ上で `WIC_PRIMARY_SWITCH_LOSSLESS_WIC_COPY_BYTE_EQUAL_PASS` と `WIC_PRIMARY_SWITCH_SECONDARY_LOSSLESS_COPY_REJECT_PASS` を同時確認。合成人工HEICの全バイト一致転送・非主画像拒否・出力0バイトを確認。Windows10 Photos GUIは未検証。
 
 **重要な限定**：この不整合は「トップレベル画像の列挙順が主画像順と違う」HEICに特有であり、ユーザー実機で報告されたHEVC拡張警告・編集ボタン無効化や全ての回転バグの単一原因だと断定しない。Win10 Photos GUIの実機確認は未実施。歴史的v1.1.18は引き続き画像変形と保存エラーを抱える比較版。未確認MSIの配布は禁止。次に必要なのは実際のフォトからどのWIC/HEVC経路が選択されるかの切り分け。
+
+## MATERIALIZED_BITMAP_GUARD_VERIFIED：WICのマテリアライズで回転元HEICの由来を失う保存経路（2026-10-23）
+
+**新しい実バグ・赤→緑**：以前の回転保存安全ガードは `IWICBitmapFlipRotator`、`IWICFormatConverter`、`IWICBitmapScaler`、`IWICBitmapClipper` を拒否していた。しかしPhotosのようなWIC呼び出し元が `CreateBitmapFromSource(rotator,WICBitmapCacheOnLoad)` で回転画素を `IWICBitmap` に具体化すると、これらのラッパーQIが通らない一方で `IHeicRawSource` もないため、`CHeicBitmapFrameEncode::WriteSource` が裸のRGB画像を**原HEICのEXIF・ICC・XMP・MakerNote・HDR/サムネイルの引継ぎなしで再エンコード対象として受け付ける**実装だった。
+
+1. 再現テスト `3a929ec46cac8caec5438072341ca204672bcf32`：公開人工HEICだけを90度回転し、`IWICBitmap` にメモリ内で具象化。既定圧縮と明示HEVCの両方で `WriteSource` 拒否・出力ストリーム0バイト・原人工HEIC不変を要求。[失敗CI #39971011380](https://github.com/taku077/wic_heic/actions/runs/39971011380)：既存3ラッパーは拒否するが、新しい `view=bitmap compression=0` が `hr=0x00000000` となり危険な再圧縮を**受け付けることを実証**。
+2. 製品修正 `019fe705193cfec49bbdfdb88bbd5496f4ee93a4`：由来を証明できない `IWICBitmap` を `WriteSource` の損失危険入力の対象に追加。`IHeicRawSource` を維持した真のHEICデコードフレームの無再圧縮転送は従来どおり優先し、直接入力ではない曖昧なビットマップだけ拒否する。
+3. 一般の**新規人工RGB画像生成**まで壊さないため、ローカル人工画像試験は、元HEICとの同一性を主張しない`WritePixels`へ明示的に切替。対象：`wictest/GeometryProbe.h` `8ae3a8ffa08b3310ee5f87daeaca817cf247aa63`、`wictest/ICCProfileProbe.h` `adad321e01db2c7a4bc19a3ef0d13c83924282d8`、`wictest/EncoderGuardProbe.h` `36dc2ff1528dcbe931f6612a4fe1d9eddc661b92`、誤った同一HRESULT期待値を修正 `3bb5007b4f5bbc8c74787adfd1be3db46a21442e`、`wictest/wictest.cpp` の人工回転スモーク試験 `5199b693e7ed0b315be040b055856c853d757d3a`。
+4. [成功CI #39972199395](https://github.com/taku077/wic_heic/actions/runs/39972199395)：**SUCCESS**。`view=bitmap` は既定圧縮と明示HEVCの両方で `0x88982F81`、従来3ラッパーも全件 `0x88982F81`。原本不変・拒否時出力0バイト。主画像ID変更時のHEIC完全コピー、安全拒否、`GEOMETRY_PIXEL_AB_TEST_PASSED`、`HEIC_WIC_ICC_EXACT_ROUNDTRIP_PASSED`、`WIC_FOUR_TURNS_EXACT_RGB_PIXEL_IDENTITY_PASS`、旧1.1.18とのWIC A/B、WIC/サムネイル専用MSI隔離共存がすべて成功。利用者向けMSIは配布禁止。
+
+**性能・互換性上のトレードオフ**：元HEIC由来でなく純粋に新規生成された `IWICBitmap` も、`WriteSource` だけでは区別できないため安全側に倒して拒否する。新規画像作成を明示する `WritePixels` を使うWIC呼び出し元はエンコード可能。これは既存の一般WICクライアントの互換性に影響し得るので、すべてのWindowsアプリの成功を主張しない。
+
+**限界／未解決**：このガードは `WriteSource` に渡された**識別可能なWICラッパーとIWICBitmap**だけに効く。`WritePixels` が既存HEIC由来のピクセルである場合は原HEICとの対応を識別できず、元画像のメタデータ喪失防止を一般には保証しない。Photosが保存先ファイルをエンコーダー呼び出し前に切り詰めるケースも防げない。そもそもWindows 10 PhotosのHEVC警告・編集ボタン無効は現時点で未解決であり、実機GUIと無劣化回転保存のリリースゲートは閉じたまま。
