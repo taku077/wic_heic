@@ -19,6 +19,7 @@
 #include "NativeLosslessProbe.h"
 #include "WICDirectLosslessProbe.h"
 #include "WICDecoderCapabilityProbe.h"
+#include "PhotosMetadataBlockProbe.h"
 #include "WICComFactoryProbe.h"
 #include "PhotosNavigationZoomProbe.h"
 
@@ -446,6 +447,7 @@ int main()
 		CheckRotatedExifFixture();
 		WICComFactoryProbe::Run();
 		WICDecoderCapabilityProbe::Run();
+		PhotosMetadataBlockProbe::Run();
 		// Probe codec registration before concurrent-zoom stress, so both
 		// independent failure causes are observable in Windows CI output.
 		HighBitDepthProbe::Run();
