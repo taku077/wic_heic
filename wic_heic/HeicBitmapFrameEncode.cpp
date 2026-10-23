@@ -376,6 +376,25 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		}
 	}
 	if (!pIBitmapSource) return E_POINTER;
+	// A WIC flip/rotate wrapper is a raster view of another image. It does
+	// NOT expose the original HEIC bitstream, Exif, MakerNote, HDR auxiliary
+	// items, embedded thumbnails or their required transform properties.
+	// Accepting this as a default WriteSource would successfully produce a
+	// new but metadata-stripped HEIC even though Photos appeared to "rotate".
+	// Fail closed for both default and explicit recompression until an
+	// independently verified provenance-preserving WIC edit path exists.
+	IWICBitmapFlipRotator* rasterTransform=nullptr;
+	if(SUCCEEDED(pIBitmapSource->QueryInterface(
+	       IID_IWICBitmapFlipRotator,
+	       reinterpret_cast<void**>(&rasterTransform))) &&
+	   rasterTransform) {
+		rasterTransform->Release();
+		WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+			m_BitmapTransform,m_HeifCompressionMethod,
+			"wic-raster-rotation-would-strip-heic-provenance",
+			WINCODEC_ERR_UNSUPPORTEDOPERATION);
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	}
 	// Even when the caller explicitly asks for HEVC recompression or a crop,
 	// a source frame from our HEIC decoder may carry EXIF, MakerNote, ICC,
 	// XMP, thumbnails or HDR items. Our raster encoder cannot transfer all
