@@ -348,7 +348,9 @@ jobs:
               $repeatOutput=$repeatLines -join [Environment]::NewLine
               foreach($repeatKey in @('WIC_PHOTOS_PIXEL_SIZE',
                                       'WIC_PHOTOS_PIXEL_FULLRES_BYTES',
-                                      'WIC_PHOTOS_PIXEL_READBACK_FNV64')){
+                                      'WIC_PHOTOS_PIXEL_READBACK_FNV64',
+                                      'WIC_PHOTOS_8BIT_PLAIN_RGB_FNV64',
+                                      'WIC_PHOTOS_8BIT_ICC_RGB_FNV64')){
                 $regex='(?m)^'+[regex]::Escape($repeatKey)+'=([^\r\n]+)'
                 $v1=[regex]::Match($output,$regex)
                 $v2=[regex]::Match($repeatOutput,$regex)
@@ -416,6 +418,52 @@ jobs:
                 throw ('Previously stable editor API differs unexpectedly: '+$key+' '+($values -join ' vs '))
               }
             }
+            # Compare TWO already-generated 8-bit HEICs with the same exact
+            # file bytes in both codecs. PLAIN is a disposable PNG->HEIC RGB
+            # encode; ICC is a 64x64 synthetic sRGB ICC roundtrip. Unlike the
+            # previous 10-bit comparison, BOTH should advertise RGB24. This
+            # controls for the historical 10-bit forced-RGB24 difference.
+            foreach($kind in @('PLAIN','ICC')) {
+              $keys=@(
+                "WIC_PHOTOS_8BIT_${kind}_WIC_BPP",
+                "WIC_PHOTOS_8BIT_${kind}_GEOMETRY",
+                "WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT",
+                "WIC_PHOTOS_8BIT_${kind}_RGB_BYTES",
+                "WIC_PHOTOS_8BIT_${kind}_RGB_FNV64",
+                "WIC_PHOTOS_8BIT_${kind}_RGB_CHANNEL_TOTALS",
+                "WIC_PHOTOS_8BIT_${kind}_ADJACENT_CHANGES"
+              )
+              $metrics=${}
+              foreach($key in $keys) {
+                $pair=@()
+                foreach($label in @('ORIGINAL118','RESEARCH')){
+                  $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
+                  $m=[regex]::Match([string]$script:abSurveys[$label],$pattern)
+                  if(-not $m.Success){throw ('Missing 8bit comparison: '+$label+' '+$key)}
+                  $pair+= $m.Groups[1].Value.Trim()
+                }
+                $metrics[$key]=$pair
+              }
+              if($metrics["WIC_PHOTOS_8BIT_${kind}_WIC_BPP"][0] -cne '24' -or
+                 $metrics["WIC_PHOTOS_8BIT_${kind}_WIC_BPP"][1] -cne '24' -or
+                 $metrics["WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT"][0] -cne '0x00000000' -or
+                 $metrics["WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT"][1] -cne '0x00000000') {
+                throw ('8bit fixture did not read as native WIC RGB24 in both versions: '+$kind)
+              }
+              foreach($stable in @("WIC_PHOTOS_8BIT_${kind}_GEOMETRY",
+                                  "WIC_PHOTOS_8BIT_${kind}_RGB_BYTES")) {
+                if($metrics[$stable][0] -cne $metrics[$stable][1]){
+                  throw ('8bit A/B compared different image geometries: '+$kind)
+                }
+              }
+              foreach($metric in @('RGB_FNV64','RGB_CHANNEL_TOTALS','ADJACENT_CHANGES')) {
+                $key="WIC_PHOTOS_8BIT_${kind}_$metric"
+                $matching=[int]($metrics[$key][0] -ceq $metrics[$key][1])
+                Write-Host ("WIC_PHOTOS_AB_8BIT_${kind}_${metric}_MATCH=$matching")
+              }
+              Write-Host ("WIC_PHOTOS_AB_8BIT_${kind}_WIC_RGB24_BOTH_PASS")
+            }
+            Write-Host 'WIC_PHOTOS_AB_EIGHT_BIT_PLAIN_AND_ICC_READBACK_COMPLETE_PASS'
             # Historical 1.1.18 (MSI run 39433397223 at a18b9ab)
             # FORCES RGB24 after its dormant 10/12-bit branches. Research
             # decodes the same 10-bit public HEIC using WIC RGB48. Compare
