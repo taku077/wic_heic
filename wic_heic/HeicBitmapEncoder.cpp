@@ -230,6 +230,18 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 		}
 		if (m_Frames.empty()) return WINCODEC_ERR_WRONGSTATE;
+		// WIC requires every frame.Commit() before encoder.Commit().
+		// Previously complete raster rows were enough to serialize an image
+		// even when the caller never finalized the frame. Do not emit a single
+		// byte or invoke the HEVC encoder in this invalid lifecycle state.
+		for (auto* frame : m_Frames) {
+			if (!frame->m_Committed) {
+				WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,
+					"frame-not-committed",WINCODEC_ERR_WRONGSTATE);
+				return WINCODEC_ERR_WRONGSTATE;
+			}
+		}
+
 		// A single-frame direct WIC rotation/copy can now retain the entire
 		// original HEIF file, including metadata, thumbnails and HDR assets.
 		// A pre-existing nonempty target stream is NEVER overwritten here.
