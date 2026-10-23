@@ -15,7 +15,7 @@ Windows 10 Pro 22H2 build 19045、Microsoft Photos 2026.11090.22001.0、HEIF拡�
 - [WIC統合CI #39925852369](https://github.com/taku077/wic_heic/actions/runs/39925852369): PASS。全解像度・zoom ROI・画像A→B→Aの独立デコード、正常なCOM IUnknown CLSID分離、PNG誤入力がBADIMAGE、lossless 90/180/270回転と元HEIC不変、preview v0.4.0共存・独立アンインストール。
 - [MSI v1.1.20候補CI #39926012224](https://github.com/taku077/wic_heic/actions/runs/39926012224): PASS。実MSI v1.1.18→v1.1.20のMajorUpgrade、v1.1.20アンインストール、v1.1.18の正確な再インストールでDLLハッシュ同一、COM登録残留なし。
 - 旧復旧MSIのSHA-256 `4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6`、復元DLLはユーザーの過去実機診断と一致。
-- v1.1.20候補MSIのSHA-256 `5B7AB53837051FB4DCB79749D9464F522343B2A84C253F2E4F379023E2E47097`。GitHub Actions artifactのZIPダイジェストとは異なる。
+- v1.1.20候補MSIのSHA-256は**ビルドごとに異なる**。CI #39926012224では `5B7AB53837051FB4DCB79749D9464F522343B2A84C253F2E4F379023E2E47097`、安全ゲート追加後の最新CI [#39927169635](https://github.com/taku077/wic_heic/actions/runs/39927169635)では `F05AEB08487B4C2A617596E2E2EC953B5D7C4AA9BE631B39688CBC4F3852D366`。**MSIとその同じCI実行から生成されたSHA-256.txtを必ず組で確認する**。GitHub artifact ZIP自体のdigestとは異なる。
 
 ## 未検証・完成ゲート
 1. 上記は**Windows Server 2022のWICとMSI**試験で、ユーザーのWindows 10標準「フォト」GUIは自動化試験対象にできない。
