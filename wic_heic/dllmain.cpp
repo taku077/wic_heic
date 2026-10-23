@@ -73,6 +73,15 @@ HRESULT RegisterDecoder(const std::wstring& dllPath)
 
 		// GUID_WICPixelFormat24bppRGB
 		regDecoder.CreateKeyTree(HKEY_CLASSES_ROOT, "CLSID\\" S_CLSID_HEICDecoder "\\Formats\\{6fddc324-4e03-4bfe-b185-3d77768dc90d}");
+		// These are formats our decoder can actually return from
+		// IWICBitmapFrameDecode::GetPixelFormat for 8-bit alpha and
+		// 10/12/16-bit HEIC. Without registration, WIC component-info
+		// clients only see 24bpp RGB and may reject legitimate images.
+		// GUID values correspond to WinSDK wincodec.h.
+		regDecoder.CreateKeyTree(HKEY_CLASSES_ROOT, "CLSID\\" S_CLSID_HEICDecoder "\\Formats\\{f5c7ad2d-6a8d-43dd-a7a8-a29935261ae9}"); // 32bppRGBA
+		regDecoder.CreateKeyTree(HKEY_CLASSES_ROOT, "CLSID\\" S_CLSID_HEICDecoder "\\Formats\\{6fddc324-4e03-4bfe-b185-3d77768dc915}"); // 48bppRGB
+		regDecoder.CreateKeyTree(HKEY_CLASSES_ROOT, "CLSID\\" S_CLSID_HEICDecoder "\\Formats\\{6fddc324-4e03-4bfe-b185-3d77768dc916}"); // 64bppRGBA
+
 
 		struct TPattern {
 			char* Mask;
