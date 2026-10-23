@@ -143,7 +143,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetResolution(double dpiX, dou
 	// the caller's requested physical-resolution edit during save.
 	// In particular, once lossless HEIC source bytes have been captured they
 	// are immutable and MUST NOT accept any late setters.
-	if (m_Created || m_HasPixels || m_LosslessReady)
+	if (!m_OptionsInitialized || m_Created || m_HasPixels || m_LosslessReady || m_Committed)
 		return WINCODEC_ERR_WRONGSTATE;
 	if (!std::isfinite(dpiX) || !std::isfinite(dpiY) ||
 	    dpiX <= 0.0 || dpiY <= 0.0)
