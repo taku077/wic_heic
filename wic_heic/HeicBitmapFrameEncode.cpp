@@ -463,24 +463,37 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		}
 	}
 	if (!pIBitmapSource) return E_POINTER;
-	// A WIC flip/rotate wrapper is a raster view of another image. It does
-	// NOT expose the original HEIC bitstream, Exif, MakerNote, HDR auxiliary
-	// items, embedded thumbnails or their required transform properties.
-	// Accepting this as a default WriteSource would successfully produce a
-	// new but metadata-stripped HEIC even though Photos appeared to "rotate".
-	// Fail closed for both default and explicit recompression until an
-	// independently verified provenance-preserving WIC edit path exists.
-	IWICBitmapFlipRotator* rasterTransform=nullptr;
-	if(SUCCEEDED(pIBitmapSource->QueryInterface(
-	       IID_IWICBitmapFlipRotator,
-	       reinterpret_cast<void**>(&rasterTransform))) &&
-	   rasterTransform) {
-		rasterTransform->Release();
-		WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
-			m_BitmapTransform,m_HeifCompressionMethod,
-			"wic-raster-rotation-would-strip-heic-provenance",
-			WINCODEC_ERR_UNSUPPORTEDOPERATION);
-		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	// WIC raster wrappers may hide a HEIC source's provenance. A flip-rotator
+	// alone is not sufficient to guard this: wrapping it in a format converter,
+	// scaler or clipper hides the IWICBitmapFlipRotator interface from the HEIC
+	// encoder, while exposing no HEVC stream, EXIF, ICC, gain maps or auxiliary
+	// metadata. Deny these lossy/ambiguous sources under both default and
+	// explicitly requested HEVC compression. An original decoder frame with
+	// IHeicRawSource was already handled above by the verified lossless route.
+	// Do not infer the source from dimensions, pixels, filename, or a cache.
+	const IID* const unsafeWicRasterInterfaces[] = {
+		&IID_IWICBitmapFlipRotator,
+		&IID_IWICFormatConverter,
+		&IID_IWICBitmapScaler,
+		&IID_IWICBitmapClipper
+	};
+	const char* const unsafeWicRasterLabels[] = {
+		"wic-fliprotator-without-heic-provenance",
+		"wic-formatconverter-without-heic-provenance",
+		"wic-scaler-without-heic-provenance",
+		"wic-clipper-without-heic-provenance"
+	};
+	for (size_t i=0; i<sizeof(unsafeWicRasterInterfaces)/sizeof(unsafeWicRasterInterfaces[0]); ++i) {
+		IUnknown* wrapped=nullptr;
+		const HRESULT queried=pIBitmapSource->QueryInterface(
+			*unsafeWicRasterInterfaces[i],reinterpret_cast<void**>(&wrapped));
+		if (wrapped) wrapped->Release();
+		if (SUCCEEDED(queried)) {
+			WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+				m_BitmapTransform,m_HeifCompressionMethod,
+				unsafeWicRasterLabels[i],WINCODEC_ERR_UNSUPPORTEDOPERATION);
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
 	}
 	// Even when the caller explicitly asks for HEVC recompression or a crop,
 	// a source frame from our HEIC decoder may carry EXIF, MakerNote, ICC,
