@@ -400,7 +400,7 @@ jobs:
           if(@(Get-ChildItem -LiteralPath $stage -File).Count -ne 8){throw 'Complete kit expected exactly eight files'}
           Write-Host 'WIC120_EXACT_OLD_MSI_AND_NEW_MSI_WITH_RECOVERY_SCRIPTS_STAGED_PASS'
           Write-Host ('WIC120_FIELDKIT_MSI_SHA256='+$sha)
-      - name: Exercise identical Win10 field kit scripts: precheck, upgrade and exact rollback in disposable CI
+      - name: Exercise identical Win10 field kit scripts - precheck, upgrade and exact rollback in disposable CI
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
