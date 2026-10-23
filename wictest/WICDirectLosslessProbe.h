@@ -488,6 +488,46 @@ inline void FourTurnsOnlyInMemory(IWICImagingFactory* factory) {
     const auto undo=HeicLosslessNative::Transform(canonical,3);
     if(current!=undo)
         throw std::runtime_error("Four consecutive HEIC rotations were not canonical");
+    // Full-resolution pixel identity after four turns. Orientation Exif
+    // may be canonicalized (6 -> 1), so compare the displayed pixels, not
+    // only the in-container metadata and file byte length.
+    auto readRgb=[factory](const std::vector<uint8_t>& heic) {
+        CComPtr<IStream> memory;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&memory),
+            "four-turn pixel input stream");
+        ULONG n=0;
+        Check(memory->Write(heic.data(),ULONG(heic.size()),&n),
+            "four-turn pixel memory input");
+        if(n!=heic.size())throw std::runtime_error("Short pixel-memory write");
+        LARGE_INTEGER zero{};
+        Check(memory->Seek(zero,STREAM_SEEK_SET,nullptr),
+            "four-turn pixel memory rewind");
+        CComPtr<IWICBitmapDecoder> decoded;
+        Check(factory->CreateDecoderFromStream(memory,nullptr,
+            WICDecodeMetadataCacheOnDemand,&decoded),
+            "four-turn pixel decoder");
+        CComPtr<IWICBitmapFrameDecode> frame;
+        Check(decoded->GetFrame(0,&frame),"four-turn pixel frame");
+        UINT width=0,height=0;
+        Check(frame->GetSize(&width,&height),"four-turn pixel size");
+        if(!width || !height || width>5000 || height>5000)
+            throw std::runtime_error("Unexpected four-turn fixture size");
+        CComPtr<IWICBitmapSource> rgb;
+        Check(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
+            frame,&rgb),"four-turn pixel RGB conversion");
+        std::vector<BYTE> pixels(size_t(width)*height*3u);
+        Check(rgb->CopyPixels(nullptr,width*3u,UINT(pixels.size()),
+            pixels.data()),"four-turn pixel full-res read");
+        return std::make_pair(std::make_pair(width,height),std::move(pixels));
+    };
+    const auto originalPixels=readRgb(original);
+    const auto finalPixels=readRgb(current);
+    if(originalPixels.first!=finalPixels.first ||
+       originalPixels.second!=finalPixels.second)
+        throw std::runtime_error("Four-turn HEIC full pixels differ");
+    printf("WIC_FOUR_TURNS_EXACT_RGB_PIXEL_IDENTITY_PASS WIDTH=%u HEIGHT=%u PIXEL_BYTES=%zu\n",
+        originalPixels.first.first,originalPixels.first.second,
+        originalPixels.second.size());
     puts("WIC_FOUR_TURNS_MEMORY_ONLY_EXIF_CANONICAL_HEVC_BYTES_PRESERVED_PASS");
 }
 
