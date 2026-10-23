@@ -402,9 +402,11 @@ jobs:
           Write-Host 'WIC120_EXACT_OLD_MSI_AND_NEW_MSI_WITH_RECOVERY_SCRIPTS_STAGED_PASS'
           Write-Host ('WIC120_FIELDKIT_MSI_SHA256='+$sha)
       - name: Exercise identical Win10 field kit scripts - precheck, upgrade and exact rollback in disposable CI
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5){throw 'Windows PowerShell 5.1 runtime required for field kit qualification'}
+          Write-Host 'WIC120_ACTUAL_WINDOWS_POWERSHELL_51_RUNTIME_PASS'
           $stage=Join-Path $env:RUNNER_TEMP 'WIC120_OneTime_CompleteKit'
           $runnerScript=Join-Path $stage 'WIC120_OneTimeTrial.ps1'
           $old=Join-Path $stage 'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi'
