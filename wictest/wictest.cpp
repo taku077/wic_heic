@@ -19,6 +19,7 @@
 #include "NativeLosslessProbe.h"
 #include "WICDirectLosslessProbe.h"
 #include "WICDecoderCapabilityProbe.h"
+#include "WICComFactoryProbe.h"
 #include "WICNativeHeifIdentityProbe.h"
 #include "PhotosNavigationZoomProbe.h"
 
@@ -378,6 +379,7 @@ int main()
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
 		WICNativeHeifIdentityProbe::Run();
+		WICComFactoryProbe::Run();
 		WICDecoderCapabilityProbe::Run();
 		PhotosNavigationZoomProbe::Run();
 		GeometryProbe::Run();

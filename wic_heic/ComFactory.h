@@ -4,9 +4,10 @@ class CComFactory : public IClassFactory
 {
 private:
 	std::atomic<uint32_t> m_Count;
+	const bool m_IsDecoder;
 
 public:
-	CComFactory();
+	explicit CComFactory(bool isDecoder);
 	virtual ~CComFactory();
 
 	virtual HRESULT STDMETHODCALLTYPE CreateInstance(_In_opt_ IUnknown *pUnkOuter, _In_ REFIID riid, _COM_Outptr_ void **ppvObject);
