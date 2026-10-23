@@ -1,4 +1,5 @@
 #pragma once
+#include "../wic_heic/HeicSourceAccess.h"
 // Direct, in-process Windows WIC lossless transformation of a synthetic HEIC.
 // This is separate from Windows Photos UI; private user files never enter CI.
 #include <fstream>
