@@ -7,6 +7,8 @@ private:
 	heif::Context m_Context;
 	std::vector<CHeicBitmapFrameEncode*> m_Frames;	std::vector<uint8_t> m_IccProfile;
 	bool m_IccExplicitlySet;
+	// Disallow new frames or metadata changes after a successful Commit.
+	bool m_Committed;
 	IStream* m_Stream;
 
 public:
