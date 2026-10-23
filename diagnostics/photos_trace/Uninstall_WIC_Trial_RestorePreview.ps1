@@ -69,7 +69,7 @@ foreach($entry in $entries){
  }
 }
 $installed=@($before.WicHeicMsi | Where-Object {
- $_.Name -eq 'WicHeic Repair Test' -and $_.Version -eq '1.1.19'
+ $_.Name -eq 'WicHeic Repair Test' -and $_.Version -eq '1.1.20'
 })
 $previewMsi=@($before.WicHeicMsi | Where-Object {
  $_.Name -eq 'WicHeic Fast Thumbnail Preview (Experimental)' -and $_.Version -eq '0.4.0'
