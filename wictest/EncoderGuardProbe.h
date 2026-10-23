@@ -60,6 +60,32 @@ inline void VerifyRgbaEncoderCapability(IWICImagingFactory* fac) {
     }
     if(minAlpha>=maxAlpha)
         throw std::runtime_error("HEIC decoded alpha channel lost variation");
+    // A Windows app may select the encoder by IWICBitmapEncoderInfo before
+    // setting its pixel format. Advertise only formats with real HEIC
+    // encode+decode success: 24bpp RGB and verified 32bpp RGBA, not the
+    // high-bit-depth variants unsupported by the pinned encoding backend.
+    CComPtr<IWICBitmapEncoderInfo> info;
+    Check(encoder->GetEncoderInfo(&info),"RGBA8 encoder registry component info");
+    UINT count=0;
+    Check(info->GetPixelFormats(0,nullptr,&count),"RGBA8 encoder format count");
+    if(!count||count>32)
+        throw std::runtime_error("HEIC encoder registry format count invalid");
+    std::vector<GUID> formats(count);
+    UINT actual=0;
+    Check(info->GetPixelFormats(count,formats.data(),&actual),
+        "RGBA8 encoder format query");
+    bool rgb24=false,rgba32=false,rgb48=false,rgba64=false;
+    for(UINT i=0;i<actual;i++) {
+        rgb24|=!!IsEqualGUID(formats[i],GUID_WICPixelFormat24bppRGB);
+        rgba32|=!!IsEqualGUID(formats[i],GUID_WICPixelFormat32bppRGBA);
+        rgb48|=!!IsEqualGUID(formats[i],GUID_WICPixelFormat48bppRGB);
+        rgba64|=!!IsEqualGUID(formats[i],GUID_WICPixelFormat64bppRGBA);
+    }
+    printf("WIC_HEIC_ENCODER_REGISTERED_RGBA8 count=%u rgb24=%u rgba32=%u rgb48=%u rgba64=%u\\n",
+        actual,unsigned(rgb24),unsigned(rgba32),unsigned(rgb48),unsigned(rgba64));
+    if(!rgb24||!rgba32||rgb48||rgba64)
+        throw std::runtime_error("HEIC encoder registered formats mismatch verified encode capability");
+    puts("WIC_HEIC_ENCODER_REGISTERED_RGBA8_AND_REJECTS_UNPROVEN_HIGHBIT_PASS");
     puts("WIC_HEIC_RGBA8_ENCODER_AND_ALPHA_READBACK_PASS");
 }
 inline void Run() {
