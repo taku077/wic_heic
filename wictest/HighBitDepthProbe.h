@@ -17,6 +17,36 @@ inline void Run() {
     GUID fmt{};Check(decoded->GetPixelFormat(&fmt),"source pixel format");
     if(!IsEqualGUID(fmt,GUID_WICPixelFormat48bppRGB))
         throw std::runtime_error("10-bit HEIC advertised as a lower-bit-depth WIC format");
+    // WIC component-info format enumeration is often used by Windows
+    // clients before they attempt high bit-depth HEIC image decode.
+    // The runtime correctly returns 48bppRGB for this synthetic 10-bit
+    // source, so advertising ONLY 24bppRGB is a real API inconsistency.
+    CComPtr<IWICBitmapDecoderInfo> info;
+    Check(input->GetDecoderInfo(&info),"decoder component info");
+    UINT registeredCount=0;
+    Check(info->GetPixelFormats(0,nullptr,&registeredCount),"registered pixel format count");
+    if(registeredCount>64u || !registeredCount)
+        throw std::runtime_error("WIC decoder registered format count invalid");
+    std::vector<GUID> registered(registeredCount);
+    UINT actualCount=0;
+    Check(info->GetPixelFormats(registeredCount,registered.data(),&actualCount),
+        "registered pixel format list");
+    auto has=[&](const GUID& guid){
+        for(UINT i=0;i<actualCount;i++)
+            if(IsEqualGUID(registered[i],guid))return true;
+        return false;
+    };
+    printf("WIC_HEIC_DECODER_REGISTERED_PIXEL_FORMATS count=%u rgb24=%u rgba32=%u rgb48=%u rgba64=%u\\n",
+        actualCount,unsigned(has(GUID_WICPixelFormat24bppRGB)),
+        unsigned(has(GUID_WICPixelFormat32bppRGBA)),
+        unsigned(has(GUID_WICPixelFormat48bppRGB)),
+        unsigned(has(GUID_WICPixelFormat64bppRGBA)));
+    if(!has(GUID_WICPixelFormat24bppRGB) ||
+       !has(GUID_WICPixelFormat32bppRGBA) ||
+       !has(GUID_WICPixelFormat48bppRGB) ||
+       !has(GUID_WICPixelFormat64bppRGBA))
+        throw std::runtime_error("HEIC decoder runtime and WIC registered pixel formats disagree");
+    puts("WIC_HEIC_DECODER_REGISTERED_PIXEL_FORMATS_COMPLETE_PASS");
     UINT w=0,h=0;
     Check(decoded->GetSize(&w,&h),"10bit dimensions");
     if(w==0 || h==0 || uint64_t(w)*h>20000000ull)
