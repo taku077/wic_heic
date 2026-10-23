@@ -580,11 +580,50 @@ inline void VerifyWicScaleFallbackWithoutEmbeddedThumbnail(IWICImagingFactory* f
     printf("WIC_PHOTOS_SPEC_COMPLIANT_NO_EMBEDDED_THUMBNAIL_AND_RGB_FALLBACK_PASS size=%ux%u mask=0x%X\\n",
         tw,th,unsigned(flags));
 }
+// Photos/WIC arbitration reads decoder REGISTRY patterns before asking
+// QueryCapability. HEIC is HEVC-based, but AVIF uses AV1: this private
+// libde265/HEVC build has no AV1 decoder. Do not advertise AVIF merely
+// because libheif understands ISO BMFF container boxes. Both byte arrays
+// below are synthetic headers created in memory, never user files.
+inline void VerifyRegisteredHeicNotAvifSignature(IWICImagingFactory* factory) {
+    CComPtr<IWICComponentInfo> component;
+    if(FAILED(factory->CreateComponentInfo(CLSID_HEICDecoder,&component)))
+        throw std::runtime_error("HEIC decoder component info missing");
+    CComPtr<IWICBitmapDecoderInfo> info;
+    if(FAILED(component->QueryInterface(IID_IWICBitmapDecoderInfo,
+        reinterpret_cast<void**>(&info))) || !info)
+        throw std::runtime_error("HEIC decoder registration metadata missing");
+    for(const char* brand : {"heic","avif"}) {
+        BYTE header[24]{};
+        header[3]=24;
+        memcpy(header+4,"ftyp",4);
+        memcpy(header+8,brand,4);
+        memcpy(header+16,"mif1",4);
+        CComPtr<IStream> stream;
+        if(FAILED(CreateStreamOnHGlobal(nullptr,TRUE,&stream)))
+            throw std::runtime_error("Synthetic brand memory stream unavailable");
+        ULONG written=0;
+        if(FAILED(stream->Write(header,24,&written))||written!=24)
+            throw std::runtime_error("Synthetic brand stream write failed");
+        LARGE_INTEGER zero{};
+        if(FAILED(stream->Seek(zero,STREAM_SEEK_SET,nullptr)))
+            throw std::runtime_error("Synthetic brand seek failed");
+        BOOL matched=FALSE;
+        HRESULT hr=info->MatchesPattern(stream,&matched);
+        if(FAILED(hr))throw std::runtime_error("WIC decoder pattern query failed");
+        printf("WIC_HEIC_DECODER_PATTERN brand=%s match=%u\\n",
+               brand,unsigned(!!matched));
+        if((strcmp(brand,"heic")==0)!=!!matched)
+            throw std::runtime_error("HEIC decoder advertised unsupported AVIF or missed HEIC");
+    }
+    puts("WIC_HEIC_NOT_AVIF_REGISTRY_ARBITRATION_PASS");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,
         (void**)&factory)))throw std::runtime_error("Capability factory unavailable");
+    VerifyRegisteredHeicNotAvifSignature(factory);
     VerifyPrimarySelectionWhenPitmChanges(factory);
     VerifyWicScaleFallbackWithoutEmbeddedThumbnail(factory);
     Verify(factory,L"samples\\fixture-irot3-exif6.heic",true,true);
