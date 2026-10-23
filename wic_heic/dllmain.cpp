@@ -326,36 +326,19 @@ STDAPI DllUnregisterServer()
 _Check_return_
 STDAPI DllGetClassObject(_In_ REFCLSID rclsid, _In_ REFIID riid, _Outptr_ LPVOID* ppvObj)
 {
-	HRESULT hr = E_OUTOFMEMORY;
-
-	if (!ppvObj) {
-		return E_POINTER;
-	}
-
-	if (!IsEqualGUID(riid, IID_IClassFactory)) {
-		return E_INVALIDARG;
-	}
-
-	*ppvObj = NULL;
-
-	if (IsEqualCLSID(rclsid, CLSID_HEICDecoder) || IsEqualCLSID(rclsid, CLSID_HEICEncoder)) {
-		CComFactory *pClassFactory = new CComFactory();
-		if (pClassFactory)
-		{
-			hr = pClassFactory->QueryInterface(riid, ppvObj);
-			pClassFactory->Release();
-		}
-		else
-		{
-			return E_OUTOFMEMORY;
-		}
-	}
-	else
-	{
+	if (!ppvObj) return E_POINTER;
+	*ppvObj = nullptr;
+	if (!IsEqualGUID(riid,IID_IClassFactory) &&
+	    !IsEqualGUID(riid,IID_IUnknown)) return E_NOINTERFACE;
+	const bool isDecoder=IsEqualCLSID(rclsid,CLSID_HEICDecoder);
+	if (!isDecoder && !IsEqualCLSID(rclsid,CLSID_HEICEncoder))
 		return CLASS_E_CLASSNOTAVAILABLE;
-	}
-
-	return S_OK;
+	CComFactory* factory=new(std::nothrow) CComFactory(isDecoder);
+	if (!factory) return E_OUTOFMEMORY;
+	const HRESULT hr=factory->QueryInterface(riid,ppvObj);
+	factory->Release();
+	// Never report S_OK when requested COM interface activation failed.
+	return hr;
 }
 
 __control_entrypoint(DllExport)
