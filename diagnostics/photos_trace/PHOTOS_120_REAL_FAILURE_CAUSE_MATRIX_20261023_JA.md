@@ -481,3 +481,16 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - 研究版のバイナリはユーザーの実機Windows 10標準フォト2026.11090.22001.0で**未確認**。今回の正しい画素形式登録やRGBA書戻し成功を「HEVC拡張警告が消えた」「編集・回転ボタンが有効になった」「標準フォトから無再圧縮保存できた」とは扱わない。現時点のP0阻害要因はPhotos本体のHEVC依存判定・内部編集経路／メタデータ保存。既存個人写真、HEIC Manager、ユーザーPCの登録状態には触れない。
 
 **再開点**：最新研究ブランチのコードとCI結果を読み取り専用で再確認してから、今回の24/32/48/64デコーダー広告・24/32エンコーダー広告・スレッド同期を**重複実装しない**こと。次にPhotos GUIが求める編集・保存API経路とHEVC MFT/Store条件を一次データで区別する。CIの成功だけでMSIを提示しない。暫定完成率42%からの進展はWIC契約の範囲に限られ、GUI合格は依然ゼロ。
+
+## Windows 10 Photos向けWICメタデータCOM公開・途中書込み保護（2026-10-24）
+
+**新たに実機ではなくWindows Server隔離CIで実証した3つの問題と修正。これらをPhotos GUI復旧と取り違えないこと。**
+
+1. **HEICフレームのCOMメタデータ列挙**。既存`CHeicBitmapFrameDecode`の`GetMetadataQueryReader`はEXIFのクエリ取得ができるが、`QueryInterface(IID_IWICMetadataBlockReader)`を返さなかった。メタデータを持つフレームで必要となるWICインターフェース。合成人工EXIF HEICだけを用いたテスト`6661020aa4d1d92614703c600253b0012e6b1a83`、SDKヘッダー追加`9cce99c5a9790324494cc420c88bff2180a9c063`、[**赤CI #40001302968**](https://github.com/taku077/wic_heic/actions/runs/40001302968)：`WIC_HEIC_FRAME_METADATA_BLOCK_QI_HRESULT=0x80004002`。製品修正`f8294f7e03924571af0325cc5f4dbd9c57f52537`、`3955d62c793943dbe6ca7c2f54b12f8278fdb4ce`：フレーム自身が`IWICMetadataBlockReader`を公開し、**同一`IUnknown`識別子**で既存EXIF/XMPブロック列挙ロジックへ委譲。実ブロック数、インデックス取得、`IEnumUnknown`列挙、Orientationクエリを人工HEICで確認。[**緑CI #40002299677**](https://github.com/taku077/wic_heic/actions/runs/40002299677)：`WIC_HEIC_FRAME_BLOCK_READER_COM_IDENTITY_AND_EXIF_PASS`。
+2. **ロスレスHEIC全体の一部書込み**。`CHeicBitmapEncoder::Commit`は既存非空ファイルへの書込みを拒否するが、空の`IStream`に対して短い`S_OK`書込みが発生すると、破損したHEICプレフィックスが残っていた。故障注入用の人工`IStream`（ユーザーの実ファイルは不使用）テスト`80c442350f4a677b93ca52f4a26b4ff9b0e1cdd0`、[**赤CI #40001983500**](https://github.com/taku077/wic_heic/actions/runs/40001983500)で再現。修正`9d969116b8d5b60fca9c1be1c4a1d4a8c319f188`：短い書込みを`STG_E_WRITEFAULT`として拒否し、最初から空だった出力について`SetSize(0)`と位置0への復旧をベストエフォートで行う。[**緑CI #40002299677**](https://github.com/taku077/wic_heic/actions/runs/40002299677)：`WIC_LOSSLESS_PARTIAL_WRITE_REJECT_HRESULT=0x8003001D`、残存0バイト、`WIC_LOSSLESS_PARTIAL_WRITE_ROLLBACK_PASS`。
+3. **HEVC再圧縮中の一部書込み**。別の人工RGB→HEIC出力で故障注入を実施`96f29041db316a7b50e8479698664fcfdc98cbdd`。[**赤CI #40002672209**](https://github.com/taku077/wic_heic/actions/runs/40002672209)：失敗を返すが**830バイトの壊れた出力が残る**。修正`b950474400b8c0df7dcb71e887c58a1ff0bdbe3b`：開始時に空だったストリームへのHEIF raster書込みが失敗した場合にも復旧を試す。[**緑CI #40002977203**](https://github.com/taku077/wic_heic/actions/runs/40002977203)：`WIC_RASTER_PARTIAL_WRITE_REJECT_HRESULT=0x80070057`、残存0バイト、`WIC_RASTER_PARTIAL_WRITE_ROLLBACK_PASS`。
+4. 同じ最終CI #40002977203 は、メタデータCOM同一性、ロスレス・通常エンコード両方の短い出力への復旧、ICC 3144 bytes保持、4回90度の6,220,800バイトRGB一致、プライマリHEIFの完全バイトコピー、旧v1.1.18との人工HEIC A/B、研究MSI配布ブロックを維持。ユーザーのIMG_4074などの元写真、PCレジストリ、HEIC Managerには触れていない。
+
+**重要な制約**：`IStream::SetSize`をサポートしない出力では復旧を保証できない。過去に非空だったファイルを自動的に切り詰める機能ではない。WIC APIの妥当性が増したこととWindows 10 PhotosのHEVC拡張依存・編集ボタンの挙動は別である。ユーザーPCで新MSIを導入せず、**HEVC警告、編集・回転、無変形保存のP0機能ゲートは未達、配布保留**。
+
+**次の優先事項**：既存の`PhotosWicTrace`／Media Foundation診断資料を再利用し、可視Photos UIの判定・実保存経路を実機で区別する。古い1.1.18を正常動作版と誤表記しない。旧1.1.18の`QueryCapability=0x15`の誤ったSameEncoder/Thumbnail申告を無条件に復活させない。
