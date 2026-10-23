@@ -366,3 +366,17 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 - 新観測で「登録ファイルと読込みファイルのSHA不一致」が出た場合は、再インストールより先に競合・旧DLL残存・プロセスキャッシュを疑う。「一致」であればその仮説は弱まり、より本質的なWIC機能申告・Photos内部のHEVC/編集経路へ重点を移す。モジュールのディスク照合「一致」も、Photosから個々のWIC APIを呼んだ事実や画質・保存の証明にはならない。
 
 **完成率**：この実機情報と診断機能自体は有益だが、元のP0達成条件である「HEVC警告を研究版で消す」「Photos GUI編集と安全保存を実機で成功させる」はまだ未達。自動CIと実機機能達成率を混同せず、過去の39%から数値を無条件に増やさない。
+
+## Schema 3実機照合: MATCHES_REGISTERED_ON_DISK_SHA256（2026-10-24）
+
+**実機ユーザー提供JSONの確定事項（GitHubには匿名化した判定だけ記録）**：
+- Windows 10 build 19045、`WindowScan=OK`、`VisiblePhotosWicCorrelation=VISIBLE_PHOTOS_PROCESS_HAS_CUSTOM_WIC_MODULE`。
+- 可視トップレベル画面とホストの可視子ウィンドウを持つ`Photos.exe`が`windowscodecs.dll`と`wic_heic.dll`をロードしている。`ApplicationFrameHost`には`windowscodecs.dll`、ほかの非可視`Photos.exe`にも`windowscodecs.dll`のみが検出された。
+- **重要な追加観測**：当該可視`Photos.exe`の`MappedCustomWicDllRegisteredFileMatch=MATCHES_REGISTERED_ON_DISK_SHA256`。`HKLM`側のデコーダーとエンコーダー登録先は同一ハッシュ。これにより**可視フォトが、登録WICと異なるディスク上のDLLファイルをロードしている**という個別原因仮説は支持されない。
+- 実機個別PID、完全なDLLパス、登録ハッシュや日時の秒以下等はGitHub上では掲載しない。ファイル内容・画像・個人情報・ウィンドウタイトルを読んでいない。
+- **観測の限界**：一致したのはプロセスモジュールが指す**ディスク上のファイル**と現在のCOM登録ファイルのSHA-256。プロセス内メモリのコードが同一か、どのWIC APIが実際に編集判定に使われたか、HEVCのMF/Store拡張経路が利用可能かは示さない。観測時点で稼働中の比較ベースは旧`1.1.18`（表示・ボタン有効、ただし回転変形・保存失敗あり）であり、研究版を実機で検証した証拠ではない。
+- したがって、**更なる読み取り専用のプロセス/DLL名・ハッシュ照合を繰り返さない**。主な未解決事項は(1)Photos UIからの実際のWIC/Media Foundation呼出しとHRESULTの根拠(2)旧v1.1.18で警告が消えた状態と研究版で再発する際のアプリ内条件(3)専用人工HEICでのWindows 10 GUIの編集・ロスレス保存、および導入前の復元ゲートである。GUI実測を伴わないWindows Server CIを完成条件に代用しない。
+
+Microsoft公式サポートではWindows 10フォトにHEIFとHEVCの両拡張が必要となる場合を記載している：https://support.microsoft.com/en-us/windows/apps/photos/photos-app-video-editor-error-can-t-view-this-file-type 。**第三者WICコーデックを登録するだけで標準フォト独自のHEVC依存・使用許諾確認を満たすと断定しない**。旧`v1.1.18`の誤った`QueryCapability=0x15`を無条件復帰しない：`SameEncoder`は同ベンダーによる符号化を実際に認識した場合の値であり、`CanDecodeThumbnail`は現に取得できるサムネイルを要する。公式：https://learn.microsoft.com/en-us/windows/win32/api/wincodec/ne-wincodec-wicbitmapdecodercapabilities 。
+
+**進捗表示**：39％据え置き。これは原因候補の排除・実機診断の前進であるが、ユーザーが求める標準フォト機能ゲートの解決はまだ達成していない。
