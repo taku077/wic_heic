@@ -86,7 +86,15 @@ inline void VerifySharedFrameConcurrentMta() {
                 if(FAILED(decoder->GetFrame(0,&shared)))
                     throw std::runtime_error("MTA frame test synthetic frame missing");
                 constexpr size_t n=8;
-                constexpr UINT width=48,height=48,stride=width*3;
+                // fixture-irot3-exif6-noaux.heic is a 10-bit HEIC:
+                // its WIC frame advertises 48bppRGB, not 24bppRGB.
+                // 3 bytes/pixel made ALL concurrent CopyPixels requests
+                // fail E_INVALIDARG, falsely blaming the decode mutex.
+                WICPixelFormatGUID pixelFormat{};
+                if(FAILED(shared->GetPixelFormat(&pixelFormat)) ||
+                   !IsEqualGUID(pixelFormat,GUID_WICPixelFormat48bppRGB))
+                    throw std::runtime_error("MTA stress fixture is not WIC 48bppRGB");
+                constexpr UINT width=48,height=48,stride=width*6;
                 const WICRect box{0,0,INT(width),INT(height)};
                 std::vector<std::vector<BYTE>> pixels(n);
                 std::vector<HRESULT> results(n,S_OK);
