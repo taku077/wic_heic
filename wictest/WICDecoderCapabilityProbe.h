@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include "../wic_heic/HeicSourceAccess.h"
 // Synthetic-only WIC arbitration regression for Windows Photos full-size
 // decoding and browsing. Tests the decoder contract, NOT Photos GUI controls.
