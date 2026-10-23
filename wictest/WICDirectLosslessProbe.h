@@ -394,6 +394,103 @@ inline void RejectMutationsAfterLosslessCapture(IWICImagingFactory* factory) {
     printf("WIC_LOSSLESS_CAPTURE_IMMUTABLE_AND_SOURCE_BYTES_PRESERVED_PASS\n");
 }
 
+// End-to-end WIC integration: four consecutive 90-degree turns using
+// ONLY in-memory IStreams and the synthetic repository fixture. No file is
+// created, modified, truncated, renamed, or deleted. Each step must preserve
+// the HEVC bitstream and all HEIF sidecar items byte-for-byte except the
+// intentional irot/Exif Orientation patch from the proven native reference.
+inline void FourTurnsOnlyInMemory(IWICImagingFactory* factory) {
+    const auto original=Read(L"samples\\fixture-irot3-exif6-noaux.heic");
+    if(original.empty() || original.size()>16u*1024u*1024u)
+        throw std::runtime_error("Synthetic HEIC fixture size out of bounds");
+    auto current=original;
+    UINT initialW=0,initialH=0;
+    for(unsigned turn=0;turn<4;++turn) {
+        CComPtr<IStream> input;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&input),
+            "four-turn input memory stream");
+        ULONG n=0;
+        Check(input->Write(current.data(),ULONG(current.size()),&n),
+            "four-turn write input memory bytes");
+        if(n!=current.size())throw std::runtime_error("Short memory input");
+        LARGE_INTEGER zero{};
+        Check(input->Seek(zero,STREAM_SEEK_SET,nullptr),"four-turn rewind input");
+
+        CComPtr<IWICBitmapDecoder> decoder;
+        Check(factory->CreateDecoderFromStream(input,nullptr,
+            WICDecodeMetadataCacheOnDemand,&decoder),
+            "four-turn WIC decode HEIC in memory");
+        CComPtr<IWICBitmapFrameDecode> source;
+        Check(decoder->GetFrame(0,&source),"four-turn source frame");
+        UINT sw=0,sh=0;
+        Check(source->GetSize(&sw,&sh),"four-turn size");
+        if(turn==0) {initialW=sw;initialH=sh;}
+        if((turn&1)==0 && (sw!=initialW || sh!=initialH))
+            throw std::runtime_error("Four-turn input geometry inconsistent");
+        if((turn&1)!=0 && (sw!=initialH || sh!=initialW))
+            throw std::runtime_error("Four-turn input geometry stretched");
+
+        CComPtr<IStream> output;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&output),
+            "four-turn output memory stream");
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"four-turn WIC encoder");
+        Check(encoder->Initialize(output,WICBitmapEncoderNoCache),
+            "four-turn encoder initialize");
+        CComPtr<IWICBitmapFrameEncode> frame;
+        CComPtr<IPropertyBag2> options;
+        Check(encoder->CreateNewFrame(&frame,&options),"four-turn frame and bag");
+        if(!options)throw std::runtime_error("Lossless option bag missing");
+        PROPBAG2 keys[2]{};
+        keys[0].pstrName=const_cast<LPOLESTR>(L"BitmapTransform");
+        keys[1].pstrName=const_cast<LPOLESTR>(L"HeifCompressionMethod");
+        VARIANT values[2]{};
+        values[0].vt=VT_UI1;values[0].bVal=1;
+        values[1].vt=VT_UI1;values[1].bVal=1;
+        Check(options->Write(2,keys,values),"four-turn lossless option");
+        Check(frame->Initialize(options),"four-turn frame initialize");
+        Check(frame->SetSize(sh,sw),"four-turn swapped dimensions");
+        Check(frame->WriteSource(source,nullptr),"four-turn original HEVC transfer");
+        Check(frame->Commit(),"four-turn frame commit");
+        Check(encoder->Commit(),"four-turn encoder commit");
+
+        STATSTG st{};
+        Check(output->Stat(&st,STATFLAG_NONAME),"four-turn output stream stat");
+        if(st.cbSize.QuadPart!=current.size())
+            throw std::runtime_error("Four-turn output changed HEIC length");
+        Check(output->Seek(zero,STREAM_SEEK_SET,nullptr),
+            "four-turn output rewind");
+        std::vector<uint8_t> next(current.size());
+        ULONG got=0;
+        Check(output->Read(next.data(),ULONG(next.size()),&got),
+            "four-turn output read");
+        if(got!=next.size())throw std::runtime_error("Four-turn short memory output");
+        const auto expected=HeicLosslessNative::Transform(current,1);
+        if(next!=expected)
+            throw std::runtime_error("WIC lossless source differs from HEIF reference");
+        // The bytes in the original source stream must not have changed.
+        Check(input->Seek(zero,STREAM_SEEK_SET,nullptr),
+            "four-turn original rewind");
+        std::vector<uint8_t> before(current.size());
+        Check(input->Read(before.data(),ULONG(before.size()),&got),
+            "four-turn check original input");
+        if(got!=before.size() || before!=current)
+            throw std::runtime_error("Four-turn source memory was modified");
+        current=std::move(next);
+        printf("WIC_FOUR_90_TURNS_IN_MEMORY_STEP=%u SIZE=%ux%u BYTES=%zu\n",
+            turn+1,sh,sw,current.size());
+    }
+    // The first transform normalizes the ambiguous irot+Exif6 orientation.
+    // Thus the canonical four-turn output may not equal the *uncanonical*
+    // original byte-for-byte; the changes must be confined to orientation.
+    const auto canonical=HeicLosslessNative::Transform(original,1);
+    const auto undo=HeicLosslessNative::Transform(canonical,3);
+    if(current!=undo)
+        throw std::runtime_error("Four consecutive HEIC rotations were not canonical");
+    puts("WIC_FOUR_TURNS_MEMORY_ONLY_EXIF_CANONICAL_HEVC_BYTES_PRESERVED_PASS");
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -415,6 +512,7 @@ inline void Run() {
     RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(factory);
     RejectUnsafeOriginalHeicRasterFallback(factory);
     RejectMutationsAfterLosslessCapture(factory);
+    FourTurnsOnlyInMemory(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
 }
 }
