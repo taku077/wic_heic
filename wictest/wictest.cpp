@@ -446,11 +446,13 @@ int main()
 		CheckRotatedExifFixture();
 		WICComFactoryProbe::Run();
 		WICDecoderCapabilityProbe::Run();
+		// Probe codec registration before concurrent-zoom stress, so both
+		// independent failure causes are observable in Windows CI output.
+		HighBitDepthProbe::Run();
 		PhotosNavigationZoomProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		ICCProfileProbe::Run();
-		HighBitDepthProbe::Run();
 
 		WICLosslessRotationProbe::Run();
 		WICHeifOptionsProbe::Run();
