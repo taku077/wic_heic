@@ -223,7 +223,7 @@ inline void RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(IWICImaging
     // The original 1.1.18 could enable the Photos edit/rotate buttons but
     // could lose metadata, stretch the image, or fail while saving. This
     // test covers a specific unsafe WriteSource route, not Photos itself.
-    const wchar_t* sourcePath=L"samples\fixture-irot3-exif6-noaux.heic";
+    const wchar_t* sourcePath=L"samples\\fixture-irot3-exif6-noaux.heic";
     const auto original=Read(sourcePath);
     CComPtr<IWICBitmapDecoder> decoder;
     Check(factory->CreateDecoderFromFilename(sourcePath,nullptr,GENERIC_READ,
@@ -242,8 +242,8 @@ inline void RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(IWICImaging
     // metadata/auxiliary provenance.
     for(int mode=0;mode<2;++mode) {
         const wchar_t* out=mode==0?
-            L"samples\fixture-wic-rotator-default-rejected.heic":
-            L"samples\fixture-wic-rotator-explicit-rejected.heic";
+            L"samples\\fixture-wic-rotator-default-rejected.heic":
+            L"samples\\fixture-wic-rotator-explicit-rejected.heic";
         CComPtr<IWICBitmapEncoder> encoder;
         Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
             &GUID_VendorPrsyahmi,&encoder),"rotation-safety encoder");
