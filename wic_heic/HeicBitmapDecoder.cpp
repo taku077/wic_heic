@@ -9,6 +9,7 @@
 CHeicBitmapDecoder::CHeicBitmapDecoder()
 	: m_Count(1)
 	, m_Reader(nullptr)
+	, m_Initialized(false)
 {
 	DbgLog("%s", __FUNCTION__);
 }
@@ -194,6 +195,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
 		return WINCODEC_ERR_BADIMAGE;
 	}
 
+	m_Initialized = true;
 	return S_OK;
 }
 
@@ -276,7 +278,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetColorContexts(UINT cCount, __RP
 	*pcActualCount=0;
 	if (cCount && !ppIColorContexts) return E_POINTER;
 	if (cCount) ppIColorContexts[0]=nullptr;
-	if (!m_Reader) return WINCODEC_ERR_WRONGSTATE;
+	if (!m_Initialized) return WINCODEC_ERR_WRONGSTATE;
 	// Applications may request the container-level color profile instead of
 	// its frame profile. Do not claim "unsupported" for a real source ICC:
 	// it caused callers to discard the display color-space on re-export.
@@ -301,7 +303,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetThumbnail(__RPC__deref_out_opt 
 	{
 		DbgLog("GetThumbnail@1");
 
-		if (!m_Reader) {
+		if (!m_Initialized) {
 			return WINCODEC_ERR_WRONGSTATE;
 		}
 
@@ -362,6 +364,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrameCount(__RPC__out UINT *pCo
 	if (!pCount) {
 		return E_POINTER;
 	}
+	*pCount=0;
+	if (!m_Initialized) return WINCODEC_ERR_WRONGSTATE;
 
 	DbgLog("GetFrameCount %d %d",
 		m_Context.get_number_of_top_level_images(),
@@ -377,6 +381,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 	WicHeicDiagnostic::Emit("DecoderGetFrame",index,0);
 	if (!ppIBitmapFrame) return E_POINTER;
 	*ppIBitmapFrame = nullptr;
+	if (!m_Initialized) return WINCODEC_ERR_WRONGSTATE;
 	try
 	{
 		DbgLog("GetFrame: %d", index);
@@ -446,6 +451,6 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 
 HRESULT CHeicBitmapDecoder::CopyOriginalBytes(std::vector<uint8_t>& content)
 {
-    if(!m_Reader)return WINCODEC_ERR_WRONGSTATE;
+    if(!m_Initialized || !m_Reader)return WINCODEC_ERR_WRONGSTATE;
     return m_Reader->CopyOriginalBytes(content);
 }
