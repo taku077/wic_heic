@@ -174,6 +174,18 @@ inline void VerifyPartialLosslessStreamWriteRollback(IWICImagingFactory* fac) {
         static_cast<unsigned long long>(st.cbSize.QuadPart));
     if(st.cbSize.QuadPart!=0)throw std::runtime_error(
         "Failed HEIC output left a partial file instead of empty stream");
+    // If the first Commit failed after partial output, the underlying HEIF
+    // context can already be mutated. Reusing this encoder may double-encode
+    // frames or claim a bogus success when the simulated stream recovers.
+    HRESULT retry=encoder->Commit();
+    printf("WIC_ENCODER_FAILED_COMMIT_RETRY_LOSSLESS=0x%08X\n",unsigned(retry));
+    if(retry!=WINCODEC_ERR_WRONGSTATE)
+        throw std::runtime_error("Lossless HEIC Commit accepted retry after short output");
+    STATSTG afterRetry{};
+    Check(buffer->Stat(&afterRetry,STATFLAG_NONAME),"lossless retry backing stat");
+    if(afterRetry.cbSize.QuadPart!=0)
+        throw std::runtime_error("Lossless Commit retry recreated a failed output");
+    puts("WIC_ENCODER_FAILED_COMMIT_RETRY_LOSSLESS_BLOCKED_PASS");
     puts("WIC_LOSSLESS_PARTIAL_WRITE_ROLLBACK_PASS");
 }
 // Inject the same partial output fault while the HEVC encoder is producing
@@ -216,6 +228,15 @@ inline void VerifyPartialRasterStreamWriteRollback(IWICImagingFactory* fac) {
         static_cast<unsigned long long>(st.cbSize.QuadPart));
     if(st.cbSize.QuadPart!=0)throw std::runtime_error(
         "Failed HEVC raster encode left a truncated HEIC stream");
+    const HRESULT retry=encoder->Commit();
+    printf("WIC_ENCODER_FAILED_COMMIT_RETRY_RASTER=0x%08X\n",unsigned(retry));
+    if(retry!=WINCODEC_ERR_WRONGSTATE)
+        throw std::runtime_error("HEVC Commit allowed retry with dirty encoder context");
+    STATSTG afterRetry{};
+    Check(backing->Stat(&afterRetry,STATFLAG_NONAME),"raster retry backing stat");
+    if(afterRetry.cbSize.QuadPart!=0)
+        throw std::runtime_error("HEVC Commit retry recreated failed output");
+    puts("WIC_ENCODER_FAILED_COMMIT_RETRY_RASTER_BLOCKED_PASS");
     puts("WIC_RASTER_PARTIAL_WRITE_ROLLBACK_PASS");
 }
 inline void Run() {
