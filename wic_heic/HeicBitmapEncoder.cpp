@@ -11,6 +11,7 @@
 CHeicBitmapEncoder::CHeicBitmapEncoder()
 	: m_Count(1)
 	, m_IccExplicitlySet(false)
+	, m_Committed(false)
 	, m_Stream(nullptr)
 {
 }
@@ -70,7 +71,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Initialize(__RPC__in_opt IStream *
 {
 	WicHeicDiagnostic::Emit("EncoderInitialize");
 	if (!pIStream) return E_INVALIDARG;
-	if (m_Stream) return WINCODEC_ERR_WRONGSTATE;
+	if (m_Stream || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	m_Stream = pIStream;
 	m_Stream->AddRef();
 
@@ -117,6 +118,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::GetEncoderInfo(__RPC__deref_out_op
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
+	if (m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	std::vector<uint8_t> profile;
 	HRESULT hr = HeicColorProfileWic::ReadArray(cCount, ppIColorContext, &profile);
 	if (FAILED(hr)) {
@@ -162,9 +164,15 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 	try
 	{
 		if (!ppIFrameEncode) return E_POINTER;
-		WicHeicDiagnostic::Emit("CreateNewFrame",0,0,0,0,ppIEncoderOptions?"bag-requested":"no-bag");
 		*ppIFrameEncode=nullptr;
 		if (ppIEncoderOptions) *ppIEncoderOptions=nullptr;
+		if (!m_Stream || m_Committed) return WINCODEC_ERR_WRONGSTATE;
+		// WIC requires finishing one frame before starting the next.
+		// This is essential with NoCache, which cannot buffer overlapping
+		// partially-defined images safely.
+		if (!m_Frames.empty() && !m_Frames.back()->m_Committed)
+			return WINCODEC_ERR_WRONGSTATE;
+		WicHeicDiagnostic::Emit("CreateNewFrame",0,0,0,0,ppIEncoderOptions?"bag-requested":"no-bag");
 
 		CHeicFrameOptions* opts=nullptr;
 		if (ppIEncoderOptions) {
@@ -213,6 +221,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 	WicHeicDiagnostic::Emit("EncoderCommitEnter",0,0,0,0,m_Frames.size()==1?"one-frame":"many-frames");
 	try
 	{
+		if (m_Committed) return WINCODEC_ERR_WRONGSTATE;
 		// Reject existing output for both lossless and raster encodes.
 		// This does not undo truncation by the caller before Initialize.
 		if (!m_Stream) return WINCODEC_ERR_NOTINITIALIZED;
@@ -252,6 +261,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			ULONG written=0;
 			hr=m_Stream->Write(bytes.data(),static_cast<ULONG>(bytes.size()),&written);
 			if(FAILED(hr)||written!=bytes.size())return STG_E_WRITEFAULT;
+			m_Committed = true;
 			WicHeicDiagnostic::Emit("EncoderCommitLossless",m_Frames[0]->m_Width,m_Frames[0]->m_Height,m_Frames[0]->m_BitmapTransform,m_Frames[0]->m_HeifCompressionMethod,"heif-copied");
 			return S_OK;
 		}
@@ -272,6 +282,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 		}
 
 		m_Context.write(writer);
+		m_Committed = true;
 		WicHeicDiagnostic::Emit("EncoderCommitRecompressed",0,0,0,0,"hevc-encoded");
 	}
 	catch (const heif::Error& ex)
