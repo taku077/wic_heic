@@ -43,7 +43,11 @@ inline void Run() {
     GUID rgb=GUID_WICPixelFormat24bppRGB;
     Must(frame->SetPixelFormat(&rgb),"Set pixel format");
     Must(frame->SetColorContexts(1,contexts),"Frame SetColorContexts");
-    Must(frame->WriteSource(bitmap,nullptr),"Write synthetic source");
+    // The source is a newly generated 64x64 raster, not an existing HEIC.
+    // Use the explicit raster-writing API so a flattened/rotated HEIC
+    // IWICBitmap cannot sneak through WriteSource and silently lose ICC.
+    Must(frame->WritePixels(h,w*3,static_cast<UINT>(pixels.size()),
+                            pixels.data()),"Write synthetic ICC pixels");
     Must(frame->Commit(),"Commit frame");
     Must(encoder->Commit(),"Commit HEIC");
     frame.Release(); encoder.Release(); stream.Release();
