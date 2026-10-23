@@ -33,7 +33,7 @@ inline void Probe(IWICImagingFactory* fac,const wchar_t* path) {
     if(bytes64>64ull*1024*1024 || stride64>UINT_MAX)
         throw std::runtime_error("Unbounded WIC synthetic fixture");
     const UINT stride=UINT(stride64);
-    std::vector<BYTE> full(size_t(bytes64));
+    std::vector<BYTE> full(static_cast<size_t>(bytes64));
     if(FAILED(frame->CopyPixels(nullptr,stride,UINT(full.size()),full.data())))
         throw std::runtime_error("Photos full-resolution pixels unavailable");
     const UINT pw=(std::min)(128u,w),ph=(std::min)(128u,h);
