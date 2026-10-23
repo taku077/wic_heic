@@ -17,6 +17,8 @@ private:
 	BYTE m_HeifCompressionMethod;
 	bool m_OptionsInitialized;
 	bool m_LosslessReady;
+	// WIC frame Commit is required before container Commit; no edits after it.
+	bool m_Committed;
 	std::vector<uint8_t> m_LosslessBytes;
 	std::vector<uint8_t> m_IccProfile;
 	// An absent ICC request differs from SetColorContexts(0).
