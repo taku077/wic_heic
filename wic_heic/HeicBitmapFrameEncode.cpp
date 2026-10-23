@@ -545,78 +545,23 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 			"raw-heic-raster-would-strip-metadata",WINCODEC_ERR_UNSUPPORTEDOPERATION);
 		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 	}
-	if (!m_Width || !m_Height || m_Created || m_HasPixels || m_WrittenLines)
-		return WINCODEC_ERR_WRONGSTATE;
-
-	UINT sourceW = 0, sourceH = 0;
-	HRESULT hr = pIBitmapSource->GetSize(&sourceW, &sourceH);
-	if (FAILED(hr)) return hr;
-
-	UINT copyW = sourceW, copyH = sourceH;
-	if (prc) {
-		if (prc->X < 0 || prc->Y < 0 || prc->Width <= 0 || prc->Height <= 0)
-			return E_INVALIDARG;
-		if (uint64_t(prc->X) + UINT(prc->Width) > sourceW ||
-			uint64_t(prc->Y) + UINT(prc->Height) > sourceH)
-			return E_INVALIDARG;
-		copyW = UINT(prc->Width);
-		copyH = UINT(prc->Height);
-	}
-	// Fail rather than stretch, crop unexpectedly, or leave partially filled
-	// planes when Photos passes an inconsistent SetSize/WriteSource pair.
-	if (copyW != m_Width || copyH != m_Height) {
-		WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"dimension-mismatch",E_INVALIDARG);
-		Log("WriteSource SIZE_MISMATCH src=%ux%u copy=%ux%u frame=%ux%u",
-			sourceW, sourceH, copyW, copyH, m_Width, m_Height);
-		return E_INVALIDARG;
-	}
-
-	// Avoid allocating output pixels until inputs and dimensions are validated.
-	WICPixelFormatGUID sourceFormat;
-	hr = pIBitmapSource->GetPixelFormat(&sourceFormat);
-	if (FAILED(hr)) return hr;
-
-	struct AutoReleaseSource {
-		IWICBitmapSource* p = nullptr;
-		~AutoReleaseSource() { if (p) p->Release(); }
-	} converted;
-	IWICBitmapSource* selected = pIBitmapSource;
-	if (!IsEqualGUID(sourceFormat, m_PixelFormat)) {
-		hr = WICConvertBitmapSource(m_PixelFormat, pIBitmapSource, &converted.p);
-		if (FAILED(hr)) return hr;
-		selected = converted.p;
-	}
-
-	try {
-		CreateFrame();
-		int stride = 0;
-		uint8_t* plane = m_Frame.get_plane(heif_channel_interleaved, &stride);
-		if (!plane || stride <= 0) return WINCODEC_ERR_BADIMAGE;
-		const uint64_t bufferBytes = uint64_t(stride) * m_Height;
-		if (bufferBytes > 0xFFFFFFFFULL) return E_INVALIDARG;
-		// CRITICAL: propagate CopyPixels HRESULT even after format conversion.
-		hr = selected->CopyPixels(prc, UINT(stride), UINT(bufferBytes), plane);
-		if (FAILED(hr)) {
-			WicHeicDiagnostic::Emit("WriteSourceCopyFailed",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raster",hr);
-			Log("WriteSource CopyPixels failed HRESULT=0x%08X", unsigned(hr));
-			return hr;
-		}
-		if (m_BitDepthPerChannel == 10) {
-			const size_t rowBytes = size_t(m_Width) *
-				(IsEqualGUID(m_PixelFormat, GUID_WICPixelFormat48bppRGB) ? 6u : 8u);
-			for (UINT y=0; y<m_Height; ++y)
-				Wic16ToHeic10(plane + size_t(stride)*y, rowBytes);
-		}
-		m_WrittenLines = m_Height;
-		m_HasPixels = true;
-		WicHeicDiagnostic::Emit("WriteSourceRaster",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raster");
-		return S_OK;
-	}
-	catch (const std::exception& ex) {
-		Log("WriteSource failed: %s", ex.what());
-		return WINCODEC_ERR_BADIMAGE;
-	}
-	catch (...) { return WINCODEC_ERR_BADIMAGE; }
+	// A custom IWICBitmapSource can forward the pixels of a rotated HEIC
+	// while exposing NONE of the standard WIC wrapper IIDs above. Its output
+	// is indistinguishable from a newly created RGB bitmap: the native
+	// compressed source, EXIF, ICC, auxiliary images and HDR provenance are
+	// unavailable. The old generic WriteSource raster fallback silently
+	// recompressed this opaque source even under the default option.
+	//
+	// Fail closed for every unverified bitmap source, including explicit
+	// HEVC compression. New RGB/RGBA images remain encodable through
+	// WritePixels, which is an intentional pixel-only API. A future
+	// provenance-preserving raster edit pipeline must have a separate
+	// explicit opt-in and real metadata-transfer support.
+	WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+		m_BitmapTransform,m_HeifCompressionMethod,
+		"opaque-source-without-verified-heic-provenance",
+		WINCODEC_ERR_UNSUPPORTEDOPERATION);
+	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
