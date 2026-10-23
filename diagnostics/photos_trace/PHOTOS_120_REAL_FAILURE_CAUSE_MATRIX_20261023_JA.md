@@ -321,3 +321,34 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 - [**成功CI #39974578063**](https://github.com/taku077/wic_heic/actions/runs/39974578063)：`WIC_EXPLICIT_DPI_CHANGE_MUST_NOT_BE_SILENT_PASS`、`WIC_LOSSLESS_CAPTURE_IMMUTABLE_AND_SOURCE_BYTES_PRESERVED_PASS`、`GEOMETRY_PIXEL_AB_TEST_PASSED`、`HEIC_WIC_ICC_EXACT_ROUNDTRIP_PASSED`、`WIC_PRIMARY_SWITCH_LOSSLESS_WIC_COPY_BYTE_EQUAL_PASS`、`WIC_FOUR_TURNS_EXACT_RGB_PIXEL_IDENTITY_PASS`、歴史的v1.1.18とのWIC選択A/B、WIC/サムネイル別MSI分離試験が全てSUCCESS。ログに`SYNTHETIC_SMOKE_DPI_METADATA_NOT_TRANSFERRED original_x=96.012001 original_y=96.012001` を明示。
 
 **残る機能不足**：任意DPIの実際のHEIF/EXIFメタデータへの書込みは未実装。この段階では安全側に**拒否**するだけであり、ユーザーが求めるPhotos編集・回転保存が成功することを意味しない。96dpi以外の画像を再エンコードしたいWICアプリからは、以前よりエラーが増え得る。一般アプリ互換性上のリスクも残り、修正版を完成MSIとして配布しない。最優先のWindows 10標準フォトのHEVC警告／編集無効化は未解決、実機GUI試験は未実施。既知の旧v1.1.18回転バグは修復済みと見なさない。
+
+## Windows 10 フォトが複数プロセスで動く場合のWIC接続：可視窓とDLL読込みの相関（2026-10-24）
+
+**新たに過去の実機JSONを確認**：2026-10-23の`Photos_WIC_Process_ReadOnly_20261023_202155_143_9224.json`には、同時刻の`Photos.exe`が**2プロセス**あり、一方に`wic_heic.dll`がロードされ、他方には`windowscodecs.dll`しか検出されていなかった。ApplicationFrameHostは別プロセス。**DLLがロードされたフォトと、HEVC警告を表示する可視フォトが同一PIDとは限らない。** 旧版にも画面表示バグがあるため、グローバルWICを再インストールするだけの未検証対策は繰り返さない。安全のため、GitHub文書にはユーザー端末の実PID・端末固有DLLパスを転記しない。
+
+**読取専用診断の改修・CI**：
+- `diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1`：USER32の`EnumWindows`・`EnumChildWindows`・`GetWindowThreadProcessId`・`IsWindowVisible`を介して、可視トップレベル画面とApplicationFrameHost等の子ウィンドウの所属PIDを**ウィンドウタイトル・画像・文字列・座標を読まずに**観測。既存PhotosプロセスのWIC DLLマップに`VisibleTopLevelWindowCount`、`VisibleHostedChildWindowCount`、`WindowScan`を追加。既存JSON項目`PhotosProcessModuleSnapshot`は維持。読み取れない場合は`WindowScan=UNAVAILABLE`と明示。システム設定変更、MSI、HEIC原本操作、ウィンドウ内容の取得は禁止。
+- 追加の`VisiblePhotosWicCorrelation`は`NO_VISIBLE_PHOTOS_PROCESS_OBSERVED`、`WINDOW_SCAN_UNAVAILABLE`、`MIXED_VISIBLE_PHOTOS_PROCESSES`、`VISIBLE_PHOTOS_PROCESS_HAS_CUSTOM_WIC_MODULE`、`VISIBLE_PHOTOS_PROCESS_WITHOUT_CUSTOM_WIC_MODULE`のいずれか。**可視PIDとDLLロードの瞬間的な相関であり、写真の閲覧・編集処理でどのWIC APIが呼ばれたかを証明しない。**
+- 新コード `4b32a67a3de97f4b3c044b7f842e53547b67ff4c`、`719493c52103b058d8b9db3157226450e016daa8`、`078204ec95b0926b535115d981f594cc3ca2b090`、`87c6bcb3399e669528b2b2ae200f9b7766a41a7c`、`2ec47abf9983f22be7172dfe18bde10661ba5250`、`8289557e4b791d671b4ce4e30ec80aef575f798e`、最終の構文修正`ba0e65c702c47742e117b72ec10ec94669d5f796`。
+- [Windows PowerShell 5.1隔離CI #39979117146](https://github.com/taku077/wic_heic/actions/runs/39979117146)：**SUCCESS**。構文、読取専用、プライバシーガード、ワンクリックCMD、4ファイル（合成人工HEIC・CMD・PS1・README）キットSHA検証とartifact公開を確認。`WindowScan=OK`、`VisiblePhotosWicCorrelation=NO_VISIBLE_PHOTOS_PROCESS_OBSERVED`。Windows Server 2022 CIには`Photos.exe`がなく、実Windows10フォトを紐付けた結果**ではない**。実機側のユーザー操作が必要な診断を何度も要求せず、必要となった時に公開人工HEICをフォトで開いた状態の単発実行だけを行う。試験用MSI導入は不要。
+- CIアーティファクト名`Photos-WIC-ReadOnly-NoAdmin-WithSyntheticHEIC-4Files`、artifact ID `12513275266`。ユーザーに報告を依頼する前に、該当CIの成功とZIPのファイル構成を確認する。
+
+**この試験を優先する理由**：旧v1.1.18が「フォトの警告・編集ボタンが一時的に正常」でも「保存に失敗・画像変形」、研究版は編集ボタン無効という複数経路の問題を、**可視UIに対応する実プロセスへ絞らずにWICとHEVCのコードだけ直しても原因究明は不十分**だから。Windows 10標準フォト実機の編集有効化・無再圧縮保存・原本保護は依然未達。MSIリリース禁止を維持する。
+
+## 旧WICと研究版の2フレームRGB・サムネイル能力追加検証（2026-10-24）
+
+**重要な仕様確認**：Microsoft WIC公式「Implementing IWICBitmapDecoder」によれば、実際のグローバル/Frame 0の埋め込みサムネイルが存在しない場合は `WICBitmapDecoderCapabilityCanDecodeThumbnail` を申告してはならず、WICの呼び出し元が主画像を縮小する。旧v1.1.18の`QueryCapability=0x15`（`SameEncoder`とサムネイルを無条件申告）は不正確であり、戻して「互換性を改善」としない。参考：https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder
+
+- 最初の実験テスト `79a1abfdcf6c4119b90153438248ba45d121fc49` は、埋め込みサムネイルのない公開HEICでも`GetThumbnail`で自動生成を要求した。[CI #39977565875](https://github.com/taku077/wic_heic/actions/runs/39977565875)は`container=0x88982F44, frame=0x88982F44`で失敗したが、**これは仕様違反のテスト条件だったため、製品コードのバグとは扱わない**。
+- 仕様に沿うWICスケーラー代替検証に修正（`1468cd8b9e62a0c800617053a0a9a2f2ad961b6a`）。埋め込みなしの人工HEICでGlobal/Frame `GetThumbnail`が不在を正しく返し、能力マスクが`0x0C`で誤ったサムネイルフラグなしでも、`IWICBitmapScaler`で主画像から**144×256**の向き・比率が正しいRGB画像を作れることを実証。ロスレス原本データへプレビューがなりすますことも防止。
+- さらに、過去の旧版と研究版のフルRGBハッシュ不一致は「0番と1番の別画像を比較したため」とも考えられたので、両版の2フレーム全体のFNV64を測定（`384f1c9106101588c6c8577f1439337e6d5c76f8`）。[CI #39978165477](https://github.com/taku077/wic_heic/actions/runs/39978165477)：**SUCCESS**。
+
+| WIC/人工HEIC検証 | 旧v1.1.18 | 研究版 |
+|---|---|---|
+| 自動WIC Frame 0 寸法 | 1080×1920 | 1080×1920 |
+| Frame 0 RGB FNV64 | `BBE3A110699D854C` | `77003DAE9142F975` |
+| 自動WIC Frame 1 寸法 | 1920×1080 | 1920×1080 |
+| Frame 1 RGB FNV64 | `00DE34F36CF9C3E5` | `A04BF4B5648503C9` |
+| `QueryCapability` mask | `0x15`（サムネイル無条件） | `0x0C`（実装に即した申告） |
+
+**推論の制約**：両フレームとも旧版と研究版でハッシュ不一致。**単純に0番と1番を取り違えただけでは今回のRGB差は説明できない**。ただし、旧MSIと研究CIビルドのネイティブライブラリ差・色管理・ソース選択など他要因は未除外。「原因特定済み」と扱わない。サムネイルAPIのフル画像スケールが可能でも、PhotosのHEVC警告・編集ボタンが修復したことの証明にはならない。実機GUIの承認ゲートとMSI配布禁止を維持する。
