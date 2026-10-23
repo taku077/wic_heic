@@ -470,3 +470,14 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - WIC Encoder登録へ**32bppRGBAだけ**を追加し、他は既存の24bppRGBを維持（`5bdefdb3ca20859c13065a1bf1547d002dc14bdd`、`112fdc4547935c9f76b7f40f7b794631d627289c`）。同時更新で重複した`Formats`登録を`ffa8a424e5a3466c193671ebf11ec583b2f9141c`で1つに整理。Encoder側のWIC登録はDecoderと異なり、**48bpp/64bppを追加しない**。10bit HEVC再圧縮バックエンドのサポートは未保証。
 - [**CI #39996917726 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/39996917726)：Encoder登録は`WIC_HEIC_ENCODER_REGISTERED_RGBA8 count=2 rgb24=1 rgba32=1 rgb48=0 rgba64=0`。`WIC_HEIC_ENCODER_REGISTERED_RGBA8_AND_REJECTS_UNPROVEN_HIGHBIT_PASS`、実HEIC→WICアルファ再読込、8並列10bit HEIC `CopyPixels`、Decoder登録4形式、EXIF/ICC／ロスレス4回90度画素一致、旧版1.1.18とのA/B、MSI隔離試験すべて成功。
 - 本実装はHEICのアルファ付き人工RGB画像を新規保存できることと**WICコンポーネント情報の整合性**の実証であって、Photos 2026.11090.22001.0の警告・編集ボタン・回転保存を実機で直した証明ではない。HEIC Manager非干渉、旧WIC v1.1.18の画像変形問題継続、ユーザー画像・レジストリ未操作、MSI配布禁止を維持。
+
+## RGBA8エンコーダーWIC登録の整合性を確認（2026-10-24 続き）
+
+**前提**：デコーダーのRGB/RGBA24/32/48/64bppの実能力・登録は前節のCIで検証済み。しかしエンコーダーは`RegisterEncoder`に24bppRGBしか広告しておらず、コード上では32bppRGBAを`SetPixelFormat`で受け付けた。**受け付けるだけでは保存可能とは断定しない**ことが必須。
+
+- `wictest/EncoderGuardProbe.h`に公開合成人工64×64 RGBA（左半分透明、右半分不透明）の**実際の32bppRGBA WritePixels → HEIC Commit → メモリ上のWIC復号 → RGBA出力・アルファ変化**を試すプローブを追加：`b142490ea9788ca26966544353792d1bb8db9553`。[**CI #39996238521 成功**](https://github.com/taku077/wic_heic/actions/runs/39996238521)：`WIC_HEIC_RGBA8_ENCODER_COMMIT_HRESULT=0x00000000`、`WIC_HEIC_RGBA8_ENCODER_AND_ALPHA_READBACK_PASS`。既存写真は使わない。
+- 保存と読戻しが実証できた32bppRGBAのみ、エンコーダーのWIC component registryに追記（`5bdefdb3ca20859c13065a1bf1547d002dc14bdd`、`112fdc4547935c9f76b7f40f7b794631d627289c`）。二重コミットが重なったため`ffa8a424e5a3466c193671ebf11ec583b2f9141c`で重複キー作成を1回に統合。回帰試験も二重登録情報照会と同名変数二重宣言を`072cb8f2b2256bb596d7e45c638d5b2b66ea537f`で整理。最終テストの基準は1回の真の能力調査に集約。
+- [**CI #39996917726 — SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/39996917726)：`WIC_HEIC_ENCODER_REGISTERED_RGBA8 count=2 rgb24=1 rgba32=1 rgb48=0 rgba64=0`、`WIC_HEIC_ENCODER_REGISTERED_RGBA8_AND_REJECTS_UNPROVEN_HIGHBIT_PASS`、`WIC_HEIC_RGBA8_ENCODER_AND_ALPHA_READBACK_PASS`。同じCIでデコーダー4形式の登録、8MTAスレッドの1フレーム同時画素読みが全件一致、ICC、人工HEICを4回90度回転させた全画素一致、旧1.1.18とのWIC A/B、WICとサムネイルv0.4独立インストール・ロールバックが合格。通常の製品MSIは**配布禁止のまま**。
+- 研究版のバイナリはユーザーの実機Windows 10標準フォト2026.11090.22001.0で**未確認**。今回の正しい画素形式登録やRGBA書戻し成功を「HEVC拡張警告が消えた」「編集・回転ボタンが有効になった」「標準フォトから無再圧縮保存できた」とは扱わない。現時点のP0阻害要因はPhotos本体のHEVC依存判定・内部編集経路／メタデータ保存。既存個人写真、HEIC Manager、ユーザーPCの登録状態には触れない。
+
+**再開点**：最新研究ブランチのコードとCI結果を読み取り専用で再確認してから、今回の24/32/48/64デコーダー広告・24/32エンコーダー広告・スレッド同期を**重複実装しない**こと。次にPhotos GUIが求める編集・保存API経路とHEVC MFT/Store条件を一次データで区別する。CIの成功だけでMSIを提示しない。暫定完成率42%からの進展はWIC契約の範囲に限られ、GUI合格は依然ゼロ。
