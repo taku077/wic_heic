@@ -307,14 +307,12 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetColorContexts(UINT cCount, 
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail)
 {
+	if (!ppIThumbnail) return E_POINTER;
+	*ppIThumbnail = nullptr;
 	try
 	{
 		DbgLog("Frame::GetThumbnail@1");
 		int index = 0;
-
-		if (!ppIThumbnail) {
-			return E_POINTER;
-		}
 
 		std::vector<heif_item_id> ids = m_Handle.get_list_of_thumbnail_IDs();
 		if (!ids.size()) {
