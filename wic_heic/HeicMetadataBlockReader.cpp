@@ -198,8 +198,9 @@ HRESULT STDMETHODCALLTYPE CHeicMetadataBlockReader::GetContainerFormat(__RPC__ou
 		return E_POINTER;
 	}
 
-    *pguidContainerFormat = GUID_ContainerFormatJpeg;
-	//*pguidContainerFormat = GUID_ContainerFormatHEIC;
+    // APP1 describes how the embedded EXIF block is parsed; it does NOT
+    // change the outer HEIC file into a JPEG container.
+    *pguidContainerFormat = GUID_ContainerFormatHEIC;
 	return S_OK;
 }
 
