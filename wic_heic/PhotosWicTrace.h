@@ -1,4 +1,15 @@
 #pragma once
+// Production global WIC and the v0.4 private preview are codec-only builds.
+// The file/registry tracing implementation is compiled ONLY for an explicitly
+// selected standalone diagnostic DLL build, NEVER for either production MSI.
+// WIC_HEIC_ENABLE_DIAGNOSTIC_TRACE is intentionally absent from both MSI builds.
+#include <windows.h>
+#if !defined(WIC_HEIC_ENABLE_DIAGNOSTIC_TRACE)
+namespace WicHeicDiagnostic {
+inline void Emit(const char*, UINT = 0, UINT = 0, BYTE = 0, BYTE = 0,
+                 const char* = "none", HRESULT = S_OK) noexcept {}
+} // namespace WicHeicDiagnostic
+#else // Opt-in diagnostic DLL ONLY, distributed independently from MSI
 // Opt-in trace for the EXPERIMENTAL Photos/WIC diagnostic build.
 // Records ONLY numeric geometry, WIC option values, source kind and HRESULT.
 // NEVER records filenames, paths, EXIF, HEIC bytes, application arguments,
@@ -96,3 +107,5 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
     CloseHandle(h);
 }
 } // namespace WicHeicDiagnostic
+
+#endif // WIC_HEIC_ENABLE_DIAGNOSTIC_TRACE
