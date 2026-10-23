@@ -35,6 +35,66 @@ foreach($type in @(
  }
  $wics+=([ordered]@{Role=$type.kind;Sha256=$hash})
 }
+# This optional USER32 lookup enumerates window handles ONLY. It never
+# obtains window titles/text, pixels, class names, image paths or documents.
+# Modern Windows 10 Photos can have separate Photos.exe processes, with the
+# visible app window hosted by ApplicationFrameHost.exe. Relate a visible
+# host's CHILD windows to their actual Photos process IDs to avoid assuming
+# the process with the codec DLL is the one showing the HEVC warning.
+$windowScan='OK'
+$windowCounts=$null
+try {
+ $source=@'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class PhotosReadonlyWindowProbe {
+    private delegate bool EnumWindowProc(IntPtr hwnd, IntPtr ctx);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowProc cb, IntPtr ctx);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumWindowProc cb, IntPtr ctx);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    private static void Add(Dictionary<int,int[]> d, int pid, int index) {
+        if(pid<=0) return;
+        int[] values;
+        if(!d.TryGetValue(pid,out values)) {
+            values=new int[] {0,0};
+            d.Add(pid,values);
+        }
+        if(values[index]<100000) values[index]++;
+    }
+    public static Dictionary<int,int[]> Snapshot() {
+        var result=new Dictionary<int,int[]>();
+        bool ok=EnumWindows(delegate(IntPtr top, IntPtr context) {
+            if(!IsWindowVisible(top)) return true;
+            uint topPid=0;
+            GetWindowThreadProcessId(top,out topPid);
+            Add(result,(int)topPid,0);
+            // Count each distinct visible child-process PID ONCE for this
+            // host window. Multiple UI controls from one app aren't distinct
+            // Photos processes.
+            var childPids=new HashSet<int>();
+            EnumChildWindows(top,delegate(IntPtr child,IntPtr ignored){
+                if(IsWindowVisible(child)) {
+                    uint childPid=0;
+                    GetWindowThreadProcessId(child,out childPid);
+                    if(childPid!=0) childPids.Add((int)childPid);
+                }
+                return true;
+            },IntPtr.Zero);
+            foreach(int pid in childPids) Add(result,pid,1);
+            return true;
+        },IntPtr.Zero);
+        if(!ok) throw new InvalidOperationException("Window enumeration unavailable");
+        return result;
+    }
+}
+'@
+ Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
+ $windowCounts=[PhotosReadonlyWindowProbe]::Snapshot()
+} catch {
+ $windowScan='UNAVAILABLE'
+}
 # Record only module basenames matching codecs / relevant imaging infrastructure.
 # An absent module is not evidence that Photos did NOT use that codec at
 # another point; modules may be unloaded or hosted in a broker process.
@@ -55,20 +115,29 @@ foreach($p in $candidates) {
  } catch {
   $moduleStatus='UNAVAILABLE_ACCESS_DENIED_OR_PROCESS_EXITED'
  }
+ $topWindows=0;$hostedWindows=0
+ if($null -ne $windowCounts -and $windowCounts.ContainsKey([int]$p.Id)) {
+  $topWindows=[int]$windowCounts[[int]$p.Id][0]
+  $hostedWindows=[int]$windowCounts[[int]$p.Id][1]
+ }
  $processes.Add([pscustomobject][ordered]@{
   Name=[string]$p.ProcessName
   PID=[int]$p.Id
   ModuleScan=$moduleStatus
   RelevantModuleBasenames=@($identified.ToArray())
+  VisibleTopLevelWindowCount=$topWindows
+  VisibleHostedChildWindowCount=$hostedWindows
  })
 }
 $report=[ordered]@{
- Schema=1
+ Schema=2
  CollectedAtUtc=[DateTime]::UtcNow.ToString('o')
  WindowsBuild=[string]$os.CurrentBuild
+ WindowScan=$windowScan
+ PhotosProcessWindowCorrelation=@($processes.ToArray())
  PhotosProcessModuleSnapshot=@($processes.ToArray())
  RegisteredCustomWicDllHashes=$wics
- Interpretation='Loaded module proves a sampled process had the DLL mapped. An absent module or inaccessible module list DOES NOT prove Photos never used WIC or HEVC.'
+ Interpretation='A codec module mapped in one Photos process does not prove it belongs to the visible editor. Window counts are an instantaneous PID correlation, not proof of which codec the editor used or why controls are disabled. No module loaded now is NOT proof that none was used before.'
  FileContentsOrPhotosAccessed=$false
  PersistentSystemChanges=$false
 }
@@ -77,7 +146,8 @@ $payload=$report|ConvertTo-Json -Depth 6
 $buf=(New-Object Text.UTF8Encoding($false)).GetBytes($payload)
 $stream=[IO.File]::Open($file,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
 try {$stream.Write($buf,0,$buf.Length)}finally {$stream.Dispose()}
-Write-Host 'PHOTOS_WIC_PROCESS_MODULE_SNAPSHOT_READONLY_PASS'
+Write-Host 'PHOTOS_WIC_PROCESS_WINDOW_CORRELATION_READONLY_PASS'
 Write-Host ('PhotosProcessCandidates='+$processes.Count)
+Write-Host ('WindowScan='+$windowScan)
 Write-Host "Report=$file"
 Write-Host 'This report cannot by itself establish why editing is disabled.'
