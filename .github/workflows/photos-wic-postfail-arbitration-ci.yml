@@ -416,30 +416,30 @@ jobs:
                 throw ('Previously stable editor API differs unexpectedly: '+$key+' '+($values -join ' vs '))
               }
             }
-            # The SHA-pinned legacy MSI was built at a18b9ab where the
-            # 10-bit non-alpha frame reports WIC 48bpp but m_Bpp=32. Old
-            # CopyPixels writes only 4 of the promised 6 bytes per pixel.
-            # Current codec's WIC48 path must fill the entire 48bpp ROI.
+            # Historical 1.1.18 (MSI run 39433397223 at a18b9ab)
+            # FORCES RGB24 after its dormant 10/12-bit branches. Research
+            # decodes the same 10-bit public HEIC using WIC RGB48. Compare
+            # actual API formats rather than assuming the old 48bpp branch
+            # ran; both paths must write all the bytes they advertise.
             foreach($label in @('ORIGINAL118','RESEARCH')) {
               $source=[string]$script:abSurveys[$label]
-              foreach($key in @('WIC_PHOTOS_10BIT_RAW48_ROI_HRESULT',
-                                 'WIC_PHOTOS_10BIT_RAW48_TAIL_UNTOUCHED_ROWS',
-                                 'WIC_PHOTOS_10BIT_RAW48_HEAD_CHANGED_ROWS')) {
+              $expectedBits=if($label -eq 'ORIGINAL118'){'24'}else{'48'}
+              $checks=@{
+                'WIC_PHOTOS_NATIVE_HEIC_WIC_BPP'=$expectedBits
+                'WIC_PHOTOS_NATIVE_HEIC_ROI_HRESULT'='0x00000000'
+                'WIC_PHOTOS_NATIVE_HEIC_ROI_LAST_QUARTER_CHANGED_ROWS'='8'
+              }
+              foreach($key in $checks.Keys) {
                 $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
                 $match=[regex]::Match($source,$pattern)
-                if(-not $match.Success){throw ('Historical 10bit stride evidence missing: '+$label+' '+$key)}
+                if(-not $match.Success){throw ('Missing historical pixel-format evidence: '+$label+' '+$key)}
                 $value=$match.Groups[1].Value.Trim()
-                if($key -eq 'WIC_PHOTOS_10BIT_RAW48_ROI_HRESULT'){
-                  if($value -cne '0x00000000'){throw ('WIC48 ROI read failed: '+$label)}
-                } elseif($key -eq 'WIC_PHOTOS_10BIT_RAW48_TAIL_UNTOUCHED_ROWS'){
-                  $expected=if($label -eq 'ORIGINAL118'){'8'}else{'0'}
-                  if($value -cne $expected){throw ('Unexpected historical WIC48 row-tail result: '+$label+' '+$value)}
-                } elseif($value -cne '8') {
-                  throw ('Synthetic WIC48 row-head did not change: '+$label+' '+$value)
+                if($value -cne $checks[$key]){
+                  throw ('Legacy vs research native pixel format differs from verified expectation: '+$label+' '+$key+'='+$value)
                 }
               }
             }
-            Write-Host 'WIC_HISTORICAL_118_10BIT_ROW_TRUNCATION_VS_RESEARCH_FULL48_PASS'
+            Write-Host 'WIC_ACTUAL_118_FORCES_RGB24_WHILE_RESEARCH_PRESERVES_RGB48_PASS'
             Write-Host 'WIC_PHOTOS_EDITOR_13_API_STABLE_ACROSS_118_AND_RESEARCH_PASS'
             # New A/B: both codecs may win arbitration, but only a real
             # full-resolution CopyPixels proves that the WIC pixel path works.
