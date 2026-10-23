@@ -344,11 +344,79 @@ inline void Survey() {
     puts("WIC_PHOTOS_EDITOR_COM_API_SURVEY_COMPLETE_PASS");
     printf("WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS\n");
 }
+// Synthetic two-image HEIC: change only the primary item identifier in a
+// local MEMORY COPY, never the fixture itself. This tests the WIC invariant
+// that GetFrame(0) corresponds to HEIF's pitm primary image even when the
+// primary is NOT the first item in the top-level ID list. The primary-only
+// IHeicRawSource contract gives a stronger oracle than geometry alone.
+inline void VerifyPrimarySelectionWhenPitmChanges(IWICImagingFactory* factory) {
+    std::ifstream input("samples\\fixture-irot3-exif6-noaux.heic",std::ios::binary);
+    if(!input)throw std::runtime_error("Synthetic primary-switch fixture unavailable");
+    std::vector<BYTE> bytes((std::istreambuf_iterator<char>(input)),
+                            std::istreambuf_iterator<char>());
+    if(bytes.size()<512 || bytes.size()>65536)
+        throw std::runtime_error("Unexpected synthetic primary-switch size");
+    size_t pitmOffset=0;
+    unsigned matches=0;
+    for(size_t i=4;i+10<=bytes.size();++i) {
+        if(bytes[i]=='p' && bytes[i+1]=='i' && bytes[i+2]=='t' &&
+           bytes[i+3]=='m' && bytes[i-1]==14 &&
+           bytes[i-2]==0 && bytes[i-3]==0 && bytes[i-4]==0 &&
+           bytes[i+4]==0 && bytes[i+5]==0 &&
+           bytes[i+6]==0 && bytes[i+7]==0 &&
+           bytes[i+8]==0 && bytes[i+9]==1) {
+            pitmOffset=i+9;
+            ++matches;
+        }
+    }
+    if(matches!=1)
+        throw std::runtime_error("Synthetic pitm primary-id=1 not located uniquely");
+    bytes[pitmOffset]=2; // HEIF primary item now image 2 instead of image 1
+    CComPtr<IWICStream> stream;
+    if(FAILED(factory->CreateStream(&stream)) ||
+       FAILED(stream->InitializeFromMemory(bytes.data(),UINT(bytes.size()))))
+        throw std::runtime_error("Primary-switch memory stream unavailable");
+    CComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr=factory->CreateDecoderFromStream(stream,
+        &GUID_VendorPrsyahmi,WICDecodeMetadataCacheOnDemand,&decoder);
+    if(FAILED(hr)||!decoder)
+        throw std::runtime_error("Primary-switch synthetic decoder unavailable");
+    UINT count=0;
+    if(FAILED(decoder->GetFrameCount(&count))||count<2)
+        throw std::runtime_error("Primary-switch two-image container not recognized");
+    CComPtr<IWICBitmapFrameDecode> first;
+    if(FAILED(decoder->GetFrame(0,&first))||!first)
+        throw std::runtime_error("Primary-switch frame zero missing");
+    IHeicRawSource* raw=nullptr;
+    hr=first->QueryInterface(IID_IHeicRawSource,reinterpret_cast<void**>(&raw));
+    if(FAILED(hr)||!raw)
+        throw std::runtime_error("Primary-switch WIC frame lacks source-provenance capability");
+    std::vector<uint8_t> copied;
+    const HRESULT readHr=raw->ReadFullContent(&copied);
+    raw->Release();
+    printf("WIC_PRIMARY_SWITCH_FRAME_ZERO_RAW_HRESULT=0x%08X\n",unsigned(readHr));
+    if(FAILED(readHr) || copied!=bytes)
+        throw std::runtime_error("WIC GetFrame(0) does not point to HEIF pitm primary");
+    CComPtr<IWICBitmapFrameDecode> second;
+    if(FAILED(decoder->GetFrame(1,&second))||!second)
+        throw std::runtime_error("Primary-switch secondary frame missing");
+    raw=nullptr;
+    hr=second->QueryInterface(IID_IHeicRawSource,reinterpret_cast<void**>(&raw));
+    if(FAILED(hr)||!raw)
+        throw std::runtime_error("Primary-switch secondary provenance probe unavailable");
+    copied.clear();
+    const HRESULT secondary=raw->ReadFullContent(&copied);
+    raw->Release();
+    if(secondary!=WINCODEC_ERR_UNSUPPORTEDOPERATION || !copied.empty())
+        throw std::runtime_error("WIC secondary frame exposed the primary's HEIF bytes");
+    puts("WIC_PRIMARY_HEIC_FRAME_ZERO_INVARIANT_PASS");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,
         (void**)&factory)))throw std::runtime_error("Capability factory unavailable");
+    VerifyPrimarySelectionWhenPitmChanges(factory);
     Verify(factory,L"samples\\fixture-irot3-exif6.heic",true,true);
     Verify(factory,L"samples\\fixture-irot3-exif6-noaux.heic",true,true);
     Verify(factory,L"samples\\01.png",false,false);
