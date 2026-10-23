@@ -231,6 +231,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetColorContexts(UINT cCount, __RP
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail)
 {
+	if (!ppIThumbnail) return E_POINTER;
+	*ppIThumbnail = nullptr;
 	try
 	{
 		DbgLog("GetThumbnail@1");
@@ -240,10 +242,6 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetThumbnail(__RPC__deref_out_opt 
 		}
 
 		heif::ImageHandle handle = m_Context.get_primary_image_handle();
-
-		if (!ppIThumbnail) {
-			return E_POINTER;
-		}
 
 		std::vector<heif_item_id> thumbIds = handle.get_list_of_thumbnail_IDs();
 		if (!thumbIds.size()) {
@@ -313,16 +311,14 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrameCount(__RPC__out UINT *pCo
 HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_out_opt IWICBitmapFrameDecode **ppIBitmapFrame)
 {
 	WicHeicDiagnostic::Emit("DecoderGetFrame",index,0);
+	if (!ppIBitmapFrame) return E_POINTER;
+	*ppIBitmapFrame = nullptr;
 	try
 	{
 		DbgLog("GetFrame: %d", index);
 
 		if (index >= (UINT)m_Context.get_number_of_top_level_images()) {
 			return WINCODEC_ERR_FRAMEMISSING;
-		}
-
-		if (!ppIBitmapFrame) {
-			return E_POINTER;
 		}
 
 		std::vector<heif_item_id> ids = m_Context.get_list_of_top_level_image_IDs();
