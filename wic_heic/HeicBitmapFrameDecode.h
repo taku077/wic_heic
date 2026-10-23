@@ -1,5 +1,6 @@
 #pragma once
 #include "HeicSourceAccess.h"
+#include <mutex>
 
 class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IHeicRawSource
 {
@@ -15,6 +16,9 @@ private:
 	size_t m_Stride;
 	uint8_t* m_PlaneInterleaved;
 	bool m_Decoded;
+	// Serialize only the first HEVC decode of THIS frame, not different HEIC files.
+	// Subsequent CopyPixels readers see immutable decoded data concurrently.
+	std::mutex m_DecodeMutex;
 
 public:
 	CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle);
