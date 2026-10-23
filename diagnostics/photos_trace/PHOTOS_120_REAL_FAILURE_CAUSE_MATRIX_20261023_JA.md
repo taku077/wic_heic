@@ -253,3 +253,33 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 **未確定**：`GetColorContexts` 応答差がWindows 10 Photos 2026.11090.22001.0のHEVC警告・編集ボタン無効化を引き起こす因果関係。Windows Server WICテストはPhotos内部のMedia Foundation／HEVC拡張検査や編集フローを観測しない。旧版の `QueryCapability=0x15` を理由なく復活させない。Microsoft WIC `SameEncoder` は同一ベンダー画像のみ: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/ne-wincodec-wicbitmapdecodercapabilities 。
 
 **開発上の次アクション**：旧MSI導入・復旧をユーザーに再要求せず、WIC応答の非破壊的な比較とPhotos実機GUI／Media Foundation依存の証拠取得を区別する。現行v1.1.18は表示ボタンが有効でも画像変形／回転保存不具合があり完成版ではない。新MSI配布ゲートは引き続き閉鎖。
+
+## 引継ぎ後の追加調査：標準フォトUIの前段となるWICフル解像度画素の旧版比較（2026-10-23）
+
+**背景・新規性**：既存CIは旧v1.1.18／研究版のコーデック自動選択とWIC API HRESULT、研究版のロスレス4回転の画素一致を調べていた。しかし、**旧v1.1.18と研究版で同じ人工HEICの「フル解像度RGB画素そのもの」が一致するか**は未測定だった。旧版の表示乱れを正解値とみなさないためにも、別の比較軸が必要となった。
+
+- 研究コミット `3f50c580d7d6aaf8d8f035b70e27d05545e27810`：人工HEICをWIC `CreateDecoderFromFilename` → `GetFrame(0)` → `WICConvertBitmapSource(RGB24)` → `CopyPixels(全フレーム)` で読み、フレーム数・寸法・HRESULT・RGB全バイト数・FNV64を出す観測専用テストを追加。元画像や画素値のログは収集しない。試験自体はユーザー写真を参照しない。
+- 観測ログ整形とCI A/B比較：`484f5e45fb5153784a07cdec51c50982f7213de4`、`67738940430e49cbc057b424f58ac7c2a2b7986f`、`e9657c46ae5c151a44fa3492d09af7915e1c841f`。[Actions #39964503469](https://github.com/taku077/wic_heic/actions/runs/39964503469) **SUCCESS**。
+- 同一版をそれぞれ別プロセスで2回再測定したCIコミット `099390d581b889e15851e31b20d72c825e75db7e`、[Actions #39965381543](https://github.com/taku077/wic_heic/actions/runs/39965381543) **SUCCESS**。旧版同士・研究版同士のFNV64は各々2回で一致し、版間だけ不一致。少なくとも今回の試験では偶発的不安定値ではない。
+- 分析コミット `7eec5d482ab3dde3338be6a4d55c2a35b0fad659`、[Actions #39965964279](https://github.com/taku077/wic_heic/actions/runs/39965964279) **SUCCESS**。空間4領域のRGB和と位置に依存しないRGBヒストグラムFNV64を計測。生画素は一切ログに書かない。
+
+| 同一公開人工HEIC、同一Windows Server 2022ワークフロー | 旧v1.1.18 | 研究版 |
+|---|---|---|
+| 自動選択されたデコーダー | 自作CLSID | 自作CLSID |
+| WICフレーム数 | 2 | 2 |
+| 第0フレーム寸法 | 1080×1920 | 1080×1920 |
+| WIC RGB24変換、フルCopyPixels | 成功 | 成功 |
+| RGBバイト数 | 6,220,800 | 6,220,800 |
+| RGB全体FNV64 | `BBE3A110699D854C` | `77003DAE9142F975` |
+| RGBヒストグラムFNV64（位置非依存） | `DEBFF6F820D6DEBE` | `B0CAA540D9075006` |
+| R成分の全画素合計 | 262,888,691 | 263,975,780 |
+| G成分の全画素合計 | 264,637,349 | 263,811,317 |
+| B成分の全画素合計 | 263,260,083 | 264,627,625 |
+
+**新たな確定事項**：
+1. 両版でWIC自動選択のみならず、人工HEICのフル解像度RGB24変換と全画素読込が `S_OK`。この人工HEICについて「研究版はフル解像度のWIC読込ができない」という説は否定された。
+2. 同一版の別プロセス再測定では画素ハッシュが安定する一方、旧版／研究版の画素ハッシュは相違。RGBヒストグラムまで相違し、**単なる画素配列順序の入れ替えのみでは説明できない**。版間の全画素RGBデータには色成分値の差もある。
+3. ソース静的比較では、通常入力に対する `HeicBitmapFrameDecode::CopyPixels` の1行ごとの主なコピー・10bit値換算処理は実質同じで、Gitのsubmodule SHAも libheif / libde265 / kvazaar の3件で旧版・研究版が一致。**原因はなお未確定**。 historical MSIとCI研究ビルドは異なる生成物であり、ビルド構成・間接依存・初期化状態・色管理処理などを切り分ける前に特定ソースの不具合と断定しない。
+4. 旧版の回転表示の破綻が実機報告されているので、RGB完全一致を理由に研究版を旧版へ近づける修正を行うのは危険。独立の期待画像・色空間基準でどちらが正しいかを評価する必要がある。
+
+**未解決・リリースゲート**：本結果がPhotos 2026.11090.22001.0のHEVC警告／編集ボタン制御と因果関係を持つ証拠はない。Windows10実機GUIのフル表示、回転保存、実ファイル保護も未達。追加MSI配布は保留。次の調査はこの実測差分の原因解析と、標準Photosの実際のコーデック選択・UI判定経路の把握を区別して進める。
