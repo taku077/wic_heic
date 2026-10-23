@@ -160,6 +160,47 @@ inline void Survey() {
     printf("WIC_PHOTOS_PIXEL_SIZE=%ux%u\n",frameWidth,frameHeight);
     if(FAILED(hr)||frameWidth==0||frameHeight==0)
         throw std::runtime_error("Synthetic HEIC frame geometry missing");
+    // A/B against the ACTUAL historical MSI built by workflow run 39433397223
+    // at a18b9ab (not the later f5b66 source tree). That old decoder
+    // advertises WIC 48bppRGB for a 10-bit HEIC but sets m_Bpp=32 and
+    // CopyPixels copies only four bytes per pixel. Detect the untouched
+    // trailing bytes of each six-byte-per-pixel WIC output row.
+    // This is a read-only public synthetic HEIC and a stack buffer: no
+    // metadata, pixels, filenames or paths are written to the log.
+    WICPixelFormatGUID originalFormat{};
+    hr=pixelFrame->GetPixelFormat(&originalFormat);
+    if(FAILED(hr))throw std::runtime_error("Synthetic frame WIC format missing");
+    if(!IsEqualGUID(originalFormat,GUID_WICPixelFormat48bppRGB))
+        throw std::runtime_error("Synthetic 10-bit fixture is not WIC 48bpp RGB");
+    constexpr UINT testW=16, testH=8, testStride=testW*6;
+    std::array<BYTE,testStride*testH> originalSentinel{};
+    for(size_t i=0;i<originalSentinel.size();++i)
+        originalSentinel[i]=BYTE((i*73u+19u)&255u);
+    auto rawRead=originalSentinel;
+    WICRect rectangle{0,0,INT(testW),INT(testH)};
+    const HRESULT rawHr=pixelFrame->CopyPixels(&rectangle,testStride,
+        UINT(rawRead.size()),rawRead.data());
+    printf("WIC_PHOTOS_10BIT_RAW48_ROI_HRESULT=0x%08X\\n",unsigned(rawHr));
+    if(FAILED(rawHr))
+        throw std::runtime_error("Synthetic WIC raw48 source CopyPixels failed");
+    unsigned untouchedTailRows=0;
+    unsigned changedHeadRows=0;
+    for(UINT y=0;y<testH;++y) {
+        const size_t row=size_t(y)*testStride;
+        bool tailOriginal=true;
+        bool headChanged=false;
+        for(UINT x=0;x<testStride;++x) {
+            if(x<testW*4 && rawRead[row+x]!=originalSentinel[row+x])
+                headChanged=true;
+            if(x>=testW*4 && rawRead[row+x]!=originalSentinel[row+x])
+                tailOriginal=false;
+        }
+        if(tailOriginal)++untouchedTailRows;
+        if(headChanged)++changedHeadRows;
+    }
+    printf("WIC_PHOTOS_10BIT_RAW48_TAIL_UNTOUCHED_ROWS=%u\\n",untouchedTailRows);
+    printf("WIC_PHOTOS_10BIT_RAW48_HEAD_CHANGED_ROWS=%u\\n",changedHeadRows);
+    puts("WIC_PHOTOS_10BIT_RAW48_STRIDE_AB_SURVEY_COMPLETE_PASS");
     CComPtr<IWICBitmapSource> rgb;
     hr=WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,pixelFrame,&rgb);
     printf("WIC_PHOTOS_PIXEL_RGB24_CONVERT_HRESULT=0x%08X\n",(unsigned)hr);
