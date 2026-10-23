@@ -461,6 +461,7 @@ inline void RejectMutationsAfterLosslessCapture(IWICImagingFactory* factory) {
         }
     };
     reject(frame->SetSize(w+1,h),"late SetSize");
+    reject(frame->SetResolution(300.0,300.0),"late SetResolution");
     WICPixelFormatGUID format=GUID_WICPixelFormat24bppRGB;
     reject(frame->SetPixelFormat(&format),"late SetPixelFormat");
     reject(frame->SetColorContexts(0,nullptr),"late frame SetColorContexts");
@@ -808,6 +809,34 @@ inline void RejectChangedOutputPixelFormatOnRawHeic(IWICImagingFactory* factory)
     puts("WIC_LOSSLESS_EXPLICIT_PIXEL_FORMAT_CHANGE_GUARD_PASS");
 }
 
+// Frame encoder currently reports S_OK for requested physical DPI changes
+// without writing them to the HEIF container. That is data-loss-by-success:
+// silent metadata edits must be rejected before capturing any HEIC bytes.
+// Use an isolated in-memory IStream and an existing public synthetic fixture.
+inline void RejectUnsupportedDpiChanges(IWICImagingFactory* factory) {
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"DPI encoder");
+    CComPtr<IStream> stream;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&stream),"DPI memory stream");
+    Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),
+        "DPI encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"DPI frame");
+    Check(frame->Initialize(nullptr),"DPI frame init");
+    if(frame->SetResolution(300.0,300.0)!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("Unsupported 300dpi was falsely reported as saved");
+    if(frame->SetResolution(96.0,96.0)!=S_OK)
+        throw std::runtime_error("WIC 96dpi default compatibility broken");
+    if(frame->SetResolution(-1.0,96.0)!=E_INVALIDARG)
+        throw std::runtime_error("Negative DPI unexpectedly accepted");
+    // The rejected image must never produce output before any frame pixels.
+    STATSTG stat{};
+    Check(stream->Stat(&stat,STATFLAG_NONAME),"DPI output stream stat");
+    if(stat.cbSize.QuadPart!=0)
+        throw std::runtime_error("Rejected DPI wrote output bytes");
+    puts("WIC_EXPLICIT_DPI_CHANGE_MUST_NOT_BE_SILENT_PASS");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -830,6 +859,7 @@ inline void Run() {
     RejectWrappedRotationWithLostHeicProvenance(factory);
     RejectUnsafeOriginalHeicRasterFallback(factory);
     RejectMutationsAfterLosslessCapture(factory);
+    RejectUnsupportedDpiChanges(factory);
     FourTurnsOnlyInMemory(factory);
     CanonicalWicWriteSourceWithoutSetSizeOrPixelFormat(factory);
     RejectExplicitIccChangeInLosslessPaths(factory);
