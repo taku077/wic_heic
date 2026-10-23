@@ -432,3 +432,13 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 これらはWIC実装の規約／データ保護を改善するが、**Windows10標準フォトの警告・編集可能・ロスレス回転保存というP0機能の解決に直結したと断言できない**。ユーザーPCのv1.1.18はそのまま、HEIC Manager/サムネイル専用MSIも変更なし、原本の写真を試験に使わない。正しい研究版MSI完成率は保守的な暫定見積りで**39％→42％（+3ポイント）**、ただし実GUIで警告が消えない場合は機能合格率には反映されない。リリースは引き続きブロック。
 
 次の技術上の重要ゲート：同じ人工HEICでWindows10標準フォトが**可視プロセスのWICデコーダーのどのAPI能力／Media Foundation HEVC MFT／Store拡張権限を用いて編集可能判定を行うのか**の証拠を確保すること。既存実機の可視Photosで登録済み旧1.1.18のWIC DLLロードとディスクハッシュ一致は確認済みであり、同一モジュール照合は繰り返さない。無根拠に`SameEncoder`や`CanDecodeThumbnail`を旧版の誤申告値へ戻さない。Win10 GUIに代わるWindows Server CI成功を完成保証しない。
+
+## 登録デコーダー画素形式の不足と8並列テストの入力寸法（2026-10-24、CI最終判定待ち）
+
+**ソース上の事実**：研究版デコーダーの`CHeicBitmapFrameDecode::GetPixelFormat`は8bit RGB／RGBAと10/12/16bit RGB／RGBAをそれぞれ`GUID_WICPixelFormat24bppRGB`、`32bppRGBA`、`48bppRGB`、`64bppRGBA`で返せる。しかし`wic_heic/dllmain.cpp`のWICデコーダー登録は従来`24bppRGB`のみ。`wictest/HighBitDepthProbe.h`が既に10bitの公開人工HEICから48bpp RGBを読めることを検証している。これはWIC能力列挙と実フレーム形式の**登録不一致**であり、Photos編集警告の原因と同一視してはいけない。
+
+- テストコミット`45ce0404123ad4200a6848f574574596b50c7c4d`：`IWICBitmapDecoderInfo::GetPixelFormats`で4形式を確認する試験を追加。GUID実値はMicrosoft WinSDK `wincodec.h`で確認済み：https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/wincodec.h
+- ソース修正`2f4b4042e87ff76c840f797d5fe38f8e7998c7b5`：**デコーダー登録のみ**に32bppRGBA、48bppRGB、64bppRGBAを追加。実際に10bitへHEVC再圧縮できないバックエンドがあるため、**エンコーダーへ未確認の48/64bpp対応を申告していない**。導入先PCへのレジストリ変更なし、CIの使い捨てWindows環境のみで登録を検証。
+- この試験以前から同ブランチで追加された「同一WICフレームを8スレッドから一斉に`CopyPixels`」の試験が、初回はラムダ式のMSVCキャプチャでビルド失敗。実行後も「8スレッドの画素不一致」で失敗したが、**元のstrideは24bpp（`width*3`）なのに人工HEICは48bpp**であり、テスト自体のバッファ指定ミスだった可能性が高い。ステージング人工HEICのWICフレーム形式を確認し`width*6`で再計測する修正`174a1a79a4051e754ea4a0cb4e982babf845df31`。診断用に**人工画素のみ**各ワーカのHRESULTとFNV64を出力（`60d83c200d2704aa46fa9e24b46d59eba22e177c`）。ユーザー写真、ウィンドウ内容、端末上の画像は取得しない。
+- CI依存性を見分けるため、`HighBitDepthProbe::Run`を並列コピー試験より前に実行するよう変更`edb907feb5f864ef99900a5d8257844aad52ddfb`。**並列テスト修正の最終CI結果と登録形式の最終CI結果は、この節を記録した時点で未確定。**
+- **保留事項**：本修正はWICランタイム・登録能力の齟齬を修正するものであり、現ユーザーWindows10 PhotosのHEVC拡張警告／編集／回転保存が直った証拠ではない。旧v1.1.18の誤ったサムネイル／SameEncoder能力申告を復活させず、研究版MSI配布禁止を維持。
