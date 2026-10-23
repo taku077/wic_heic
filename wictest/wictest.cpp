@@ -318,9 +318,36 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bo
 			throw std::exception("Failed to SetPixelFormat");
 		}
 
-		hr = pFrameEncode->WriteSource(sourceToEncode, NULL);
-		if (FAILED(hr)) {
-			throw std::exception("Failed to WriteSource");
+		if (syntheticRasterRotation) {
+			// This is a synthetic geometry-only conversion. A materialized
+			// IWICBitmap may also have come from a real HEIC with metadata,
+			// so the product encoder's WriteSource must reject it. These
+			// test-generated raster pixels opt in explicitly via WritePixels.
+			UINT bytesPerPixel=0;
+			if (IsEqualGUID(pixFormat,GUID_WICPixelFormat24bppRGB))
+				bytesPerPixel=3;
+			else if (IsEqualGUID(pixFormat,GUID_WICPixelFormat32bppRGBA))
+				bytesPerPixel=4;
+			else if (IsEqualGUID(pixFormat,GUID_WICPixelFormat48bppRGB))
+				bytesPerPixel=6;
+			else if (IsEqualGUID(pixFormat,GUID_WICPixelFormat64bppRGBA))
+				bytesPerPixel=8;
+			if (!bytesPerPixel) throw std::exception("Unsupported synthetic pixel format");
+			const uint64_t stride=uint64_t(width)*bytesPerPixel;
+			const uint64_t total=stride*height;
+			if (!stride || total>UINT_MAX || stride>UINT_MAX)
+				throw std::exception("Synthetic rotated image too large");
+			CComPtr<IWICBitmapSource> normalized;
+			hr=WICConvertBitmapSource(pixFormat,sourceToEncode,&normalized);
+			if (FAILED(hr)) throw std::exception("Synthetic rotated pixel negotiation failed");
+			std::vector<BYTE> bytes(static_cast<size_t>(total));
+			hr=normalized->CopyPixels(nullptr,UINT(stride),UINT(total),bytes.data());
+			if (FAILED(hr)) throw std::exception("Synthetic rotated CopyPixels failed");
+			hr=pFrameEncode->WritePixels(height,UINT(stride),UINT(total),bytes.data());
+			if (FAILED(hr)) throw std::exception("Synthetic rotated WritePixels failed");
+		} else {
+			hr = pFrameEncode->WriteSource(sourceToEncode, NULL);
+			if (FAILED(hr)) throw std::exception("Failed to WriteSource");
 		}
 
 		hr = pFrameEncode->Commit();
