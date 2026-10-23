@@ -2,7 +2,7 @@
 #include "HeicSourceAccess.h"
 #include <mutex>
 
-class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IHeicRawSource
+class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IWICMetadataBlockReader, public IHeicRawSource
 {
 private:
 	std::atomic<uint32_t> m_Count;
@@ -35,6 +35,13 @@ public:
 	virtual HRESULT STDMETHODCALLTYPE GetMetadataQueryReader(__RPC__deref_out_opt IWICMetadataQueryReader **ppIMetadataQueryReader);
 	virtual HRESULT STDMETHODCALLTYPE GetColorContexts(UINT cCount, __RPC__inout_ecount_full_opt(cCount) IWICColorContext **ppIColorContexts, __RPC__out UINT *pcActualCount);
 	virtual HRESULT STDMETHODCALLTYPE GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail);
+	// Frame metadata blocks are part of this same COM object, not a second
+	// object with a different IUnknown identity.
+	HRESULT STDMETHODCALLTYPE GetContainerFormat(GUID* pguidContainerFormat) override;
+	HRESULT STDMETHODCALLTYPE GetCount(UINT* pcCount) override;
+	HRESULT STDMETHODCALLTYPE GetReaderByIndex(UINT nIndex, IWICMetadataReader** ppIMetadataReader) override;
+	HRESULT STDMETHODCALLTYPE GetEnumerator(IEnumUnknown** ppIEnumMetadata) override;
+
 
 	void DecodeImage();
 	HRESULT STDMETHODCALLTYPE ReadFullContent(std::vector<uint8_t>* content) override;
