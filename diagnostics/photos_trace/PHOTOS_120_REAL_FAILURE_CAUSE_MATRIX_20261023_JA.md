@@ -28,3 +28,19 @@
 - フォトがHEVC警告なく表示・編集・回転できること（Windows 10実機）。ここが未合格なら対策は完了していない。
 - 作業コピー限定の回転保存で画素形状・元HEICとEXIF/ICC/HDR等を毀損しない。プライベート画像で試さない。
 - 旧WICの完全一致復旧が保証される。HEIC Manager、元写真、v0.4.0（未導入）に干渉しない。
+
+## CI追試確定：歴史的v1.1.18と修正版の同一人工HEIC比較（2026-10-23）
+[CI #39939819747](https://github.com/taku077/wic_heic/actions/runs/39939819747)：Windows Server 2022で**PASS**。元v1.1.18と研究修正版を同じCI環境で順にMSI導入し、同じ公開人工HEICをWICに読み込ませた。
+
+| 測定 | 元v1.1.18 | 研究修正版 |
+|---|---|---|
+| QueryCapabilityマスク | `0x15` | `0x0C` |
+| SameEncoder ビット | 1 | 0 |
+| CanDecodeSomeImages | 1 | 1 |
+| CanEnumerateMetadata | 0 | 1 |
+| CanDecodeThumbnail（その人工HEIC） | 1（旧版の無条件申告） | 0（埋め込みなし） |
+| ベンダー指定なしの WIC CreateDecoderFromFilename が自作CLSIDを選択 | **1** | **1** |
+
+**決定的な限定事項**：少なくともこの人工HEICと隔離Windowsでは、修正版WICは登録されているだけでなくWindowsによる実際の自動選択にも成功。従って「v1.1.20はWICの自動選択が常に失敗するためフォトで編集できない」という一般的な原因説は否定された。一方、Windows 10 Photos内でのデコード・編集機能条件はこれでは測れない。**HEVC警告との因果関係は引き続き未確定**。
+
+CIは公開人工HEICだけで実行し、元画像にもユーザーPCにもアクセスしていない。実機不合格版MSIは再配布せず、Artifact出力はゼロ（リリースゲート有効）。研究修正は `3421e5f48c5d2de8f66bb6034be050dd019dc3d9`、旧版と修正版の測定用プログラムは `wictest/WICDecoderCapabilityProbe.h` に保存した。
