@@ -233,3 +233,23 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 - 同じ緑CIで `WIC_FOUR_TURNS_EXACT_RGB_PIXEL_IDENTITY_PASS` (6,220,800バイト)、`WIC_CANONICAL_IMPLICIT_EXIF_ICC_AUXILIARY_BYTE_PRESERVATION_PASS`、`WIC_LOSSLESS_EXPLICIT_ICC_REMOVAL_AND_REPLACEMENT_GUARD_PASS`、`WIC_LOSSLESS_EXPLICIT_PIXEL_FORMAT_CHANGE_GUARD_PASS` を再確認。
 - **限界**：これは既知の3種類のラッパー越しの画素誤受理を塞いだものであり、`IWICBitmap` へ実体化された後の出自まで識別できるわけではない。Windows10 Photosがこの保存経路を実際に使うことも確認できていない。PhotosのHEVC警告・ボタン無効は **未解決**。保存成功や画像保護の全面的な証明でもない。回転編集可能な完成MSIは **配布禁止を維持**。
 - **優先する次の検証**：ユーザーPCの現状（v1.1.18復元済み）に手を触れず、v1.1.18と研究版の `QueryCapability` マスクと空ICC `GetColorContexts` の挙動がPhotos GUIへ影響するかを切り分ける。公式WIC規約に反する `SameEncoder` 申告は戻さない。Windows Server CIのWIC呼び出し成功をPhotos GUI合格と誤認しない。
+
+## 引継ぎ後の追加検証：ICCを持つ人工HEICでの旧v1.1.18対研究版A/B（2026-10-23）
+
+**既存調査との差分**：従来のA/BはICCプロファイルが0件の人工HEICに対する `GetColorContexts(0,nullptr,&count)` だった。ICCが実際に存在する画像の挙動は未確認であり、同じ試験を繰り返さず `wictest/WICDecoderCapabilityProbe.h` に `SurveySyntheticIccForPhotosEditor` を追加（commit `6cba2e5cfde183478c8a57ea058845f73c9c3a72`）。以前からCIで生成されている `samples/icc-roundtrip.heic`（公開人工HEIC）を再利用し、旧MSI v1.1.18と研究版を同一使い捨てWindows Server 2022で順に観測した。
+
+[GitHub Actions #39962636837](https://github.com/taku077/wic_heic/actions/runs/39962636837) **全工程SUCCESS**（旧MSI SHA照合、WIC A/B、既存ロスレス回転・メタデータ保護回帰、配布禁止ゲート）。
+
+| ICC入り人工HEIC・WIC API | 旧v1.1.18 | 研究版 |
+|---|---|---|
+| HEICデコーダー作成 | `0x00000000` | `0x00000000` |
+| Decoder.GetColorContexts(0) | `0x88982F81`（0件） | `0x00000000`（1件） |
+| Frame.GetColorContexts(0) | `0x88982F81`（0件） | `0x00000000`（1件） |
+| Frame.GetColorContexts(1)実プロファイル取得 | 不可 | `0x00000000`（1件） |
+| WICColorContextの型取得 | 不可 | `0x00000000`、型1（プロファイル） |
+
+**確定したこと**：旧v1.1.18はプロファイル無しのケースだけでなく、実際にICCプロファイルを含む合成人工HEICでもICC APIが非対応。研究版は当該人工ICCを取得できる。したがって「旧版でGUIボタンが有効なのだから、空ICC応答を含め `GetColorContexts` を旧版の失敗応答へ戻す」という変更は画質・色管理後退であり、少なくとも現状では採用できない。Microsoft公式 `IWICBitmapFrameDecode::GetColorContexts` は `0,nullptr` で件数を照会する仕様: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapframedecode-getcolorcontexts 。
+
+**未確定**：`GetColorContexts` 応答差がWindows 10 Photos 2026.11090.22001.0のHEVC警告・編集ボタン無効化を引き起こす因果関係。Windows Server WICテストはPhotos内部のMedia Foundation／HEVC拡張検査や編集フローを観測しない。旧版の `QueryCapability=0x15` を理由なく復活させない。Microsoft WIC `SameEncoder` は同一ベンダー画像のみ: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/ne-wincodec-wicbitmapdecodercapabilities 。
+
+**開発上の次アクション**：旧MSI導入・復旧をユーザーに再要求せず、WIC応答の非破壊的な比較とPhotos実機GUI／Media Foundation依存の証拠取得を区別する。現行v1.1.18は表示ボタンが有効でも画像変形／回転保存不具合があり完成版ではない。新MSI配布ゲートは引き続き閉鎖。
