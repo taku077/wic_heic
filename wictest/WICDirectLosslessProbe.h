@@ -673,6 +673,57 @@ inline void RejectExplicitIccChangeInLosslessPaths(IWICImagingFactory* factory) 
     puts("WIC_LOSSLESS_EXPLICIT_ICC_REMOVAL_AND_REPLACEMENT_GUARD_PASS");
 }
 
+// An explicit output pixel-format conversion cannot be satisfied by merely
+// handing back unchanged HEVC/HEIF bytes. Regression on immutable synthetic
+// HEIC, memory-only destination; no Photos GUI or user images are touched.
+inline void RejectChangedOutputPixelFormatOnRawHeic(IWICImagingFactory* factory) {
+    const wchar_t* sourcePath=L"samples\\fixture-irot3-exif6-noaux.heic";
+    for(unsigned turn=0;turn<2;++turn) {
+        CComPtr<IWICBitmapDecoder> decoder;
+        Check(factory->CreateDecoderFromFilename(sourcePath,nullptr,GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand,&decoder),"pixel-change source");
+        CComPtr<IWICBitmapFrameDecode> source;
+        Check(decoder->GetFrame(0,&source),"pixel-change HEIC frame");
+        WICPixelFormatGUID inputFormat{};
+        Check(source->GetPixelFormat(&inputFormat),"pixel-change incoming format");
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"pixel-change output encoder");
+        CComPtr<IStream> output;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&output),"pixel-change memory output");
+        Check(encoder->Initialize(output,WICBitmapEncoderNoCache),
+            "pixel-change encoder initialize");
+        CComPtr<IWICBitmapFrameEncode> frame;
+        CComPtr<IPropertyBag2> options;
+        Check(encoder->CreateNewFrame(&frame,&options),"pixel-change options");
+        if(turn) {
+            if(!options)throw std::runtime_error("No pixel-change transform bag");
+            PROPBAG2 prop{};prop.pstrName=const_cast<LPOLESTR>(L"BitmapTransform");
+            VARIANT val{};val.vt=VT_UI1;val.bVal=1;
+            Check(options->Write(1,&prop,&val),"pixel-change CW90 transform");
+        }
+        Check(frame->Initialize(options),"pixel-change frame initialize");
+        // Request a different output format from the synthetic source.
+        // This is a real edit even if the encoded HEVC data is unchanged.
+        WICPixelFormatGUID outputFmt=GUID_WICPixelFormat32bppRGBA;
+        if(IsEqualGUID(inputFormat,outputFmt))
+            outputFmt=GUID_WICPixelFormat24bppRGB;
+        Check(frame->SetPixelFormat(&outputFmt),"pixel-change request");
+        if(IsEqualGUID(inputFormat,outputFmt))
+            throw std::runtime_error("Test pixel-format request did not change format");
+        const HRESULT hr=frame->WriteSource(source,nullptr);
+        printf("WIC_CHANGED_PIXEL_FORMAT_MUST_NOT_BE_SILENT transform=%u hr=0x%08X\n",
+            turn,unsigned(hr));
+        if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+            throw std::runtime_error("Lossless HEIC ignored explicit pixel format change");
+        STATSTG stat{};
+        Check(output->Stat(&stat,STATFLAG_NONAME),"pixel-change output length");
+        if(stat.cbSize.QuadPart!=0)
+            throw std::runtime_error("Rejected pixel change wrote output bytes");
+    }
+    puts("WIC_LOSSLESS_EXPLICIT_PIXEL_FORMAT_CHANGE_GUARD_PASS");
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -697,6 +748,7 @@ inline void Run() {
     FourTurnsOnlyInMemory(factory);
     CanonicalWicWriteSourceWithoutSetSizeOrPixelFormat(factory);
     RejectExplicitIccChangeInLosslessPaths(factory);
+    RejectChangedOutputPixelFormatOnRawHeic(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
 }
 }
