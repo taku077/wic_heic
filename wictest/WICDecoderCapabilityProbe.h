@@ -181,7 +181,7 @@ inline void Survey() {
     WICRect rectangle{0,0,INT(testW),INT(testH)};
     const HRESULT rawHr=pixelFrame->CopyPixels(&rectangle,testStride,
         UINT(rawRead.size()),rawRead.data());
-    printf("WIC_PHOTOS_10BIT_RAW48_ROI_HRESULT=0x%08X\\n",unsigned(rawHr));
+    printf("WIC_PHOTOS_10BIT_RAW48_ROI_HRESULT=0x%08X\n",unsigned(rawHr));
     if(FAILED(rawHr))
         throw std::runtime_error("Synthetic WIC raw48 source CopyPixels failed");
     unsigned untouchedTailRows=0;
@@ -199,8 +199,8 @@ inline void Survey() {
         if(tailOriginal)++untouchedTailRows;
         if(headChanged)++changedHeadRows;
     }
-    printf("WIC_PHOTOS_10BIT_RAW48_TAIL_UNTOUCHED_ROWS=%u\\n",untouchedTailRows);
-    printf("WIC_PHOTOS_10BIT_RAW48_HEAD_CHANGED_ROWS=%u\\n",changedHeadRows);
+    printf("WIC_PHOTOS_10BIT_RAW48_TAIL_UNTOUCHED_ROWS=%u\n",untouchedTailRows);
+    printf("WIC_PHOTOS_10BIT_RAW48_HEAD_CHANGED_ROWS=%u\n",changedHeadRows);
     puts("WIC_PHOTOS_10BIT_RAW48_STRIDE_AB_SURVEY_COMPLETE_PASS");
     CComPtr<IWICBitmapSource> rgb;
     hr=WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,pixelFrame,&rgb);
