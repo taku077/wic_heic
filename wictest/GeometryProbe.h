@@ -122,7 +122,15 @@ inline void Run() {
     Must(jRot->Initialize(jpegSource,WICBitmapTransformRotate90),"JPEG rotate90");
     Must(hRot->Initialize(heicSource,WICBitmapTransformRotate90),"HEIC rotate90");
     Save(factory,jRot,JPEG(),nullptr,L"samples\\geometry-rotated-jpeg.jpg");
-    Save(factory,hRot,HEIC(),&GUID_VendorPrsyahmi,L"samples\\geometry-rotated-heic.heic");
+    // Pixel geometry reference only: deliberately materialize a synthetic
+    // rotated WIC raster before HEIC encoding. A direct flip-rotator
+    // WriteSource is rejected because it loses original HEIC provenance.
+    // NEVER use this rasterization path to rotate a user's actual HEIC.
+    CComPtr<IWICBitmap> syntheticRaster;
+    Must(factory->CreateBitmapFromSource(hRot,WICBitmapCacheOnLoad,
+        &syntheticRaster),"materialize synthetic reference raster");
+    Save(factory,syntheticRaster,HEIC(),&GUID_VendorPrsyahmi,
+        L"samples\\geometry-rotated-heic.heic");
     auto jOut=Read(factory,L"samples\\geometry-rotated-jpeg.jpg");
     auto hOut=Read(factory,L"samples\\geometry-rotated-heic.heic");
     Pixels jpegPixels=ToRGB(jOut),heicPixels=ToRGB(hOut);
