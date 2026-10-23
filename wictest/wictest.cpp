@@ -308,9 +308,17 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bo
 			throw std::exception("Failed to set image size");
 		}
 
-		hr = pFrameEncode->SetResolution(dpiX, dpiY);
-		if (FAILED(hr)) {
-			throw std::exception("Failed to SetResolution");
+		// This utility runs only on the repository's public synthetic smoke
+		// samples. The HEIC encoder cannot yet save an arbitrary physical DPI,
+		// and it now correctly rejects such a request instead of lying with S_OK.
+		// Explicitly record that the synthetic transcode is not DPI parity;
+		// never apply this omission to an existing user's HEIC or Photos save.
+		if (dpiX == 96.0 && dpiY == 96.0) {
+			hr = pFrameEncode->SetResolution(dpiX, dpiY);
+			if (FAILED(hr)) throw std::exception("Failed to set default DPI");
+		} else {
+			printf("SYNTHETIC_SMOKE_DPI_METADATA_NOT_TRANSFERRED original_x=%.6f original_y=%.6f\\n",
+				dpiX, dpiY);
 		}
 
 		hr = pFrameEncode->SetPixelFormat(&pixFormat);
