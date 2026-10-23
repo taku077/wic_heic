@@ -367,6 +367,16 @@ int main()
 
 	try
 	{
+        // Observation-only mode: run against either pinned 1.1.18 or the
+        // current experimental codec. Never opens personal images, writes
+        // files, or alters WIC registry. CI isolates installed versions.
+        char surveyFlag[4]{};
+        if(GetEnvironmentVariableA("WIC_HEIC_CAPABILITY_SURVEY_ONLY",
+           surveyFlag,DWORD(sizeof(surveyFlag)))>0 && surveyFlag[0]=='1'){
+            WICDecoderCapabilityProbe::Survey();
+            CoUninitialize();
+            return 0;
+        }
 		if (!HeicThumbnailGeometry::Compatible(3024,4032,240,320) ||
 		    !HeicThumbnailGeometry::Compatible(4032,3024,320,240) ||
 		    HeicThumbnailGeometry::Compatible(3024,4032,320,240) ||
