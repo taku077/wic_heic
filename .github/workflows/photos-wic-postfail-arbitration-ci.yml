@@ -372,6 +372,47 @@ jobs:
               }
             }
             Write-Host 'WIC_PHOTOS_EDITOR_13_API_STABLE_ACROSS_118_AND_RESEARCH_PASS'
+            # New A/B: both codecs may win arbitration, but only a real
+            # full-resolution CopyPixels proves that the WIC pixel path works.
+            # The old codec's rotation/display is known broken; fingerprint
+            # mismatches are reported, NOT treated as an old-version baseline
+            # that the research codec must reproduce.
+            $fullresKeys=@(
+              'WIC_PHOTOS_PIXEL_FRAMECOUNT',
+              'WIC_PHOTOS_PIXEL_SIZE',
+              'WIC_PHOTOS_PIXEL_FULLRES_BYTES',
+              'WIC_PHOTOS_PIXEL_READBACK_FNV64'
+            )
+            $observed=@{}
+            foreach($key in $fullresKeys){
+              $values=@()
+              foreach($label in @('ORIGINAL118','RESEARCH')){
+                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)'
+                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
+                if(-not $match.Success){throw ('Missing full-resolution result: '+$label+' '+$key)}
+                $values+= $match.Groups[1].Value.Trim()
+              }
+              $observed[$key]=$values
+            }
+            foreach($label in @('ORIGINAL118','RESEARCH')){
+              foreach($key in @('WIC_PHOTOS_PIXEL_GETFRAME_HRESULT',
+                                 'WIC_PHOTOS_PIXEL_GETSIZE_HRESULT',
+                                 'WIC_PHOTOS_PIXEL_RGB24_CONVERT_HRESULT',
+                                 'WIC_PHOTOS_PIXEL_FULLRES_COPY_HRESULT')){
+                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)'
+                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
+                if(-not $match.Success -or $match.Groups[1].Value.Trim() -cne '0x00000000'){
+                  throw ('Full-resolution HEIC readback failed: '+$label+' '+$key)
+                }
+              }
+            }
+            Write-Host ('WIC_PHOTOS_AB_FULLRES_GEOMETRY_MATCH='+[int](
+              $observed['WIC_PHOTOS_PIXEL_SIZE'][0] -ceq $observed['WIC_PHOTOS_PIXEL_SIZE'][1]))
+            Write-Host ('WIC_PHOTOS_AB_FULLRES_RGB_FINGERPRINT_MATCH='+[int](
+              $observed['WIC_PHOTOS_PIXEL_READBACK_FNV64'][0] -ceq
+              $observed['WIC_PHOTOS_PIXEL_READBACK_FNV64'][1]))
+            Write-Host 'WIC_PHOTOS_118_VS_RESEARCH_FULLRES_PIXEL_API_AB_PASS'
+
             foreach($kind in @('CONTAINER','FRAME')){
               $key='WIC_PHOTOS_EDITOR_'+$kind+'_COLORCONTEXTS_HRESULT'
               $oldMatch=[regex]::Match([string]$script:abSurveys['ORIGINAL118'],
