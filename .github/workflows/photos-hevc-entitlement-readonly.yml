@@ -1,0 +1,47 @@
+name: Windows Photos independent HEVC AppX scope read-only
+on:
+  push:
+    branches: [investigate/photos-hevc-entitlement-route]
+    paths:
+      - 'diagnostics/photos_hevc_entitlement/**'
+      - '.github/workflows/photos-hevc-entitlement-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  read-only:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Windows PowerShell 5.1 syntax and no-mutation audit
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $path='diagnostics/photos_hevc_entitlement/Photos_HEVC_AppXScope_ReadOnly.ps1'
+          $tokens=$null;$errors=$null
+          $null=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+          if($errors.Count){throw 'PowerShell 5.1 syntax invalid'}
+          $src=[IO.File]::ReadAllText((Resolve-Path $path).Path)
+          foreach($bad in @('Remove-AppxPackage','Add-AppxPackage','Set-ItemProperty','New-ItemProperty','msiexec','Invoke-WebRequest','Start-Process')){
+            if($src.Contains($bad)){throw ('System mutation command found: '+$bad)}
+          }
+          Write-Host 'PHOTOS_HEVC_APPX_READONLY_PS51_SYNTAX_PASS'
+      - name: Classification unit tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & 'diagnostics/photos_hevc_entitlement/Photos_HEVC_AppXScope_ReadOnly.ps1' -SelfTest
+          if(-not $?){throw 'AppX scope unit test failed'}
+      - name: Read-only execution on disposable CI user
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $path=& 'diagnostics/photos_hevc_entitlement/Photos_HEVC_AppXScope_ReadOnly.ps1'
+          if(-not $? -or -not (Test-Path -LiteralPath $path)){throw 'AppX scope probe failed'}
+          $j=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json
+          if($j.NoWindowsChanges -ne $true){throw 'Safety flag missing'}
+          if($j.Classification -notmatch '^HEVC_APPX_'){throw 'Invalid classification'}
+          if($j.PreviouslyObserved.MFTHEVCDecoder -ne 0){throw 'Prior evidence modified'}
+          Write-Host 'PHOTOS_HEVC_APPX_READONLY_RUNTIME_PASS'
+          Remove-Item -LiteralPath $path -ErrorAction Stop
