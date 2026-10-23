@@ -531,6 +531,64 @@ inline void FourTurnsOnlyInMemory(IWICImagingFactory* factory) {
     puts("WIC_FOUR_TURNS_MEMORY_ONLY_EXIF_CANONICAL_HEVC_BYTES_PRESERVED_PASS");
 }
 
+// Microsoft official IWICBitmapFrameEncode::WriteSource contract allows
+// SetSize, SetPixelFormat and SetResolution to be omitted. Verify the
+// canonical HEIF encoding sequence without inventing a Photos API path.
+// Source is an immutable synthetic file, destination only an IStream in RAM.
+inline void CanonicalWicWriteSourceWithoutSetSizeOrPixelFormat(IWICImagingFactory* factory) {
+    const wchar_t* sample=L"samples\\fixture-irot3-exif6-noaux.heic";
+    const auto original=Read(sample);
+    for(BYTE transform : {BYTE(0),BYTE(1)}) {
+        CComPtr<IWICBitmapDecoder> decoder;
+        Check(factory->CreateDecoderFromFilename(sample,nullptr,GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand,&decoder),"canonical source read");
+        CComPtr<IWICBitmapFrameDecode> source;
+        Check(decoder->GetFrame(0,&source),"canonical source frame");
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"canonical encoder");
+        CComPtr<IStream> memory;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&memory),"canonical memory stream");
+        Check(encoder->Initialize(memory,WICBitmapEncoderCacheInMemory),
+            "canonical encoder init");
+        CComPtr<IWICBitmapFrameEncode> target;
+        CComPtr<IPropertyBag2> opts;
+        Check(encoder->CreateNewFrame(&target,&opts),"canonical options");
+        if(!opts)throw std::runtime_error("Canonical HEIC options missing");
+        if(transform) {
+            PROPBAG2 option{};
+            option.pstrName=const_cast<LPOLESTR>(L"BitmapTransform");
+            VARIANT val{};val.vt=VT_UI1;val.bVal=transform;
+            Check(opts->Write(1,&option,&val),"canonical set transform");
+        }
+        Check(target->Initialize(opts),"canonical frame init");
+        // No SetSize, SetPixelFormat or SetResolution -- by design!
+        const HRESULT hr=target->WriteSource(source,nullptr);
+        if(FAILED(hr)) {
+            printf("WIC_CANONICAL_IMPLICIT_SETTINGS_FAILED transform=%u HRESULT=0x%08X\n",
+                unsigned(transform),unsigned(hr));
+            throw std::runtime_error("WIC WriteSource lacks implicit frame settings");
+        }
+        Check(target->Commit(),"canonical frame commit");
+        Check(encoder->Commit(),"canonical encoder commit");
+        STATSTG st{};
+        Check(memory->Stat(&st,STATFLAG_NONAME),"canonical output length");
+        auto expected=transform?HeicLosslessNative::Transform(original,1):original;
+        if(st.cbSize.QuadPart!=expected.size())
+            throw std::runtime_error("Canonical output byte count mismatch");
+        LARGE_INTEGER zero{};
+        Check(memory->Seek(zero,STREAM_SEEK_SET,nullptr),"canonical memory rewind");
+        std::vector<uint8_t> actual(expected.size());
+        ULONG read=0;
+        Check(memory->Read(actual.data(),ULONG(actual.size()),&read),
+            "canonical output bytes");
+        if(read!=actual.size()||actual!=expected)
+            throw std::runtime_error("Canonical WIC implicit settings lost source HEIC bytes");
+        printf("WIC_CANONICAL_IMPLICIT_SETTINGS_PASS transform=%u bytes=%zu\n",
+            unsigned(transform),actual.size());
+    }
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -553,6 +611,7 @@ inline void Run() {
     RejectUnsafeOriginalHeicRasterFallback(factory);
     RejectMutationsAfterLosslessCapture(factory);
     FourTurnsOnlyInMemory(factory);
+    CanonicalWicWriteSourceWithoutSetSizeOrPixelFormat(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
 }
 }
