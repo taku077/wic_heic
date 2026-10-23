@@ -95,6 +95,69 @@ inline void Survey() {
         throw std::runtime_error("Survey chosen CLSID failed");
     printf("WIC_PHOTOS_CAPABILITY_SURVEY_DEFAULT_IS_CUSTOM=%u\n",
         !!IsEqualGUID(chosen,CLSID_HEICDecoder));
+    // Observation-only editor preflight matrix. These probes use only an
+    // already-present synthetic HEIC and transient COM objects; no WriteSource,
+    // file creation, photo edits, registry modification, or MSI installation.
+    // A/B records HRESULTs without assuming that any one HRESULT explains
+    // Microsoft Photos' editor UI, which cannot run in Windows Server CI.
+    GUID selectedContainer{};
+    hr=automatic->GetContainerFormat(&selectedContainer);
+    if(FAILED(hr))throw std::runtime_error("Survey container GUID failed");
+    printf("WIC_PHOTOS_EDITOR_CONTAINER_MATCHES_PRIVATE=%u\n",
+        !!IsEqualGUID(selectedContainer,GUID_ContainerFormatHEIC));
+
+    CComPtr<IWICBitmapSource> preview;
+    hr=automatic->GetPreview(&preview);
+    printf("WIC_PHOTOS_EDITOR_DECODER_PREVIEW_HRESULT=0x%08X\n",unsigned(hr));
+    CComPtr<IWICMetadataQueryReader> containerMeta;
+    hr=automatic->GetMetadataQueryReader(&containerMeta);
+    printf("WIC_PHOTOS_EDITOR_CONTAINER_METADATA_HRESULT=0x%08X\n",unsigned(hr));
+
+    UINT containerContexts=0;
+    hr=automatic->GetColorContexts(0,nullptr,&containerContexts);
+    printf("WIC_PHOTOS_EDITOR_CONTAINER_COLORCONTEXTS_HRESULT=0x%08X\n",unsigned(hr));
+    printf("WIC_PHOTOS_EDITOR_CONTAINER_COLORCONTEXTS_COUNT=%u\n",containerContexts);
+
+    CComPtr<IWICBitmapFrameDecode> firstFrame;
+    hr=automatic->GetFrame(0,&firstFrame);
+    if(FAILED(hr)||!firstFrame)throw std::runtime_error("Survey primary frame failed");
+    WICPixelFormatGUID pix{};
+    hr=firstFrame->GetPixelFormat(&pix);
+    if(FAILED(hr))throw std::runtime_error("Survey primary pixel format failed");
+    UINT frameContexts=0;
+    hr=firstFrame->GetColorContexts(0,nullptr,&frameContexts);
+    printf("WIC_PHOTOS_EDITOR_FRAME_COLORCONTEXTS_HRESULT=0x%08X\n",unsigned(hr));
+    printf("WIC_PHOTOS_EDITOR_FRAME_COLORCONTEXTS_COUNT=%u\n",frameContexts);
+    CComPtr<IWICMetadataQueryReader> frameMeta;
+    hr=firstFrame->GetMetadataQueryReader(&frameMeta);
+    printf("WIC_PHOTOS_EDITOR_FRAME_METADATA_HRESULT=0x%08X\n",unsigned(hr));
+
+    CComPtr<IWICBitmapEncoder> automaticEncoder;
+    hr=factory->CreateEncoder(GUID_ContainerFormatHEIC,nullptr,&automaticEncoder);
+    printf("WIC_PHOTOS_EDITOR_DEFAULT_ENCODER_HRESULT=0x%08X\n",unsigned(hr));
+    if(SUCCEEDED(hr)&&automaticEncoder){
+        CComPtr<IWICMetadataQueryWriter> writer;
+        hr=automaticEncoder->GetMetadataQueryWriter(&writer);
+        printf("WIC_PHOTOS_EDITOR_DEFAULT_ENCODER_METADATA_WRITER_HRESULT=0x%08X\n",unsigned(hr));
+    }
+    CComPtr<IWICBitmapEncoder> vendorEncoder;
+    hr=factory->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&vendorEncoder);
+    printf("WIC_PHOTOS_EDITOR_VENDOR_ENCODER_HRESULT=0x%08X\n",unsigned(hr));
+    if(SUCCEEDED(hr)&&vendorEncoder){
+        CComPtr<IWICMetadataQueryWriter> writer;
+        hr=vendorEncoder->GetMetadataQueryWriter(&writer);
+        printf("WIC_PHOTOS_EDITOR_VENDOR_ENCODER_METADATA_WRITER_HRESULT=0x%08X\n",unsigned(hr));
+        CComPtr<IWICBitmapFrameEncode> newFrame;
+        hr=vendorEncoder->CreateNewFrame(&newFrame,nullptr);
+        printf("WIC_PHOTOS_EDITOR_CREATE_FRAME_HRESULT=0x%08X\n",unsigned(hr));
+        if(SUCCEEDED(hr)&&newFrame){
+            CComPtr<IWICMetadataQueryWriter> frameWriter;
+            hr=newFrame->GetMetadataQueryWriter(&frameWriter);
+            printf("WIC_PHOTOS_EDITOR_FRAME_METADATA_WRITER_HRESULT=0x%08X\n",unsigned(hr));
+        }
+    }
+    puts("WIC_PHOTOS_EDITOR_COM_API_SURVEY_COMPLETE_PASS");
     printf("WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS\n");
 }
 inline void Run() {
