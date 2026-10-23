@@ -8,8 +8,9 @@
 #include "HeicBitmapEncoder.h"
 
 
-CComFactory::CComFactory()
+CComFactory::CComFactory(bool isDecoder)
 	: m_Count(1)
+	, m_IsDecoder(isDecoder)
 {
 	CComCounter::GetInstance().m_ObjLock++;
 }
@@ -61,43 +62,24 @@ HRESULT STDMETHODCALLTYPE CComFactory::QueryInterface(REFIID riid, void **ppvObj
 
 HRESULT STDMETHODCALLTYPE CComFactory::CreateInstance(_In_opt_ IUnknown *pUnkOuter, _In_ REFIID riid, _COM_Outptr_ void **ppvObject)
 {
-	HRESULT hr = S_OK;
-
-	if (!ppvObject) {
-		return E_POINTER;
-	}
-
+	if (!ppvObject) return E_POINTER;
 	*ppvObject = nullptr;
-	if (IsEqualGUID(riid, IID_IWICBitmapDecoder)) {
+	// The codec does not implement COM aggregation.
+	if (pUnkOuter) return CLASS_E_NOAGGREGATION;
+	// COM factories must honor CLSID (decoder vs encoder) independently
+	// of the requested IID. A Photos caller may ask for IID_IUnknown
+	// first and QueryInterface for its WIC interface later.
+	if (m_IsDecoder) {
 		CHeicBitmapDecoder* decoder = new(std::nothrow) CHeicBitmapDecoder();
-		if (!decoder) {
-			return E_OUTOFMEMORY;
-		}
-
-		hr = decoder->QueryInterface(riid, ppvObject);
+		if (!decoder) return E_OUTOFMEMORY;
+		const HRESULT hr = decoder->QueryInterface(riid, ppvObject);
 		decoder->Release();
-
-		if (FAILED(hr)) {
-			*ppvObject = nullptr;
-			return hr;
-		}
-	} else if (IsEqualGUID(riid, IID_IWICBitmapEncoder)) {
-		CHeicBitmapEncoder* encoder = new(std::nothrow) CHeicBitmapEncoder();
-		if (!encoder) {
-			return E_OUTOFMEMORY;
-		}
-
-		hr = encoder->QueryInterface(riid, ppvObject);
-		encoder->Release();
-
-		if (FAILED(hr)) {
-			*ppvObject = nullptr;
-			return hr;
-		}
-	} else {
-		hr = E_NOINTERFACE;
+		return hr;
 	}
-
+	CHeicBitmapEncoder* encoder = new(std::nothrow) CHeicBitmapEncoder();
+	if (!encoder) return E_OUTOFMEMORY;
+	const HRESULT hr = encoder->QueryInterface(riid, ppvObject);
+	encoder->Release();
 	return hr;
 }
 
