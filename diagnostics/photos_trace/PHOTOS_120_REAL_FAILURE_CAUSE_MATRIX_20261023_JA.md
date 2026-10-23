@@ -224,3 +224,12 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 - EXIF/ICCを含む人工HEICのコンテナー全バイト保持、ICC不一致の拒否、4回90°回転とRGB全6,220,800バイト一致、旧v1.1.18とのA/B比較：再合格。
 
 **注意**：これらは人工HEICの自作WICエンコーダー試験であり、Photos 2026の編集UI・HEVC警告・保存の実機障害が完全解決したことを意味しない。v1.1.18を正常完成版と扱わない。標準フォトの実機ゲートに未到達のため、MSI発行を保留する。
+
+## 追加実証：WICのラッパーに隠れたHEIC回転画素の誤受理（2026-10-23、今回の引継ぎ後）
+
+- **再現（赤）**：コミット `f7e5003ea3b0112ff0efe4fc5f44149d0e986add`、[Actions #39959369514](https://github.com/taku077/wic_heic/actions/runs/39959369514) は意図どおり FAIL。人工HEICのフレームを90° WIC FlipRotatorで回転し、その出力を `IWICFormatConverter` に包んで `WriteSource` に渡すと、メタデータの出所が見えなくなったにもかかわらず **`S_OK (0x00000000)`** で受理した。旧実装が認識できた直接FlipRotatorだけのガードでは不十分だったことを具体的に再現した。
+- **修正（緑）**：コミット `4a349127b3e4b1db6182764b6562bb92c7d2fca8`、[Actions #39959780026](https://github.com/taku077/wic_heic/actions/runs/39959780026) **全工程成功**。`HeicBitmapFrameEncode.cpp` の安全拒否対象へ `IWICFormatConverter`、`IWICBitmapScaler`、`IWICBitmapClipper` を追加。`IWICBitmapFlipRotator` ガードも保持し、既定(DontCare)と明示HEVCの双方で拒否する。元の `IHeicRawSource` の検証済み無再圧縮経路は変更しない。
+- `wictest/WICDirectLosslessProbe.h` の人工HEICで 3 ラッパー×2圧縮条件=**6/6 件**、`WriteSource=0x88982F81`、出力メモリストリームは0バイト、入力人工ファイルのバイト列不変。`WIC_WRAPPED_RASTER_ROTATION_METADATA_LOSS_GUARD_PASS` を確認。
+- 同じ緑CIで `WIC_FOUR_TURNS_EXACT_RGB_PIXEL_IDENTITY_PASS` (6,220,800バイト)、`WIC_CANONICAL_IMPLICIT_EXIF_ICC_AUXILIARY_BYTE_PRESERVATION_PASS`、`WIC_LOSSLESS_EXPLICIT_ICC_REMOVAL_AND_REPLACEMENT_GUARD_PASS`、`WIC_LOSSLESS_EXPLICIT_PIXEL_FORMAT_CHANGE_GUARD_PASS` を再確認。
+- **限界**：これは既知の3種類のラッパー越しの画素誤受理を塞いだものであり、`IWICBitmap` へ実体化された後の出自まで識別できるわけではない。Windows10 Photosがこの保存経路を実際に使うことも確認できていない。PhotosのHEVC警告・ボタン無効は **未解決**。保存成功や画像保護の全面的な証明でもない。回転編集可能な完成MSIは **配布禁止を維持**。
+- **優先する次の検証**：ユーザーPCの現状（v1.1.18復元済み）に手を触れず、v1.1.18と研究版の `QueryCapability` マスクと空ICC `GetColorContexts` の挙動がPhotos GUIへ影響するかを切り分ける。公式WIC規約に反する `SameEncoder` 申告は戻さない。Windows Server CIのWIC呼び出し成功をPhotos GUI合格と誤認しない。
