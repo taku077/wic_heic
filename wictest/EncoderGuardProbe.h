@@ -47,6 +47,13 @@ inline void Run() {
     if(doubleInit!=WINCODEC_ERR_WRONGSTATE)
         throw std::runtime_error("guard: repeated encoder init accepted");
     Check(enc->CreateNewFrame(&frame,nullptr),"Create frame");
+    // A WIC encoder must finish an active frame before creating another.
+    // Its cache option is NoCache, and HEIC re-encoders need stable order.
+    CComPtr<IWICBitmapFrameEncode> tooEarlyNextFrame;
+    HRESULT nextFrameHr=enc->CreateNewFrame(&tooEarlyNextFrame,nullptr);
+    printf("WIC_ENCODER_OVERLAPPING_FRAME_HRESULT=0x%08X\\n",unsigned(nextFrameHr));
+    if(nextFrameHr!=WINCODEC_ERR_WRONGSTATE || tooEarlyNextFrame)
+        throw std::runtime_error("Encoder accepted overlapping active frames");
     Check(frame->Initialize(nullptr),"Init frame");
     HRESULT thumbnailHr=frame->SetThumbnail(source);
     if(thumbnailHr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
