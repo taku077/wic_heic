@@ -112,3 +112,18 @@ Microsoft WIC公式仕様: https://learn.microsoft.com/en-us/windows/win32/wic/-
 `wictest/GeometryProbe.h` と `wictest/wictest.cpp` の人工画像の画素比較用経路だけは、検証目的を明示して一時WICビットマップへ画素を物質化する。**この明示的な損失許容経路を実ユーザーHEICに使わない**。
 
 ただし`WICFormatConverter`等でラッパーがさらに包まれた場合、`IWICBitmapFlipRotator` という識別子を保持する保証はなく、上記ガード単独で全てのメタデータ破壊経路を塞ぐことは**未確認**。MSI配布・実HEIC保存は不可。さらにPhotosがHEICをどのAPIで上書きするかの実機経路を別に確認する必要がある。
+
+## 2026-10-23：旧版v1.1.18の危険な回転保存経路を同じ人工HEICで実測
+
+[CI #39947927210](https://github.com/taku077/wic_heic/actions/runs/39947927210) **成功**。Windows Server 2022隔離環境で、同じ公開人工HEICをWICの`IWICBitmapFlipRotator` で90度回転した画素ソースとして渡し、`CHeicBitmapFrameEncode::WriteSource` の返答を比較した。メモリ上の`IStream`のみ、`Frame.Commit`や`Encoder.Commit`は呼ばず、**ファイルを作成・編集しない**比較。
+
+| WriteSource設定 | 過去実機とハッシュ一致の旧v1.1.18 | 研究版（回転メタデータ喪失ガード追加） |
+|---|---|---|
+| HEVC compression = DontCare（既定） | `S_OK = 0x00000000` **受付** | `WINCODEC_ERR_UNSUPPORTEDOPERATION = 0x88982F81` **拒否** |
+| HEVC compression = HEVC（明示） | `S_OK = 0x00000000` **受付** | `WINCODEC_ERR_UNSUPPORTEDOPERATION = 0x88982F81` **拒否** |
+
+**確定したバグの実装経路**：旧v1.1.18は、元HEICのExif/ICC/HDR/サムネイルなどを取り出せないWIC画素回転ラッパーからの画像書き込みを成功として受理する。このAPIは元HEICの正確な圧縮データ／メタデータを引き継がず、非可逆再エンコードや付帯情報消失につながり得る。**実フォトUIがこの経路を使用したかはまだ観測していない**ので、過去の全保存不具合の唯一の根本原因であるとは断定しない。
+
+**研究版の進歩と制約**：当該経路の`WriteSource`を明示拒否し、事前の実HEICコンテンツを自動的に画素再圧縮して壊さない。人工HEICの原本ハッシュ維持・出力0バイト・WIC試験・幾何学比較はCI合格。ただし、追加の`WICFormatConverter`やApp側の早期ファイル切詰めはこのガードだけでは防げない。**編集が成功する修正ではなく、失敗時の破損軽減**に留まる。新しいMSIの実機導入は不可。
+
+古いv1.1.18を「正常動作版」等と誤認してはならない。**GUIの編集/回転操作の有効化のみの比較基準**で、回転結果の寸法、方向、保存成否、EXIF/ICCその他の維持は依然不合格。
