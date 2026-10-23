@@ -411,3 +411,24 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - [**緑CI #39990292766**](https://github.com/taku077/wic_heic/actions/runs/39990292766)：`WIC_FRAME_PREINIT_SETTERS_HRESULT size=0x88982F04 format=0x88982F04 icc=0x88982F04`。旧・新WIC比較、EXIF/ICC、HEIC主画像、失敗時出力不変、4回90度の6,220,800バイトRGB一致、公開人工HEIC生成・読戻し試験全てPASS。ユーザーPCへMSI導入・レジストリ変更なし。
 - Windows10 PhotosのHEVC警告と編集ボタンは未解決。WIC内部契約に合致したことをGUI動作の証明とは扱わない。
 
+## HEICルートメタデータ形式のJPEG誤申告：EXIF読取256回を保持して修正（2026-10-24）
+
+**発見した実不整合**：研究版および旧版由来の`CHeicMetadataBlockReader::GetContainerFormat`は、`GUID_ContainerFormatHEIC`ではなく`GUID_ContainerFormatJpeg`を返していた。EXIFアイテムのWIC読取りに`GUID_MetadataFormatApp1`を指定してJPEG APP1のブロック構造を用いること自体は意図的な互換実装だが、**外側の画像コンテナーまでJPEGと偽るのは別問題**。Microsoft WICの`IWICMetadataBlockReader::GetContainerFormat`仕様はデコーダーの画像コンテナーを返すもの：https://learn.microsoft.com/en-us/windows/win32/api/wincodecsdk/nf-wincodecsdk-iwicmetadatablockreader-getcontainerformat 。
+
+- 再現テスト`a81b8ef3de9417b2eb5b87bd013cfc351669461d`に、人工HEICをWICで開き、`IWICMetadataQueryReader::GetContainerFormat`がHEICに一致することを追加。既存の`/app1/ifd/{ushort=274}`のEXIF Orientation 1読戻しおよび256回連続のreader生成・参照解放試験は削除しない。[**赤CI #39991082574**](https://github.com/taku077/wic_heic/actions/runs/39991082574) ：`WIC_HEIC_METADATA_ROOT_CONTAINER_HEIC=0`、JPEGコンテナーを返していた。
+- 製品修正`745b2c9e020119465831198dcaed71ff99c93d78`：`CHeicMetadataBlockReader::GetContainerFormat`は`GUID_ContainerFormatHEIC`を返す。内部のEXIF `GUID_MetadataFormatApp1`読取りやEXIF Orientation正規化、XMPなどメタデータブロックの解析手順は変更しない。
+- [**緑CI #39991396516**](https://github.com/taku077/wic_heic/actions/runs/39991396516)：`WIC_HEIC_METADATA_ROOT_CONTAINER_HEIC=1`、`WIC_HEIC_METADATA_ROOT_CONTAINER_HEIC_PASS`、`EXIF Orientation returned by WIC = 1 (type 18)`、`WIC_METADATA_READER_256_CREATE_QUERY_RELEASE_PASS`、`ROTATED_HEIC_METADATA_AND_PIXELS_PASSED`がすべて成功。加えて旧v1.1.18とのA/B、主画像、ICC、4回転全6,220,800バイトRGB一致、既存WICエンコーダー／デコーダー状態保護、別MSI隔離共存ゲートも全SUCCESS。**旧版との内部メタデータ・コンテナーGUID差は意図的な仕様修正であり、13 APIの全てが文字列一致するという意味ではない**。
+- **明確な未達条件**：Windows 10 Photos 2026.11090.22001.0 の実UIに研究版を導入した結果ではないため、HEVC拡張警告、編集／回転ボタンの有効化、安全な保存についての合格証拠はない。Windows Server 2022 CIにはWindows10フォトUIがない。旧1.1.18の「ボタンがある」状態も回転表示破綻／保存失敗を伴う未完成状態。HEVC拡張を購入せずWIC以外のMedia Foundation経路が使用できるかは引き続き未確認。新MSIの配布ゲートは閉じたまま。
+ 
+## 2026-10-24 一括開発の総括・未達ゲート
+
+この応答内で**赤→緑**を確認した5つの不具合：
+1. フレーム未コミットでも親エンコーダーが`S_OK`でHEICを発行する → 修正・早期Commit出力0バイト。
+2. エンコーダーのInitialize前フレーム作成、前フレーム未確定での重複作成、保存後の追加作成／ICC変更が受理される → 状態ガード。
+3. HEIF未初期化／解析失敗のままフレーム数`S_OK=0`および誤ったFrameMissing → 解析成功フラグとWRONGSTATE。
+4. フレームInitialize前のSetSize/SetPixelFormat/SetColorContexts成功 → 初期化時点の契約を保持。
+5. EXIF APP1とHEIC本体を混同してメタデータルートをJPEGと申告 → HEIC形式で返し、EXIF Orientation読取と256回連続生成を維持。
+
+これらはWIC実装の規約／データ保護を改善するが、**Windows10標準フォトの警告・編集可能・ロスレス回転保存というP0機能の解決に直結したと断言できない**。ユーザーPCのv1.1.18はそのまま、HEIC Manager/サムネイル専用MSIも変更なし、原本の写真を試験に使わない。正しい研究版MSI完成率は保守的な暫定見積りで**39％→42％（+3ポイント）**、ただし実GUIで警告が消えない場合は機能合格率には反映されない。リリースは引き続きブロック。
+
+次の技術上の重要ゲート：同じ人工HEICでWindows10標準フォトが**可視プロセスのWICデコーダーのどのAPI能力／Media Foundation HEVC MFT／Store拡張権限を用いて編集可能判定を行うのか**の証拠を確保すること。既存実機の可視Photosで登録済み旧1.1.18のWIC DLLロードとディスクハッシュ一致は確認済みであり、同一モジュール照合は繰り返さない。無根拠に`SameEncoder`や`CanDecodeThumbnail`を旧版の誤申告値へ戻さない。Win10 GUIに代わるWindows Server CI成功を完成保証しない。
