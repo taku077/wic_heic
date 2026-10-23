@@ -226,6 +226,39 @@ inline void Survey() {
             q,(unsigned long long)quadrantTotals[q][0],
             (unsigned long long)quadrantTotals[q][1],
             (unsigned long long)quadrantTotals[q][2]);
+    // Both versions returned DIFFERENT RGB fingerprints for WIC frame 0.
+    // This synthetic HEIC contains TWO image frames. Old WIC picked the
+    // first item ID, whereas research WIC intentionally maps pitm primary
+    // to index 0. Compare *both* frames, so differing source frames are not
+    // misdiagnosed as differing HEVC decoders or RGB color conversion.
+    if(frameCount==2) {
+        CComPtr<IWICBitmapFrameDecode> secondary;
+        const HRESULT get=automatic->GetFrame(1,&secondary);
+        if(FAILED(get)||!secondary)
+            throw std::runtime_error("HEIC second frame unavailable for source comparison");
+        UINT sw=0,sh=0;
+        if(FAILED(secondary->GetSize(&sw,&sh)) || !sw || !sh)
+            throw std::runtime_error("HEIC second frame size unavailable");
+        const uint64_t secondBytes=uint64_t(sw)*sh*3ull;
+        if(secondBytes>64ull*1024*1024 || !secondBytes)
+            throw std::runtime_error("HEIC second frame out of bounded observation");
+        CComPtr<IWICBitmapSource> convertedSecond;
+        if(FAILED(WICConvertBitmapSource(
+            GUID_WICPixelFormat24bppRGB,secondary,&convertedSecond)))
+            throw std::runtime_error("HEIC second frame RGB conversion failed");
+        std::vector<BYTE> other(static_cast<size_t>(secondBytes));
+        if(FAILED(convertedSecond->CopyPixels(nullptr,sw*3,
+            UINT(secondBytes),other.data())))
+            throw std::runtime_error("HEIC second frame full RGB read failed");
+        uint64_t secondHash=14695981039346656037ull;
+        for(BYTE value:other) {
+            secondHash^=value;
+            secondHash*=1099511628211ull;
+        }
+        printf("WIC_PHOTOS_PIXEL_FRAME1_SIZE=%ux%u\\n",sw,sh);
+        printf("WIC_PHOTOS_PIXEL_FRAME1_FNV64=%016llX\\n",
+            static_cast<unsigned long long>(secondHash));
+    }
     puts("WIC_PHOTOS_SYNTHETIC_FULLRES_RGB_READBACK_PASS");
     // Observation-only editor preflight matrix. These probes use only an
     // already-present synthetic HEIC and transient COM objects; no WriteSource,
