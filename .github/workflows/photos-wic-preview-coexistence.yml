@@ -100,6 +100,19 @@ jobs:
             if($LASTEXITCODE -ne 0){throw 'Private 2/4 worker build failed'}
           } finally {Remove-Item Env:\CL -ErrorAction SilentlyContinue}
           Copy-Item 'wic_heic/(Build)/x64/Release/wic_heic.dll' 'Installer/WicHeicPrivateCodec.dll'
+          # The standalone read-only diagnosis tool is NEVER packaged in
+          # either codec MSI. File/registry tracing also stays compiled out of
+          # both release DLLs; an opt-in diagnostic DLL requires an explicit
+          # separate compiler definition and distribution.
+          foreach($dll in @((Join-Path $env:RUNNER_TEMP 'wic_coexist/global.dll'),
+                             'Installer/WicHeicPrivateCodec.dll')){
+            $raw=[IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $dll).Path)
+            $ascii=[Text.Encoding]::ASCII.GetString($raw)
+            if($ascii.Contains('WIC_HEIC_TRACE v1')){
+              throw ('Production codec unexpectedly contains diagnostic trace: '+$dll)
+            }
+          }
+          Write-Host 'WIC_GLOBAL_AND_PRIVATE_MSI_DIAGNOSTIC_TRACE_ABSENT_PASS'
           msbuild wictest/isolated_shell/HeicShellFastPreview.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
           if($LASTEXITCODE -ne 0){throw 'Preview Shell handler build failed'}
           msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64 /nologo
