@@ -168,3 +168,17 @@ Microsoft公式 `IWICBitmapFlipRotator` は `IWICBitmapSource` を継承し、�
 **修正後**：[CI #39951609128](https://github.com/taku077/wic_heic/actions/runs/39951609128) **全工程成功**。一時的なメモリ`IStream`のみ使用した公式形式の`WriteSource`で、`SetSize`/`SetPixelFormat`なしの無回転コピーと90°ロスレス回転双方が成功し、出力コンテナー全バイトが期待値に一致（10,597バイト）。4回連続回転のRGB全画素一致、危険なラスター回転の拒否、旧版とのA/B API試験も維持。
 
 **次の検証**：EXIF/ICC/サムネイル等を含む異なる人工HEICでも、省略形の`WriteSource`が全バイト保持するか確認。標準フォト実UIの編集・回転・保存とHEVC警告は引き続き **未合格**。安全な復元キットとGUI実機検証が完了するまで、新版MSIを配布しない。v1.1.18も画像変形・保存不具合がある未完成版のまま。
+
+## 省略形WriteSourceでEXIF/ICC/関連画像の全バイト保持を確認（2026-10-23）
+
+[GitHub Actions #39952256445](https://github.com/taku077/wic_heic/actions/runs/39952256445) **PASS**。Windows Server 2022の隔離WICを利用し、Microsoft WICの公式と同様に `SetSize`、`SetPixelFormat`、`SetResolution` を**省略**した `WriteSource`→`Frame.Commit`→`Encoder.Commit` を、メモリ`IStream`上で実行。
+
+- 人工HEIC（EXIF/irot, no auxiliary）無回転コピー：**10,597バイト完全一致**。
+- 同人工HEIC 90°ロスレス回転：**10,597バイト、ネイティブ回転の期待値と完全一致**。
+- 人工HEIC（EXIFと関連データあり）無回転コピー：**10,597バイト完全一致**。
+- 人工HEIC（ICCプロファイルあり）無回転コピー：**3,740バイト完全一致**。
+- 4回90°回転後RGB全画素 `6,220,800` バイト完全一致と危険な画像ラスター回転の拒否も、同じワークフローで再合格。
+
+この結果は **WICの正規的な保存方法との適合性、および対応する合成HEICの完全コンテナーコピー** を裏付ける。あくまで **Windows ServerのWIC単体試験**であり、ユーザーのWindows 10 Photos 2026 UI、HEVC未購入環境の編集ボタン、Photos独自の保存経路は未検証。旧v1.1.18のUIのみの合格と回転保存不具合を混同しない。
+
+リリース条件：Photos GUI警告解除・編集ボタン・人工HEICコピーの回転・安全な保存と再読込・Exif/ICC/サムネイル整合をWindows 10実機で証明し、旧MSI復元条件を再度確定。**未達のためMSI配布は保留する。**
