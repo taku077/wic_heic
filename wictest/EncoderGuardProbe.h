@@ -5,6 +5,63 @@ namespace EncoderGuardProbe {
 inline void Check(HRESULT hr,const char* step) {
     if (FAILED(hr)) { printf("GUARD ERROR %s: 0x%08X\n",step,(unsigned)hr); throw std::runtime_error(step); }
 }
+// Synthetic-only proof of whether 32bppRGBA is *actually encodable*.
+// The decoder supports RGBA, but the encoder registry must not advertise
+// a format until a real encode + WIC readback retains its alpha channel.
+inline void VerifyRgbaEncoderCapability(IWICImagingFactory* fac) {
+    const UINT w=64,h=64;
+    std::vector<BYTE> rgba(size_t(w)*h*4u);
+    for(UINT y=0;y<h;y++)for(UINT x=0;x<w;x++){
+        const size_t i=(size_t(y)*w+x)*4u;
+        rgba[i+0]=BYTE(x*4);rgba[i+1]=BYTE(y*4);
+        rgba[i+2]=BYTE((x+y)*2);
+        rgba[i+3]=(x<w/2)?0u:255u;
+    }
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"RGBA8 synthetic HEIC encoder");
+    CComPtr<IStream> stream;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&stream),"RGBA8 synthetic memory stream");
+    Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),"RGBA8 encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"RGBA8 frame create");
+    Check(frame->Initialize(nullptr),"RGBA8 frame init");
+    Check(frame->SetSize(w,h),"RGBA8 frame size");
+    GUID pf=GUID_WICPixelFormat32bppRGBA;
+    Check(frame->SetPixelFormat(&pf),"RGBA8 frame pixel negotiation");
+    if(!IsEqualGUID(pf,GUID_WICPixelFormat32bppRGBA))
+        throw std::runtime_error("RGBA8 pixel format incorrectly accepted then changed");
+    Check(frame->WritePixels(h,w*4,UINT(rgba.size()),rgba.data()),"RGBA8 frame pixels");
+    Check(frame->Commit(),"RGBA8 frame commit");
+    const HRESULT encoded=encoder->Commit();
+    printf("WIC_HEIC_RGBA8_ENCODER_COMMIT_HRESULT=0x%08X\\n",unsigned(encoded));
+    if(FAILED(encoded)) {
+        puts("WIC_HEIC_RGBA8_ENCODER_BACKEND_UNAVAILABLE_NO_REGISTRY_ADVERTISEMENT_PASS");
+        return; // No claim of completed RGBA encode capability.
+    }
+    LARGE_INTEGER zero{};
+    Check(stream->Seek(zero,STREAM_SEEK_SET,nullptr),"RGBA8 encoded stream rewind");
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(fac->CreateDecoderFromStream(stream,&GUID_VendorPrsyahmi,
+        WICDecodeMetadataCacheOnDemand,&decoder),"RGBA8 decode memory stream");
+    CComPtr<IWICBitmapFrameDecode> decoded;
+    Check(decoder->GetFrame(0,&decoded),"RGBA8 decoded frame");
+    GUID output{};
+    Check(decoded->GetPixelFormat(&output),"RGBA8 decoded pixel format");
+    if(!IsEqualGUID(output,GUID_WICPixelFormat32bppRGBA))
+        throw std::runtime_error("HEIC encoded alpha was silently stripped");
+    std::vector<BYTE> pixels(rgba.size());
+    Check(decoded->CopyPixels(nullptr,w*4,UINT(pixels.size()),pixels.data()),
+        "RGBA8 decoded pixels");
+    BYTE minAlpha=255,maxAlpha=0;
+    for(size_t i=3;i<pixels.size();i+=4) {
+        if(pixels[i]<minAlpha)minAlpha=pixels[i];
+        if(pixels[i]>maxAlpha)maxAlpha=pixels[i];
+    }
+    if(minAlpha>=maxAlpha)
+        throw std::runtime_error("HEIC decoded alpha channel lost variation");
+    puts("WIC_HEIC_RGBA8_ENCODER_AND_ALPHA_READBACK_PASS");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> fac;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
@@ -180,5 +237,6 @@ inline void Run() {
         throw std::runtime_error("guard: existing output bytes changed");
     printf("ENCODER_GEOMETRY_FAILSAFE_TEST_PASSED\n");
     printf("ENCODER_NONEMPTY_STREAM_AND_THUMBNAIL_FAIL_CLOSED_PASSED\n");
+    VerifyRgbaEncoderCapability(fac);
 }
 } // namespace EncoderGuardProbe
