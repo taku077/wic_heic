@@ -88,6 +88,92 @@ inline void VerifyRgbaEncoderCapability(IWICImagingFactory* fac) {
     puts("WIC_HEIC_ENCODER_REGISTERED_RGBA8_AND_REJECTS_UNPROVEN_HIGHBIT_PASS");
     puts("WIC_HEIC_RGBA8_ENCODER_AND_ALPHA_READBACK_PASS");
 }
+// Artificial IStream: writes a nonzero prefix and reports a successful short
+// write. Real disks, photos, registry entries and input HEICs are untouched.
+class ShortWriteStream final : public IStream {
+    std::atomic<ULONG> refs{1};
+    CComPtr<IStream> target;
+    bool injected=false;
+public:
+    explicit ShortWriteStream(IStream* inner):target(inner){}
+    STDMETHODIMP QueryInterface(REFIID id,void** out) override {
+        if(!out)return E_POINTER;
+        *out=nullptr;
+        if(IsEqualIID(id,IID_IUnknown)||IsEqualIID(id,IID_ISequentialStream)||IsEqualIID(id,IID_IStream)){
+            *out=static_cast<IStream*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override {return ++refs;}
+    STDMETHODIMP_(ULONG) Release() override {
+        ULONG n=--refs;
+        if(!n)delete this;
+        return n;
+    }
+    STDMETHODIMP Read(void* p,ULONG n,ULONG* got) override {return target->Read(p,n,got);}
+    STDMETHODIMP Write(const void* p,ULONG n,ULONG* done) override {
+        if(!injected&&n>=2){
+            injected=true;
+            return target->Write(p,n/2,done);
+        }
+        return target->Write(p,n,done);
+    }
+    STDMETHODIMP Seek(LARGE_INTEGER n,DWORD mode,ULARGE_INTEGER* to) override {
+        return target->Seek(n,mode,to);
+    }
+    STDMETHODIMP SetSize(ULARGE_INTEGER n) override {return target->SetSize(n);}
+    STDMETHODIMP CopyTo(IStream* dst,ULARGE_INTEGER n,ULARGE_INTEGER* r,ULARGE_INTEGER* w) override {
+        return target->CopyTo(dst,n,r,w);
+    }
+    STDMETHODIMP Commit(DWORD flags) override {return target->Commit(flags);}
+    STDMETHODIMP Revert() override {return target->Revert();}
+    STDMETHODIMP LockRegion(ULARGE_INTEGER at,ULARGE_INTEGER n,DWORD t) override {
+        return target->LockRegion(at,n,t);
+    }
+    STDMETHODIMP UnlockRegion(ULARGE_INTEGER at,ULARGE_INTEGER n,DWORD t) override {
+        return target->UnlockRegion(at,n,t);
+    }
+    STDMETHODIMP Stat(STATSTG* s,DWORD flags) override {return target->Stat(s,flags);}
+    STDMETHODIMP Clone(IStream** out) override {return target->Clone(out);}
+};
+inline void VerifyPartialLosslessStreamWriteRollback(IWICImagingFactory* fac) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(fac->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"partial stream synthetic HEIC");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"partial stream source frame");
+    UINT w=0,h=0;
+    Check(source->GetSize(&w,&h),"partial stream source dimensions");
+    CComPtr<IStream> buffer;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&buffer),"partial stream backing");
+    CComPtr<IStream> partial;
+    partial.Attach(new(std::nothrow) ShortWriteStream(buffer));
+    if(!partial)throw std::bad_alloc();
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"partial stream output encoder");
+    Check(encoder->Initialize(partial,WICBitmapEncoderNoCache),"partial stream encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"partial stream output frame");
+    Check(frame->Initialize(nullptr),"partial stream frame init");
+    Check(frame->SetSize(w,h),"partial stream dimensions");
+    Check(frame->WriteSource(source,nullptr),"partial stream capture original HEIC");
+    Check(frame->Commit(),"partial stream frame commit");
+    HRESULT hr=encoder->Commit();
+    printf("WIC_LOSSLESS_PARTIAL_WRITE_REJECT_HRESULT=0x%08X\n",unsigned(hr));
+    if(hr!=STG_E_WRITEFAULT)throw std::runtime_error(
+        "Short output write was falsely reported successful");
+    STATSTG st{};
+    Check(buffer->Stat(&st,STATFLAG_NONAME),"partial stream backing length");
+    printf("WIC_LOSSLESS_PARTIAL_WRITE_RESIDUAL_BYTES=%llu\n",
+        static_cast<unsigned long long>(st.cbSize.QuadPart));
+    if(st.cbSize.QuadPart!=0)throw std::runtime_error(
+        "Failed HEIC output left a partial file instead of empty stream");
+    puts("WIC_LOSSLESS_PARTIAL_WRITE_ROLLBACK_PASS");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> fac;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
@@ -264,5 +350,6 @@ inline void Run() {
     printf("ENCODER_GEOMETRY_FAILSAFE_TEST_PASSED\n");
     printf("ENCODER_NONEMPTY_STREAM_AND_THUMBNAIL_FAIL_CLOSED_PASSED\n");
     VerifyRgbaEncoderCapability(fac);
+    VerifyPartialLosslessStreamWriteRollback(fac);
 }
 } // namespace EncoderGuardProbe
