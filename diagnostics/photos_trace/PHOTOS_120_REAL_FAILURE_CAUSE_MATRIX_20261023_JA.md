@@ -565,3 +565,27 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - 実行結果の限界：CIはWindows Server 2022でWIC APIを検証したものであり、Windows10標準Photosの「HEVC拡張警告」消失、編集ボタン有効化、回転保存の成功や劣化無しを証明しない。ユーザーPCのv1.1.18・写真・HEIC Managerへ変更なし、新MSI配布禁止を継続。
 
 **開発判断**：旧GUIでボタンが有効だったという理由で旧RGB24強制処理を研究版へ無条件で戻すと、10bit画像の精度低下となる。研究版の48bpp保持を守りつつ、**8bitソースを使った旧MSI／研究版のPhotos編集可否比較**と、Photos GUIのWIC/MF経路を別途切り分ける。GUIで警告が復活する原因が10bit処理だと決めつけない。
+
+## 2026-10-24：8bit HEICで旧1.1.18と研究版の全RGB画素が一致（10bit差を除外したA/B）
+
+**目的**：これまでに旧1.1.18（正しいMSIビルド源 `a18b9ab146ca4d6f7b46a86507d7f0d0d882dc87`）と研究版で10bit HEICのフルRGBハッシュが不一致だった。しかし旧版は10bit入力でも強制RGB24に降格し、研究版はRGB48を保持するため、bit depth以外の「通常の8bit HEICに共通する編集不能の原因」と同一視できなかった。8bit HEICの旧新版を同一ファイル・同一CIで直接比較する。
+
+**実施（GitHubのみ、旧コードに巻き戻さない）**：
+- テスト `wictest/WICDecoderCapabilityProbe.h::SurveyExistingEightBitGeneratedFixture` 追加（コミット `5440ee2642af9b598f3000d3d7fc3a39e5c70320`）。先行する既存CIのWIC実体試験で新規生成した2ファイル `samples/out-01.heic`（PNGからの人工8bit新規エンコード・512×512）および `samples/icc-roundtrip.heic`（合成8bit RGB・64×64、Windows標準sRGB ICC含む）を、歴史的MSIと研究MSIのそれぞれに読み取り専用で渡す。
+- それぞれ `GetFrame(0)`、`GetPixelFormat`、`CopyPixels`、バイト数、FNV64、各チャンネルの総和と隣接値変化数を採取。合成入力以外の写真の使用なし。旧版・研究版共に別プロセス2回のRGBハッシュ安定性を確認。
+- 統合ワークフロー比較 `c090d27490860d13de233784c9e270c5cb2056bd`、PowerShell集計変数の初期化構文修正 `921400aef69351ed64ce10e2954792e96d87f099`。[**CI #40013264441 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40013264441)。通常の旧1.1.18 WIC A/B、4回90度無再圧縮回転画素完全一致、ICC/EXIF、シミュレーション部分書込み復旧、v0.4.0との隔離共存も全工程合格。
+
+| 実測 | 旧1.1.18 | 研究版 |
+|---|---|---|
+| 8bit人工HEIC、ICCなし | 512×512・WIC RGB24・CopyPixels成功 | 同一 |
+| ICCなしRGB24バイト数 | 786,432 | 786,432 |
+| ICCなしFNV64 | `D0E71AB91FB01ACA` | `D0E71AB91FB01ACA` |
+| ICCなしRGBチャネル総和 | `23472228,34605484,53461087` | 同一 |
+| ICCあり人工HEIC | 64×64・WIC RGB24・CopyPixels成功 | 同一 |
+| ICCありFNV64 | `2C37F79435939325` | `2C37F79435939325` |
+| 別プロセスでの画素ハッシュ | 2回とも一致 | 2回とも一致 |
+| 元10bit HEICのWICネイティブ形式（従来CI） | RGB24に強制変換 | RGB48で高精度保持 |
+
+**解釈**：テスト対象となった2種の8bit HEICについて、RGBの全バイト一致が成立。10bitのRGB差を、そのまま通常8bitの写真に一般化できない。Photosの編集ボタン無効・HEVC拡張警告が「8bitでのRGB画素の相違」だけに起因するという説は弱まった。ただし、これは *Windows Server 2022 WICによる人工ファイル2件の結果* で、Windows10 PhotosのGUI内経路、8bit HEIC全般の復号精度、特有のICC/EXIFの採用、Media Foundation HEVC判定までは測らない。旧1.1.18がGUIで編集有効でも、回転画像破損・保存不良の不具合版であることを変更しない。
+
+**次の調査対象**：bit-depth非依存のWIC `QueryCapability`／利用できるメタデータ／エンコーダー選択の差、および標準PhotosのWindows10実GUI固有の編集可否判定。既存診断のプロセス・SHA照合と旧v1.1.18の再インストールを反復しない。元画像・HEIC Manager・Windows10環境は無変更。新MSI配布保留。
