@@ -182,3 +182,26 @@ Microsoft公式 `IWICBitmapFlipRotator` は `IWICBitmapSource` を継承し、�
 この結果は **WICの正規的な保存方法との適合性、および対応する合成HEICの完全コンテナーコピー** を裏付ける。あくまで **Windows ServerのWIC単体試験**であり、ユーザーのWindows 10 Photos 2026 UI、HEVC未購入環境の編集ボタン、Photos独自の保存経路は未検証。旧v1.1.18のUIのみの合格と回転保存不具合を混同しない。
 
 リリース条件：Photos GUI警告解除・編集ボタン・人工HEICコピーの回転・安全な保存と再読込・Exif/ICC/サムネイル整合をWindows 10実機で証明し、旧MSI復元条件を再度確定。**未達のためMSI配布は保留する。**
+
+## ICC変更要求が無劣化保存で無視されるバグの再現と修正（2026-10-23）
+
+**実在する不具合を赤→緑で再現・修正した**。以前の`WriteSource`では、以下の要求をエラーにせず`S_OK`で受理した。元HEICの色プロファイルや圧縮データをそのまま返すため、アプリから見ると保存できたように見えて**要求したICC削除・置換だけが反映されない**危険があった。
+
+- 元ICCを含む人工HEICに対し、エンコーダー側で`SetColorContexts(0,nullptr)`を指定し無回転コピー。修正前`S_OK=0x00000000`で無視：[CI #39954064206](https://github.com/taku077/wic_heic/actions/runs/39954064206) **再現成功／テストは意図どおりFAIL**。
+- 元ICCを含む人工HEICに対し、フレーム側で`SetColorContexts(0,nullptr)`を指定し無回転コピー。
+- ICC無し・回転対応の人工HEICに対し、別人工HEICから取得したICCをフレーム側で指定し、90°の`BitmapTransform`を要求。
+
+**修正内容**：`wic_heic/HeicBitmapFrameEncode.h/.cpp`と`HeicBitmapEncoder.h/.cpp`の4ファイルをコミット`53c2d6a7ae42a33b7ad96109c7d9ca34b41a0c8b`で修正。単なる未設定と明示`SetColorContexts(0)`を区別する`m_IccExplicitlySet`フラグを追加。元HEICデコーダーフレームの`GetColorContexts`から取得したICCと、指定ICCを**バイト単位で照合**。確認できない・要求が異なる場合は`WINCODEC_ERR_UNSUPPORTEDOPERATION`を返し、`m_LosslessReady`と出力ストリームを変更しない。これをデフォルトの元HEIC完全コピー経路だけでなく、`BitmapTransform`を使用するロスレス回転経路にも適用した。
+
+**[修正後CI #39954599445](https://github.com/taku077/wic_heic/actions/runs/39954599445) 全工程PASS**。
+
+| 人工HEIC ICC条件 | 旧動作 | 修正後 |
+|---|---|---|
+| Encoder側で明示的ICC削除 | 成功と誤報 | `0x88982F81` 安全拒否 |
+| Frame側で明示的ICC削除 | 成功と誤報するリスク | `0x88982F81` 安全拒否 |
+| ロスレス90°回転中に別ICCを指定 | 指定ICCを無視するリスク | `0x88982F81` 安全拒否 |
+| 元と完全に同じICCを明示指定 | 完全コピー成功 | 完全コピー成功（3,740バイト一致） |
+| ICC変更指定なし | 元HEICを完全に保持 | 全バイト保持を継続 |
+| HEIC 4×90°ロスレス・復号RGB比較 | 合格 | RGB 6,220,800バイト完全一致を継続 |
+
+**留意**：この修正は「ICC編集機能を実装した」わけではない。元HEICのICCを勝手に破棄するのではなく、実装できない変更要求を安全に拒否する。元ソースが別の`IWICBitmapSource`ラッパーを通過して出自が消えた場合の安全性は別途検証が必要。あわせてPhotos GUIのHEVC警告解除／編集・回転ボタン／保存成否は未解決。v1.1.18もこれらの保存要件を満たさない既知不具合版。MSIは配布しない。
