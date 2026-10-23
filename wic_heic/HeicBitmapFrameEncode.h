@@ -19,6 +19,8 @@ private:
 	bool m_LosslessReady;
 	std::vector<uint8_t> m_LosslessBytes;
 	std::vector<uint8_t> m_IccProfile;
+	// An absent ICC request differs from SetColorContexts(0).
+	bool m_IccExplicitlySet;
 	WICPixelFormatGUID m_PixelFormat;
 	int m_BitDepthPerChannel;
 

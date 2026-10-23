@@ -10,6 +10,7 @@
 
 CHeicBitmapEncoder::CHeicBitmapEncoder()
 	: m_Count(1)
+	, m_IccExplicitlySet(false)
 	, m_Stream(nullptr)
 {
 }
@@ -130,7 +131,11 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetColorContexts(UINT cCount, __RP
 			return WINCODEC_ERR_WRONGSTATE;
 	}
 	m_IccProfile = std::move(profile);
-	for (auto* frame : m_Frames) frame->m_IccProfile = m_IccProfile;
+	m_IccExplicitlySet = true;
+	for (auto* frame : m_Frames) {
+		frame->m_IccProfile = m_IccProfile;
+		frame->m_IccExplicitlySet = true;
+	}
 	WicHeicDiagnostic::Emit("EncoderSetColorContexts",cCount,0,0,0,"icc-accepted");
 	return S_OK;
 }
@@ -173,6 +178,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 		}
 		try {
 			pFrame->m_IccProfile = m_IccProfile;
+			pFrame->m_IccExplicitlySet = m_IccExplicitlySet;
 			m_Frames.push_back(pFrame); // encoder keeps initial reference
 		} catch (...) {
 			pFrame->Release();

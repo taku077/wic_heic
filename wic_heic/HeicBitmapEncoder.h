@@ -6,6 +6,7 @@ private:
 	std::atomic<uint32_t> m_Count;
 	heif::Context m_Context;
 	std::vector<CHeicBitmapFrameEncode*> m_Frames;	std::vector<uint8_t> m_IccProfile;
+	bool m_IccExplicitlySet;
 	IStream* m_Stream;
 
 public:

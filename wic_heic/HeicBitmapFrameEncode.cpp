@@ -35,6 +35,7 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	, m_HeifCompressionMethod(0)
 	, m_OptionsInitialized(false)
 	, m_LosslessReady(false)
+	, m_IccExplicitlySet(false)
 	, m_PixelFormat(GUID_WICPixelFormat24bppRGB)
 	, m_BitDepthPerChannel(8)
 {
@@ -201,6 +202,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetColorContexts(UINT cCount, 
 		return hr;
 	}
 	m_IccProfile = std::move(profile);
+	m_IccExplicitlySet = true;
 	WicHeicDiagnostic::Emit("SetColorContexts",cCount,0,m_BitmapTransform,m_HeifCompressionMethod,"icc-accepted");
 	return S_OK;
 }
@@ -266,6 +268,38 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 	catch (...) { return WINCODEC_ERR_BADIMAGE; }
 }
 
+// A lossless HEIC transfer is only valid when it honors an explicit color
+// context request. SetColorContexts(0) is NOT the same as no request.
+// Query only the exact COM source frame passed to WriteSource, never a
+// previously viewed image or process-global state.
+static bool RequestedICCMatchesSource(IWICBitmapSource* bitmap,
+    bool explicitlySet, const std::vector<uint8_t>& requested)
+{
+    if(!explicitlySet) return true;
+    if(!bitmap) return false;
+    IWICBitmapFrameDecode* frame=nullptr;
+    HRESULT hr=bitmap->QueryInterface(IID_IWICBitmapFrameDecode,
+        reinterpret_cast<void**>(&frame));
+    if(FAILED(hr) || !frame) return false;
+    UINT count=0;
+    hr=frame->GetColorContexts(0,nullptr,&count);
+    if(FAILED(hr)) {frame->Release();return false;}
+    if(count==0) {frame->Release();return requested.empty();}
+    if(count!=1 || requested.empty()) {frame->Release();return false;}
+    IWICColorContext* context=nullptr;
+    UINT actual=0;
+    hr=frame->GetColorContexts(1,&context,&actual);
+    frame->Release();
+    if(FAILED(hr) || !context || actual!=1) {
+        if(context) context->Release();
+        return false;
+    }
+    std::vector<uint8_t> raw;
+    hr=HeicColorProfileWic::Read(context,&raw);
+    context->Release();
+    return SUCCEEDED(hr) && raw==requested;
+}
+
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
 	WicHeicDiagnostic::Emit("WriteSourceEnter",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,prc?"cropped":"full");
@@ -321,30 +355,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		if (SUCCEEDED(pIBitmapSource->QueryInterface(
 		        IID_IHeicRawSource, reinterpret_cast<void**>(&originalSource))) &&
 		    originalSource) {
-			// A caller may explicitly supply the same ICC profile as the source.
-			// Verify byte-for-byte equality before preserving source bytes; a
-			// changed ICC profile must not be silently discarded.
-			bool sameIcc = m_IccProfile.empty();
-			if (!sameIcc) {
-				IWICBitmapFrameDecode* sourceFrame = nullptr;
-				if (SUCCEEDED(pIBitmapSource->QueryInterface(
-				        IID_IWICBitmapFrameDecode, reinterpret_cast<void**>(&sourceFrame))) &&
-				    sourceFrame) {
-					UINT count=0, actual=0;
-					if (SUCCEEDED(sourceFrame->GetColorContexts(0,nullptr,&count)) &&
-					    count==1) {
-						IWICColorContext* context=nullptr;
-						if (SUCCEEDED(sourceFrame->GetColorContexts(1,&context,&actual)) &&
-						    context && actual==1) {
-							std::vector<uint8_t> rawIcc;
-							if (SUCCEEDED(HeicColorProfileWic::Read(context,&rawIcc)))
-								sameIcc=(rawIcc==m_IccProfile);
-						}
-						if (context) context->Release();
-					}
-					sourceFrame->Release();
-				}
-			}
+			// Never ignore an explicit ICC removal or replacement.
+			// No explicit color request retains the entire source container.
+			const bool sameIcc=RequestedICCMatchesSource(pIBitmapSource,
+				m_IccExplicitlySet,m_IccProfile);
 			UINT w=0,h=0;
 			HRESULT hr = pIBitmapSource->GetSize(&w,&h);
 			if (SUCCEEDED(hr) && sameIcc && m_Width == w && m_Height == h) {
@@ -380,6 +394,16 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		if(FAILED(hr)||!raw){
 			WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raster-only",WINCODEC_ERR_UNSUPPORTEDOPERATION);
 			DbgLog("HEIC_WIC_LOSSLESS_UNAVAILABLE source is not an original HEIC frame");
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
+		// Replacing ICC while changing irot would silently mislabel color.
+		if(!RequestedICCMatchesSource(pIBitmapSource,
+		       m_IccExplicitlySet,m_IccProfile)) {
+			raw->Release();
+			WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+				m_BitmapTransform,m_HeifCompressionMethod,
+				"lossless-rotation-icc-edit-not-supported",
+				WINCODEC_ERR_UNSUPPORTEDOPERATION);
 			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 		}
 		std::vector<uint8_t> original;
