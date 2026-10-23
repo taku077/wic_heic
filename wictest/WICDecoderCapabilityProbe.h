@@ -465,12 +465,73 @@ inline void VerifyPrimarySelectionWhenPitmChanges(IWICImagingFactory* factory) {
     verifyWrite(second,false);
     puts("WIC_PRIMARY_HEIC_FRAME_ZERO_INVARIANT_PASS");
 }
+// Historical v1.1.18 advertised CanDecodeThumbnail for every HEIC,
+// even if GetThumbnail returned CODECNOTHUMBNAIL. The current codec should
+// instead deliver a real, orientation-correct thumbnail for a synthetic HEIC
+// without an embedded thumbnail. The primary HEIF image, not a secondary
+// item or arbitrary first top-level item, must be the source.
+inline void VerifyGeneratedThumbnailFallback(IWICImagingFactory* factory) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr=factory->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder);
+    if(FAILED(hr)||!decoder)throw std::runtime_error("Thumbnail fallback synthetic decoder missing");
+    CComPtr<IWICBitmapFrameDecode> first;
+    if(FAILED(decoder->GetFrame(0,&first)))
+        throw std::runtime_error("Thumbnail fallback primary missing");
+    UINT fw=0,fh=0;
+    if(FAILED(first->GetSize(&fw,&fh))||fw==0||fh==0)
+        throw std::runtime_error("Thumbnail fallback primary geometry missing");
+    const UINT longSide=(fw>fh?fw:fh);
+    const UINT tw=(fw*256ull+longSide/2)/longSide>0?
+        UINT((uint64_t(fw)*256ull+longSide/2)/longSide):1;
+    const UINT th=(fh*256ull+longSide/2)/longSide>0?
+        UINT((uint64_t(fh)*256ull+longSide/2)/longSide):1;
+    CComPtr<IWICBitmapSource> containerThumb;
+    CComPtr<IWICBitmapSource> frameThumb;
+    const HRESULT contHr=decoder->GetThumbnail(&containerThumb);
+    const HRESULT frameHr=first->GetThumbnail(&frameThumb);
+    printf("WIC_PHOTOS_GENERATED_THUMBNAIL_HRESULTS container=0x%08X frame=0x%08X\\n",
+        unsigned(contHr),unsigned(frameHr));
+    if(FAILED(contHr)||FAILED(frameHr)||!containerThumb||!frameThumb)
+        throw std::runtime_error("Valid HEIC had no usable WIC thumbnail fallback");
+    UINT w=0,h=0,fw2=0,fh2=0;
+    if(FAILED(containerThumb->GetSize(&w,&h))||
+       FAILED(frameThumb->GetSize(&fw2,&fh2))||
+       w!=tw || h!=th || fw2!=w || fh2!=h || w>256 || h>256)
+        throw std::runtime_error("HEIC thumbnail fallback geometry or orientation incorrect");
+    CComPtr<IWICBitmapScaler> refScale;
+    if(FAILED(factory->CreateBitmapScaler(&refScale)) ||
+       FAILED(refScale->Initialize(first,w,h,WICBitmapInterpolationModeFant)))
+        throw std::runtime_error("Thumbnail fallback reference scaler missing");
+    auto rgb=[&](IWICBitmapSource* source) {
+        CComPtr<IWICBitmapSource> converted;
+        if(FAILED(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,source,&converted)))
+            throw std::runtime_error("Thumbnail RGB conversion failed");
+        std::vector<BYTE> bytes(size_t(w)*h*3);
+        if(FAILED(converted->CopyPixels(nullptr,w*3,UINT(bytes.size()),bytes.data())))
+            throw std::runtime_error("Thumbnail full CopyPixels failed");
+        return bytes;
+    };
+    if(rgb(containerThumb)!=rgb(refScale) || rgb(frameThumb)!=rgb(refScale))
+        throw std::runtime_error("Generated HEIC thumbnail differs from primary-image reference");
+    // A generated raster must NOT expose full original HEIF bytes as if it
+    // were a lossless primary source; this would silently mis-save a preview.
+    IHeicRawSource* raw=nullptr;
+    HRESULT rawHr=containerThumb->QueryInterface(
+        IID_IHeicRawSource,reinterpret_cast<void**>(&raw));
+    if(raw)raw->Release();
+    if(SUCCEEDED(rawHr))
+        throw std::runtime_error("Generated thumbnail exposed lossless HEIF source");
+    puts("WIC_PHOTOS_GENERATED_THUMBNAIL_RGB_MATCH_PASS");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,
         (void**)&factory)))throw std::runtime_error("Capability factory unavailable");
     VerifyPrimarySelectionWhenPitmChanges(factory);
+    VerifyGeneratedThumbnailFallback(factory);
     Verify(factory,L"samples\\fixture-irot3-exif6.heic",true,true);
     Verify(factory,L"samples\\fixture-irot3-exif6-noaux.heic",true,true);
     Verify(factory,L"samples\\01.png",false,false);
