@@ -157,6 +157,58 @@ inline void Survey() {
             printf("WIC_PHOTOS_EDITOR_FRAME_METADATA_WRITER_HRESULT=0x%08X\n",unsigned(hr));
         }
     }
+    // Reproduce the dangerous Photos-style WIC raster rotation in MEMORY.
+    // The old 1.1.18 codec enabled rotation UI but could silently re-encode
+    // a rotated HEIC without preserving Exif/ICC/HDR. This A/B observes
+    // WriteSource before Commit. No file or original photo is modified.
+    CComPtr<IWICBitmapFlipRotator> rasterRotation;
+    hr=factory->CreateBitmapFlipRotator(&rasterRotation);
+    if(FAILED(hr))throw std::runtime_error("Survey memory-only rotate unavailable");
+    hr=rasterRotation->Initialize(firstFrame,WICBitmapTransformRotate90);
+    if(FAILED(hr))throw std::runtime_error("Survey memory-only rotate init failed");
+    UINT rotatedWidth=0,rotatedHeight=0;
+    hr=rasterRotation->GetSize(&rotatedWidth,&rotatedHeight);
+    if(FAILED(hr))throw std::runtime_error("Survey rotated dimensions unavailable");
+    for(unsigned method : {0u,2u}) {
+        CComPtr<IWICBitmapEncoder> enc;
+        hr=factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&enc);
+        if(FAILED(hr)||!enc)throw std::runtime_error("Survey raster encoder missing");
+        CComPtr<IStream> memoryOnly;
+        hr=CreateStreamOnHGlobal(nullptr,TRUE,&memoryOnly);
+        if(FAILED(hr)||!memoryOnly)throw std::runtime_error("Survey memory IStream failed");
+        hr=enc->Initialize(memoryOnly,WICBitmapEncoderNoCache);
+        if(FAILED(hr))throw std::runtime_error("Survey raster encoder init failed");
+        CComPtr<IWICBitmapFrameEncode> frameToWrite;
+        CComPtr<IPropertyBag2> bag;
+        hr=enc->CreateNewFrame(&frameToWrite,&bag);
+        if(FAILED(hr)||!frameToWrite)throw std::runtime_error("Survey raster frame failed");
+        if(method==2) {
+            if(!bag)throw std::runtime_error("Survey raster options missing");
+            PROPBAG2 key{};key.pstrName=const_cast<LPOLESTR>(
+                L"HeifCompressionMethod");
+            VARIANT v{};v.vt=VT_UI1;v.bVal=2;
+            hr=bag->Write(1,&key,&v);
+            if(FAILED(hr))throw std::runtime_error("Survey explicit raster option failed");
+        }
+        hr=frameToWrite->Initialize(bag);
+        if(FAILED(hr))throw std::runtime_error("Survey raster frame initialize failed");
+        hr=frameToWrite->SetSize(rotatedWidth,rotatedHeight);
+        if(FAILED(hr))throw std::runtime_error("Survey raster frame size failed");
+        GUID format=GUID_WICPixelFormat24bppRGB;
+        hr=frameToWrite->SetPixelFormat(&format);
+        if(FAILED(hr))throw std::runtime_error("Survey raster pixel format failed");
+        hr=frameToWrite->WriteSource(rasterRotation,nullptr);
+        printf("WIC_PHOTOS_EDITOR_MEMONLY_ROTATOR_WRITESOURCE_METHOD_%u=0x%08X\n",
+            method,unsigned(hr));
+        // No frame.Commit or encoder.Commit. A baseline may have accepted a
+        // lossy raster; neither test writes a HEIC file or user content.
+        STATSTG st{};
+        if(FAILED(memoryOnly->Stat(&st,STATFLAG_NONAME)) ||
+            st.cbSize.QuadPart!=0)
+            throw std::runtime_error("Survey unexpectedly wrote memory stream bytes");
+    }
+    puts("WIC_PHOTOS_EDITOR_MEMONLY_ROTATOR_AB_SURVEY_COMPLETE_PASS");
     puts("WIC_PHOTOS_EDITOR_COM_API_SURVEY_COMPLETE_PASS");
     printf("WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS\n");
 }
