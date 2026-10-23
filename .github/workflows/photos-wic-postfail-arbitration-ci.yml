@@ -410,6 +410,30 @@ jobs:
                 throw ('Previously stable editor API differs unexpectedly: '+$key+' '+($values -join ' vs '))
               }
             }
+            # The SHA-pinned legacy MSI was built at a18b9ab where the
+            # 10-bit non-alpha frame reports WIC 48bpp but m_Bpp=32. Old
+            # CopyPixels writes only 4 of the promised 6 bytes per pixel.
+            # Current codec's WIC48 path must fill the entire 48bpp ROI.
+            foreach($label in @('ORIGINAL118','RESEARCH')) {
+              $source=[string]$script:abSurveys[$label]
+              foreach($key in @('WIC_PHOTOS_10BIT_RAW48_ROI_HRESULT',
+                                 'WIC_PHOTOS_10BIT_RAW48_TAIL_UNTOUCHED_ROWS',
+                                 'WIC_PHOTOS_10BIT_RAW48_HEAD_CHANGED_ROWS')) {
+                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
+                $match=[regex]::Match($source,$pattern)
+                if(-not $match.Success){throw ('Historical 10bit stride evidence missing: '+$label+' '+$key)}
+                $value=$match.Groups[1].Value.Trim()
+                if($key -eq 'WIC_PHOTOS_10BIT_RAW48_ROI_HRESULT'){
+                  if($value -cne '0x00000000'){throw ('WIC48 ROI read failed: '+$label)}
+                } elseif($key -eq 'WIC_PHOTOS_10BIT_RAW48_TAIL_UNTOUCHED_ROWS'){
+                  $expected=if($label -eq 'ORIGINAL118'){'8'}else{'0'}
+                  if($value -cne $expected){throw ('Unexpected historical WIC48 row-tail result: '+$label+' '+$value)}
+                } elseif($value -cne '8') {
+                  throw ('Synthetic WIC48 row-head did not change: '+$label+' '+$value)
+                }
+              }
+            }
+            Write-Host 'WIC_HISTORICAL_118_10BIT_ROW_TRUNCATION_VS_RESEARCH_FULL48_PASS'
             Write-Host 'WIC_PHOTOS_EDITOR_13_API_STABLE_ACROSS_118_AND_RESEARCH_PASS'
             # New A/B: both codecs may win arbitration, but only a real
             # full-resolution CopyPixels proves that the WIC pixel path works.
