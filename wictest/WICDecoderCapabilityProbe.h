@@ -75,10 +75,10 @@ inline void Survey() {
     DWORD mask=0xFFFFFFFFu;
     hr=custom->QueryCapability(source,&mask);
     if(FAILED(hr))throw std::runtime_error("Survey QueryCapability failed");
-    printf("WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x%X\\n",unsigned(mask));
-    printf("WIC_PHOTOS_CAPABILITY_SURVEY_SAME_ENCODER=%u\\n",
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x%X\n",unsigned(mask));
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_SAME_ENCODER=%u\n",
          !!(mask & WICBitmapDecoderCapabilitySameEncoder));
-    printf("WIC_PHOTOS_CAPABILITY_SURVEY_ANY_PRIMARY=%u\\n",
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_ANY_PRIMARY=%u\n",
          !!(mask & (WICBitmapDecoderCapabilityCanDecodeAllImages |
                     WICBitmapDecoderCapabilityCanDecodeSomeImages)));
     CComPtr<IWICBitmapDecoder> automatic;
@@ -93,9 +93,9 @@ inline void Survey() {
     CLSID chosen{};
     if(FAILED(info->GetCLSID(&chosen)))
         throw std::runtime_error("Survey chosen CLSID failed");
-    printf("WIC_PHOTOS_CAPABILITY_SURVEY_DEFAULT_IS_CUSTOM=%u\\n",
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_DEFAULT_IS_CUSTOM=%u\n",
         !!IsEqualGUID(chosen,CLSID_HEICDecoder));
-    printf("WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS\\n");
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS\n");
 }
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
