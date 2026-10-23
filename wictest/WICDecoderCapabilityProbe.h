@@ -596,6 +596,18 @@ inline void Run() {
     if(FAILED(CoCreateInstance(CLSID_HEICDecoder,nullptr,CLSCTX_INPROC_SERVER,
           IID_IWICBitmapDecoder,(void**)&invalid)))
         throw std::runtime_error("Malformed-HEIF decoder activation failed");
+    // Decoder capabilities can be queried before Initialize, but actual
+    // frame access cannot. Return WRONGSTATE rather than false S_OK with
+    // zero frames, or FRAMEMISSING for a stream never opened.
+    UINT unopenedCount=999u;
+    HRESULT unopenedCountHr=invalid->GetFrameCount(&unopenedCount);
+    CComPtr<IWICBitmapFrameDecode> unopenedFrame;
+    HRESULT unopenedFrameHr=invalid->GetFrame(0,&unopenedFrame);
+    printf("WIC_DECODER_UNOPENED_FRAME_QUERIES count_hr=0x%08X count=%u frame_hr=0x%08X\\n",
+        unsigned(unopenedCountHr),unopenedCount,unsigned(unopenedFrameHr));
+    if(unopenedCountHr!=WINCODEC_ERR_WRONGSTATE || unopenedCount!=0 ||
+       unopenedFrameHr!=WINCODEC_ERR_WRONGSTATE || unopenedFrame)
+        throw std::runtime_error("Decoder exposed frames before successful Initialize");
     CComPtr<IWICStream> png;
     if(FAILED(factory->CreateStream(&png)) ||
        FAILED(png->InitializeFromFilename(L"samples\\01.png",GENERIC_READ)))
@@ -603,6 +615,16 @@ inline void Run() {
     HRESULT bad=invalid->Initialize(png,WICDecodeMetadataCacheOnDemand);
     if(bad!=WINCODEC_ERR_BADIMAGE)
         throw std::runtime_error("Malformed HEIF must return WINCODEC_ERR_BADIMAGE");
+    UINT failedCount=999u;
+    HRESULT failedCountHr=invalid->GetFrameCount(&failedCount);
+    CComPtr<IWICBitmapFrameDecode> failedFrame;
+    HRESULT failedFrameHr=invalid->GetFrame(0,&failedFrame);
+    printf("WIC_DECODER_FAILED_INIT_FRAME_QUERIES count_hr=0x%08X count=%u frame_hr=0x%08X\\n",
+        unsigned(failedCountHr),failedCount,unsigned(failedFrameHr));
+    if(failedCountHr!=WINCODEC_ERR_WRONGSTATE || failedCount!=0 ||
+       failedFrameHr!=WINCODEC_ERR_WRONGSTATE || failedFrame)
+        throw std::runtime_error("Failed HEIF parse left accessible fake frames");
+    puts("WIC_DECODER_FRAME_QUERIES_REQUIRE_SUCCESSFUL_INITIALIZATION_PASS");
     puts("WIC_PHOTOS_MALFORMED_HEIF_REPORTS_BADIMAGE_NOT_OOM_PASS");
     printf("WIC_PHOTOS_DECODER_ARBITRATION_CONTRACT_PASS\n");
 }
