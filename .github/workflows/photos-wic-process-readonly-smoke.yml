@@ -2,7 +2,7 @@ name: Photos WIC process module diagnostic - read-only PS5.1 smoke
 on:
   push:
     branches: [investigate/photos-wic-arbitration-after-120-failure]
-    paths: ['.github/workflows/photos-wic-process-readonly-smoke.yml', 'diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1', 'diagnostics/photos_trace/Run_Photos_WIC_Process_ReadOnly.cmd']
+    paths: ['.github/workflows/photos-wic-process-readonly-smoke.yml', 'diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1', 'diagnostics/photos_trace/Run_Photos_WIC_Process_ReadOnly.cmd', 'diagnostics/photos_trace/README_Photos_WIC_ReadOnly_WithSynthetic_JA.txt']
   workflow_dispatch:
 permissions:
   contents: read
@@ -43,12 +43,42 @@ jobs:
           if($reports.Count -ne 2){throw 'Each invocation must write exactly one new report without overwriting existing files'}
           Write-Host 'PHOTOS_WIC_ONECLICK_NO_ADMIN_NO_IMAGE_ACCESS_CI_PASS'
           Write-Host 'Windows Server smoke cannot prove actual Win10 Photos codec routing.'
-      - name: Package two-file read-only Photos WIC process diagnostic
+      - name: Verify and stage complete four-file read-only diagnostic, including synthetic HEIC
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $src=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          $data=[IO.File]::ReadAllBytes($src)
+          if($data.Length -lt 128 -or
+             [Text.Encoding]::ASCII.GetString($data,4,4) -ne 'ftyp'){
+            throw 'Synthetic HEIC missing or not a valid HEIF ftyp file'
+          }
+          $out=Join-Path $env:RUNNER_TEMP 'Photos_WIC_NoAdmin_WithSynthetic'
+          if(Test-Path -LiteralPath $out){throw 'Refuse to overwrite diagnostic staging folder'}
+          New-Item -ItemType Directory -Path $out | Out-Null
+          $items=@(
+            @($src,'Synthetic_Test_Only.heic'),
+            @('diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1','Photos_WIC_Process_ReadOnly.ps1'),
+            @('diagnostics/photos_trace/Run_Photos_WIC_Process_ReadOnly.cmd','Run_Photos_WIC_Process_ReadOnly.cmd'),
+            @('diagnostics/photos_trace/README_Photos_WIC_ReadOnly_WithSynthetic_JA.txt','README_JA.txt')
+          )
+          foreach($entry in $items) {
+            $origin=(Resolve-Path -LiteralPath $entry[0]).Path
+            $dest=Join-Path $out $entry[1]
+            Copy-Item -LiteralPath $origin -Destination $dest -ErrorAction Stop
+            if((Get-FileHash -LiteralPath $origin -Algorithm SHA256).Hash -ne
+               (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash){
+              throw ('Package file checksum mismatch: '+$entry[1])
+            }
+          }
+          $actual=@(Get-ChildItem -LiteralPath $out -File)
+          if($actual.Count -ne 4){throw 'Published kit must contain exactly four files'}
+          Write-Host ('SYNTHETIC_HEIC_INCLUDED_AND_HASH_VERIFIED size='+$data.Length)
+          Write-Host 'PHOTOS_WIC_FOUR_FILE_NOADMIN_READONLY_KIT_PASS'
+      - name: Publish four-file read-only Photos WIC kit with synthetic HEIC
         uses: actions/upload-artifact@v4
         with:
-          name: Photos-WIC-ReadOnly-Win10-NoAdmin-TwoFiles
-          path: |
-            diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1
-            diagnostics/photos_trace/Run_Photos_WIC_Process_ReadOnly.cmd
+          name: Photos-WIC-ReadOnly-NoAdmin-WithSyntheticHEIC-4Files
+          path: ${{ runner.temp }}/Photos_WIC_NoAdmin_WithSynthetic/
           if-no-files-found: error
           retention-days: 30
