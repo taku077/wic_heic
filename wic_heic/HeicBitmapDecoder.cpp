@@ -159,20 +159,26 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
 				UINT((std::min)(elapsedUs,uint64_t(0xFFFFFFFFu))),0,0,0,"microseconds");
 		}
 	}
+	catch (const std::bad_alloc&)
+	{
+		// Only an actual allocation failure should be reported as such.
+		return E_OUTOFMEMORY;
+	}
 	catch (const heif::Error& ex)
 	{
-		DbgLog("%s: heif exception %d, %d, %s", __FUNCTION__, ex.get_code(), ex.get_subcode(), ex.get_message());
-		return E_OUTOFMEMORY;
+		DbgLog("%s: invalid or unsupported HEIF: %d, %d, %s",
+			__FUNCTION__, ex.get_code(), ex.get_subcode(), ex.get_message());
+		return WINCODEC_ERR_BADIMAGE;
 	}
 	catch (const std::exception& ex)
 	{
-		DbgLog("%s: exception %s", __FUNCTION__, ex.what());
-		return E_OUTOFMEMORY;
+		DbgLog("%s: invalid HEIF stream: %s", __FUNCTION__, ex.what());
+		return WINCODEC_ERR_BADIMAGE;
 	}
 	catch (...)
 	{
-		DbgLog("%s: unknown exception", __FUNCTION__);
-		return E_OUTOFMEMORY;
+		DbgLog("%s: unexpected HEIF parsing exception", __FUNCTION__);
+		return WINCODEC_ERR_BADIMAGE;
 	}
 
 	return S_OK;
