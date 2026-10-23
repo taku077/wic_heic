@@ -32,6 +32,14 @@ jobs:
             throw 'Read-only JSON schema/safety assertions failed'
           }
           if($j.WindowScan -notin @('OK','UNAVAILABLE')){throw 'Window probe must declare its observation quality'}
+          $classifications=@('NO_VISIBLE_PHOTOS_PROCESS_OBSERVED',
+            'WINDOW_SCAN_UNAVAILABLE','MIXED_VISIBLE_PHOTOS_PROCESSES',
+            'VISIBLE_PHOTOS_PROCESS_HAS_CUSTOM_WIC_MODULE',
+            'VISIBLE_PHOTOS_PROCESS_WITHOUT_CUSTOM_WIC_MODULE')
+          if($j.VisiblePhotosWicCorrelation -notin $classifications){
+            throw 'Window/codec correlation classification missing or invalid'
+          }
+
           foreach($proc in @($j.PhotosProcessModuleSnapshot)){
             if($proc.VisibleTopLevelWindowCount -lt 0 -or $proc.VisibleHostedChildWindowCount -lt 0){
               throw 'Visible window associations must be nonnegative'
