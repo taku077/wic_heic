@@ -76,3 +76,14 @@ CIは公開人工HEICだけで実行し、元画像にもユーザーPCにもア
 留意点：旧版の `SameEncoder` は他社のiPhone HEICに無条件で立ててよいものではない。旧版に合わせて偽装する「修正」は仕様違反となるため行わない。フレームの `GetMetadataQueryWriter` が両版で未実装であることは、**UIの復活とは別の保存品質・EXIF/ICC保持の問題**。これを理由にして旧版もJPEG品質の保存が完成したと説明しない。
 
 実機でPhotosのHEVC警告を消すには、旧v1.1.18のA-B-A確認に加えて**本物のWindows 10標準フォトが、どのDLL・WIC APIを呼び、どのエラーで編集を制限しているか**の記録が必要。Windows ServerのCIにはPhotos 2026の実UIがないため、今回のA/Bデータだけで完成を主張しない。
+
+## 2026-10-23 20:21 JST 旧v1.1.18が正常動作するPhotosプロセスの読み取り専用スナップショット
+
+- 実機でWindows 10 build19045、Photos編集/回転ボタンが使える **旧WIC v1.1.18状態** で、公開人工HEICを標準フォトで開き、`Photos_WIC_Process_ReadOnly.ps1` の読み取り専用診断を実施した。
+- **Photosのプロセス1件に `windowscodecs.dll` および `wic_heic.dll` が読み込まれている**（プロセスの `Modules` 列挙成功）。別のPhotosプロセス1件とApplicationFrameHostには `windowscodecs.dll` だけが観測された。DLLの存在しないプロセスでも別のタイミングに呼び出されていた可能性は排除しない。
+- 同じ診断で、HKLM x64 WIC decoder/encoderの **登録先DLLのSHA-256** が両方とも歴史的v1.1.18の `9E9D2F17038C03A5BF8840A8BD43BC4FDA19C91E947C4CD5904A8209051F93D4` と一致。
+- **厳密な限界**：プロセス側はモジュールの *basenameのみ* を保存し、ロードされた実ファイルのパスやSHA-256までは収集していない。したがって「Photosが `wic_heic.dll` という名のDLLをロードしていた」は直接の観測だが、「実際にロードされたファイルのハッシュが登録先とバイト単位で一致」まではこの診断だけでは断定できない。また、モジュールのロードは、個別WIC APIの呼び出し・コーデック選択・編集ボタンの内部条件を証明するものではない。
+- プライバシー保護として**プロセスPIDと元JSONファイル、画像、画像パスは公開GitHubに保存していない**。個人の写真・EXIF・コンテンツへアクセスしていない。
+- このデータにより「フォトが自作WIC DLLをロードする経路が存在しない」という仮説は否定された。次に必要なのは、既に正常動作中の実機WICを保護したまま **新版との機能/API差分の原因をコードと人工画像CIで削減すること**。不具合版v1.1.20を再配布・再導入しない。
+
+Microsoft WIC公式仕様: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder （`QueryCapability` は実ストリームに基づき各フレーム/メタデータについて正直に申告し、ストリーム位置を戻す必要がある）
