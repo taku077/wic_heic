@@ -127,3 +127,20 @@ Microsoft WIC公式仕様: https://learn.microsoft.com/en-us/windows/win32/wic/-
 **研究版の進歩と制約**：当該経路の`WriteSource`を明示拒否し、事前の実HEICコンテンツを自動的に画素再圧縮して壊さない。人工HEICの原本ハッシュ維持・出力0バイト・WIC試験・幾何学比較はCI合格。ただし、追加の`WICFormatConverter`やApp側の早期ファイル切詰めはこのガードだけでは防げない。**編集が成功する修正ではなく、失敗時の破損軽減**に留まる。新しいMSIの実機導入は不可。
 
 古いv1.1.18を「正常動作版」等と誤認してはならない。**GUIの編集/回転操作の有効化のみの比較基準**で、回転結果の寸法、方向、保存成否、EXIF/ICCその他の維持は依然不合格。
+
+## 無劣化回転の実装上の境界：WICの元画像情報
+
+Microsoft公式 `IWICBitmapFlipRotator` は `IWICBitmapSource` を継承し、独自の追加公開APIは `Initialize(source,transform)` のみで、元の `IWICBitmapSource` を呼び出し側が後から取得する公開メソッドを持たない。従って、汎用FlipRotatorの画素だけがHEICエンコーダーへ渡された場合、エンコーダーは元HEVC・EXIF・ICC・MakerNote・HDR・サムネイルの整合関係を取得できず、**「画素一致」だけで非劣化のコンテナー回転を保証することは不可能**。公式: https://learn.microsoft.com/en-us/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapfliprotator
+
+公式 `IWICBitmapSourceTransform` はデコーダー側で回転／拡縮／色形式変換を直接処理できる高速化APIだが、WICラッパーから外部エンコーダーへHEIC元データの出所を提供するAPIではない。**デコーダーでこのAPIを実装するだけでは、Photosに任意のメタデータ保存機能が生まれない**。公式: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nn-wincodec-iwicbitmapsourcetransform
+
+堅牢な実装の必要条件：`IHeicRawSource` を保持する**元の自作HEICデコードフレーム**と、`IPropertyBag2::BitmapTransform` の**正式な回転角指定**が、同一のエンコーダー処理で明示的に渡されること。既存の研究版ではこの条件下のサポート済み人工HEICで `HeicLosslessNative::Transform` を利用し、再圧縮せずHEIFコンテナーの `irot` とEXIF整合値を変更する。一方、サムネイル・HDR関連物を同時に正しい向きへ更新できない特殊な画像は安全に拒否する。標準Photos GUIがこの公式角度指定と元フレームの組合せを実際に渡すかどうかは未確認。
+
+2026-10-23以降、**既知の制限**として、WICのFlipRotator、Scaler、Clipper、FormatConverter等の加工後ソースから元のHEICメタデータの完全性を推定して自動再エンコードしない。標準Photosが独自内部経路で回転する場合は別途、Windows 10実機・人工HEICに限定して通過APIの証拠を集めること。
+
+## 4回90度連続のWIC保存・再読込（合格した範囲）
+[CI #39949604806](https://github.com/taku077/wic_heic/actions/runs/39949604806) **成功**：人工HEICを元に `IWICBitmapDecoder` → `IWICBitmapEncoder` → `IPropertyBag2(BitmapTransform=90,HeifCompressionMethod=NoCompression)` → 新しいメモリ内`IStream` を4回連続実行し、各回のHEICコンテナー長は10,597バイトのまま。WICで再読込する寸法は `1920×1080 → 1080×1920 → 1920×1080 → 1080×1920` と交互に変化。HEICバイト列は各回で`HeicLosslessNative::Transform`の期待結果と一致、元のメモリ入力は不変、EXIF Orientationは矛盾を除去して正規化。
+
+`Exif=6`と`irot=3`を併用した人工HEICは、1回目にEXIF Orientationが1へ正規化されるため、4回後のファイル全バイトは**元の曖昧なOrientationのバイト列とは異なり得る**。そのため「4回回して元画像と全バイト一致すべき」とは判定しない。フル解像度の復号画素が4回後に等しいかは別の独立試験を追加中。
+
+このCIが証明するのは自作WICへの**元HEICフレーム＋明示回転指定**の条件だけであり、Windows 10標準Photosのボタンがこの同じ経路を使うことも、実GUIで回転・保存が成功することも証明しない。新しいMSIは作成・配布しない。
