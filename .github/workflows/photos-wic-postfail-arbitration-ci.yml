@@ -285,6 +285,67 @@ jobs:
           }
           if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 7){throw 'Candidate kit incomplete'}
           Write-Host 'HEIC_PHOTOS_SINGLE_P0_TRIAL_PACKAGE_PREPARED_WINDOWS10_UNVERIFIED'
+      - name: Fetch SHA-pinned old 1.1.18 for synthetic WIC arbitration A/B
+        uses: actions/download-artifact@v4
+        with:
+          name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
+          run-id: 39433397223
+          repository: taku077/wic_heic
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/historical118
+      - name: Measure original and research decoder arbitration on the same public synthetic HEIC
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $old=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'historical118') -Recurse -Filter '*.msi' -File)
+          if($old.Count -ne 1){throw 'Historical 1.1.18 MSI missing or ambiguous'}
+          if((Get-FileHash -LiteralPath $old[0].FullName -Algorithm SHA256).Hash -ne '4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'){throw 'Historical MSI hash mismatch'}
+          $new=(Resolve-Path -LiteralPath (Join-Path $env:RUNNER_TEMP 'wic_coexist/global.msi')).Path
+          $exe=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          function Msi([string]$op,[string]$file){
+            $arg='/'+$op+' "'+$file+'" /qn /norestart'
+            $p=Start-Process msiexec.exe -ArgumentList $arg -Wait -PassThru
+            if($p.ExitCode -ne 0){throw ('MSI '+$op+' exit='+$p.ExitCode)}
+          }
+          function Survey([string]$label){
+            Push-Location 'wictest'
+            $env:WIC_HEIC_CAPABILITY_SURVEY_ONLY='1'
+            try {
+              $lines=@(& $exe 2>&1)
+              if($LASTEXITCODE -ne 0){throw ('Survey failed: '+$label)}
+              $output=$lines -join [Environment]::NewLine
+              if($output -notmatch 'WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS'){throw 'Survey incomplete'}
+              $m=[regex]::Match($output,'WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x([a-fA-F0-9]+)')
+              if(!$m.Success){throw 'Survey failed to return capability mask'}
+              Write-Host ('WIC_PHOTOS_AB_'+$label+'='+$output.Replace([Environment]::NewLine,';'))
+              return [Convert]::ToUInt32($m.Groups[1].Value,16)
+            } finally {
+              Remove-Item Env:\WIC_HEIC_CAPABILITY_SURVEY_ONLY -ErrorAction SilentlyContinue
+              Pop-Location
+            }
+          }
+          $installed=''
+          try {
+            Msi i $old[0].FullName
+            $installed='old'
+            $oldMask=Survey 'ORIGINAL118'
+            Msi x $old[0].FullName
+            $installed=''
+            Msi i $new
+            $installed='new'
+            $newMask=Survey 'RESEARCH'
+            Msi x $new
+            $installed=''
+            if($oldMask -ne 0x15){throw ('Unexpected legacy mask '+$oldMask)}
+            if(($newMask -band 0x4) -eq 0 -or ($newMask -band 0x1) -ne 0){throw ('Invalid new capability mask '+$newMask)}
+            Write-Host ('WIC_PHOTOS_AB_HISTORIC_MASK=0x{0:X}' -f $oldMask)
+            Write-Host ('WIC_PHOTOS_AB_RESEARCH_MASK=0x{0:X}' -f $newMask)
+            Write-Host 'PHOTOS_WIC_SYNTHETIC_118_VS_RESEARCH_ARBITRATION_AB_PASS'
+            Write-Host 'WINDOWS10_PHOTOS_GUI_NOT_TESTED_MSI_RELEASE_WITHHELD'
+          } finally {
+            if($installed -eq 'new'){Msi x $new}
+            elseif($installed -eq 'old'){Msi x $old[0].FullName}
+          }
       # The Windows 10 Photos 2026.11090.22001.0 field report explicitly
       # showed HEVC extension warning + edit/rotate disabled AFTER the trial
       # global WIC MSI was installed. Native WIC CI success is not Photos UI
