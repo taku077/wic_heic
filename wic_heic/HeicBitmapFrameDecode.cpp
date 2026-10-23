@@ -369,6 +369,11 @@ void CHeicBitmapFrameDecode::DecodeImage()
 {
 	DbgLog("%s", __FUNCTION__);
 
+	// IWICBitmapFrameDecode can be queried by multiple MTA callers.
+	// Do not race on m_Decoded, m_Image, m_Stride or plane publication.
+	// Lock guards ONLY first decode; after return the decoded pixels are
+	// immutable and concurrent CopyPixels reads need no shared global lock.
+	std::lock_guard<std::mutex> lock(m_DecodeMutex);
 	if (m_Decoded) return;
 
 	if (m_Handle.empty()) {
