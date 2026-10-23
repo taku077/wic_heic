@@ -97,6 +97,73 @@ inline void SurveySyntheticIccForPhotosEditor(IWICImagingFactory* factory) {
     }
     puts("WIC_PHOTOS_ICC_PRESENT_AB_OBSERVATION_COMPLETE_PASS");
 }
+// Two CI-generated 8-bit HEIC files are already prepared by the earlier
+// wictest integration step: out-01.heic is an ordinary new RGB encode and
+// icc-roundtrip.heic has a synthetic uniform raster and Windows sRGB ICC.
+// The historical 1.1.18 MSI and research MSI decode the SAME exact files.
+// This separates native 10-bit RGB24-vs-RGB48 negotiation from differences
+// that may also affect normal iPhone 8-bit Photos browsing. Read-only:
+// no source mutation, saving, registry edits or exposure of raw pixels.
+inline void SurveyExistingEightBitGeneratedFixture(IWICImagingFactory* factory,
+    const wchar_t* syntheticPath,const char* label) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr=factory->CreateDecoderFromFilename(syntheticPath,nullptr,
+        GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder);
+    if(FAILED(hr)||!decoder)
+        throw std::runtime_error("8bit A/B synthetic WIC open failed");
+    CComPtr<IWICBitmapDecoderInfo> info;
+    if(FAILED(decoder->GetDecoderInfo(&info))||!info)
+        throw std::runtime_error("8bit A/B decoder info unavailable");
+    CLSID selected{};
+    if(FAILED(info->GetCLSID(&selected))||
+       !IsEqualGUID(selected,CLSID_HEICDecoder))
+        throw std::runtime_error("8bit A/B selected an unexpected decoder");
+    UINT count=0;
+    hr=decoder->GetFrameCount(&count);
+    if(FAILED(hr)||count!=1)
+        throw std::runtime_error("8bit A/B synthetic expected one image frame");
+    CComPtr<IWICBitmapFrameDecode> frame;
+    if(FAILED(decoder->GetFrame(0,&frame))||!frame)
+        throw std::runtime_error("8bit A/B synthetic frame unavailable");
+    UINT w=0,h=0;
+    if(FAILED(frame->GetSize(&w,&h)) || w==0 || h==0)
+        throw std::runtime_error("8bit A/B synthetic dimensions missing");
+    GUID fmt{};
+    if(FAILED(frame->GetPixelFormat(&fmt)) ||
+       !IsEqualGUID(fmt,GUID_WICPixelFormat24bppRGB))
+        throw std::runtime_error("8bit A/B must decode WIC RGB24 on both versions");
+    const uint64_t n=uint64_t(w)*uint64_t(h)*3ull;
+    if(n==0 || n>64ull*1024ull*1024ull ||
+       uint64_t(w)*3ull>0xffffffffull)
+        throw std::runtime_error("8bit A/B buffer exceeds synthetic-only bounds");
+    std::vector<BYTE> pixels(static_cast<size_t>(n),0xB6);
+    const HRESULT copied=frame->CopyPixels(nullptr,w*3u,UINT(n),pixels.data());
+    printf("WIC_PHOTOS_8BIT_%s_WIC_BPP=24\n",label);
+    printf("WIC_PHOTOS_8BIT_%s_GEOMETRY=%ux%u\n",label,w,h);
+    printf("WIC_PHOTOS_8BIT_%s_COPY_HRESULT=0x%08X\n",label,unsigned(copied));
+    if(FAILED(copied))
+        throw std::runtime_error("8bit A/B RGB24 full pixel read failed");
+    uint64_t fnv=14695981039346656037ull;
+    uint64_t totals[3]{};
+    uint64_t entropyLike=0;
+    for(size_t i=0;i<pixels.size();++i) {
+        const BYTE v=pixels[i];
+        fnv^=v;fnv*=1099511628211ull;
+        totals[i%3u]+=v;
+        entropyLike+=(i>0 && pixels[i-1]!=v)?1u:0u;
+    }
+    printf("WIC_PHOTOS_8BIT_%s_RGB_BYTES=%llu\n",label,
+        static_cast<unsigned long long>(n));
+    printf("WIC_PHOTOS_8BIT_%s_RGB_FNV64=%016llX\n",label,
+        static_cast<unsigned long long>(fnv));
+    printf("WIC_PHOTOS_8BIT_%s_RGB_CHANNEL_TOTALS=%llu,%llu,%llu\n",
+        label,static_cast<unsigned long long>(totals[0]),
+        static_cast<unsigned long long>(totals[1]),
+        static_cast<unsigned long long>(totals[2]));
+    printf("WIC_PHOTOS_8BIT_%s_ADJACENT_CHANGES=%llu\n",
+        label,static_cast<unsigned long long>(entropyLike));
+    printf("WIC_PHOTOS_8BIT_%s_SURVEY_PASS\n",label);
+}
 // Read-only capability survey. It is deliberately compatible with the
 // historical v1.1.18 DLL, which violates current arbitration invariants;
 // no correctness assertions are made inside this observer. Used ONLY on
@@ -423,6 +490,11 @@ inline void Survey() {
             throw std::runtime_error("Survey unexpectedly wrote memory stream bytes");
     }
     puts("WIC_PHOTOS_EDITOR_MEMONLY_ROTATOR_AB_SURVEY_COMPLETE_PASS");
+    // Both outputs are created by the earlier synthetic-only integration
+    // pass, not imported from a user's collection. Each version reads
+    // exactly the same bytes from the same synthetic path.
+    SurveyExistingEightBitGeneratedFixture(factory,L"samples\\out-01.heic","PLAIN");
+    SurveyExistingEightBitGeneratedFixture(factory,L"samples\\icc-roundtrip.heic","ICC");
     SurveySyntheticIccForPhotosEditor(factory);
     puts("WIC_PHOTOS_EDITOR_COM_API_SURVEY_COMPLETE_PASS");
     printf("WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS\n");
