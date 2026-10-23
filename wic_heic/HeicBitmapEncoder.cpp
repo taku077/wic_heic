@@ -124,7 +124,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetColorContexts(UINT cCount, __RP
 	}
 	// If any frame already has pixels, changing the color space would mislabel it.
 	for (auto* frame : m_Frames) {
-		if (frame->m_Created || frame->m_HasPixels) return WINCODEC_ERR_WRONGSTATE;
+		// A lossless frame already owns the exact original container bytes;
+		// later ICC changes would otherwise be accepted but discarded.
+		if (frame->m_Created || frame->m_HasPixels || frame->m_LosslessReady)
+			return WINCODEC_ERR_WRONGSTATE;
 	}
 	m_IccProfile = std::move(profile);
 	for (auto* frame : m_Frames) frame->m_IccProfile = m_IccProfile;
