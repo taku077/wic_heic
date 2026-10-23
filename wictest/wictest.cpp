@@ -95,6 +95,19 @@ void CheckRotatedExifFixture()
         printf("fixture: GetMetadataQueryReader HRESULT=0x%08X\n", (unsigned)hr);
         throw std::exception("fixture: metadata reader unavailable");
     }
+    // The metadata block reader belongs to a HEIC frame, not a JPEG.
+    // The older code advertises GUID_ContainerFormatJpeg simply because
+    // its EXIF payload uses JPEG APP1 bytes; that conflates embedded block
+    // encoding with the enclosing HEIC file format.
+    GUID rootContainer{};
+    hr=metadata->GetContainerFormat(&rootContainer);
+    if(FAILED(hr))
+        throw std::runtime_error("HEIC metadata query reader container unavailable");
+    printf("WIC_HEIC_METADATA_ROOT_CONTAINER_HEIC=%u\\n",
+        unsigned(IsEqualGUID(rootContainer,GUID_ContainerFormatHEIC)));
+    if(!IsEqualGUID(rootContainer,GUID_ContainerFormatHEIC))
+        throw std::runtime_error("HEIC metadata incorrectly claims JPEG file container");
+    puts("WIC_HEIC_METADATA_ROOT_CONTAINER_HEIC_PASS");
     PROPVARIANT value;
     PropVariantInit(&value);
     hr=metadata->GetMetadataByName(L"/app1/ifd/{ushort=274}",&value);
