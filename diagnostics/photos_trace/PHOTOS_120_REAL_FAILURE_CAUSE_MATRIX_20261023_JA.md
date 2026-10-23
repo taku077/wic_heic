@@ -531,3 +531,17 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 **重要なトレードオフ**：これによって、元情報を検証できない任意の `IWICBitmapSource` を `WriteSource` でHEICへ新規再圧縮する一般的な互換性も制限される。画素のみの新規ファイル生成は `WritePixels` で可能。ただし、実フォトが未知のラッパーを使うなら安全拒否となり、回転保存を可能にする修正ではない。出自追跡・メタデータ転送が可能な専用編集経路の開発が引き続き必要。Microsoft WIC仕様は `WriteSource` に一般の `IWICBitmapSource` を許しており、この実装の制限は写真保護を優先した研究版ポリシーである。https://learn.microsoft.com/ja-jp/windows/win32/api/wincodec/nf-wincodec-iwicbitmapframeencode-writesource
 
 **標準フォトP0は未達**：HEVC警告解消、編集ボタン有効化、無変形な実GUI回転保存、全メタデータ保持のWindows 10実機試験は成功していない。旧v1.1.18はUI比較基準だけで、変形・保存エラーのある未完成版。HEIC Manager/ユーザー元画像に変更なし。未完成MSI配布ゲートを維持。
+
+## 2026-10-24 WIC登録でAVIF/AV1までHEIC対応と誤認：赤→緑（Photos編集は未解決）
+
+**対象**：`wic_heic/dllmain.cpp` の `RegisterDecoder` パターン登録。製品DLLはlibde265/HEVCを復号に使うHEICコーデックであるが、旧版以来、AV1形式の `ftypavif` も自分のWIC対応形式と登録していた。アプリによる `QueryCapability` の前段で、実際には扱えないAVIFまでWICデコーダー候補に該当させる不正確な登録である。Microsoft一次資料：https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder / https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nn-wincodec-iwicbitmapdecoderinfo 。
+
+**再現**：
+- 公開人工ヘッダー `ftypheic` / `ftypavif` を新規のメモリ `IStream` にのみ構築。WICがHKLMに登録されたデコーダー情報の `IWICBitmapDecoderInfo::MatchesPattern` を使用する。実際のAVIFファイルやユーザーの写真は不要。
+- テストコミット `2eccf5f6ac55ffa2138b5b9c6a7bd3562e4a2b94`、[**RED CI #40008770773**](https://github.com/taku077/wic_heic/actions/runs/40008770773)：`WIC_HEIC_DECODER_PATTERN brand=heic match=1` に加え `brand=avif match=1`、期待どおりテスト失敗。
+- 製品修正 `7398325f45a3d3e8cb45a47a77f4727e776b01b4`：登録用配列から `ftypavif` **だけを除外**。HEIC/HEIX/HEVC/その他既存HEIFブランドの識別は変更しない。一般のWindows/ユーザー実機レジストリは変更せず、使い捨てWindowsランナー内の登録だけテスト。
+- [**GREEN CI #40009079759（全工程SUCCESS）**](https://github.com/taku077/wic_heic/actions/runs/40009079759)：`brand=heic match=1`、`brand=avif match=0`、`WIC_HEIC_NOT_AVIF_REGISTRY_ARBITRATION_PASS`。加えて人工HEICでの4×90度回転後RGB 6,220,800バイト完全一致、メタデータCOM、ICC/EXIF、MTA8同時CopyPixels、short-write両経路の出力復旧とリトライ拒否、未知のソースのメタデータ喪失拒否、独立v0.4.0の隔離導入・元WIC復元の回帰テストが成功。旧1.1.18と研究版双方の `QueryCapability` 既知差 `0x15` 対 `0x0C` はそのまま。
+
+**因果関係の範囲**：旧1.1.18も同じAVIF誤登録を含むので、これは研究版だけで標準フォトのHEVC拡張警告が復活した原因ではない。Windows10 Photosでの実際のHEIC編集・回転ボタン復活、正しい回転保存はなお未達。今回の改善をP0 GUI実証済として進捗率を上げない。
+
+**安全上の制約**：ユーザーPCの旧v1.1.18、未導入の別v0.4.0、HEIC Manager、ユーザー写真には一切アクセス・変更していない。研究版MSI配布禁止、元画像自動上書き・削除禁止。次の課題はPhotos UIからのWIC/MF API呼出し実測と、過去A-B-Aでの編集可否の因果特定。既に実施済みのプロセスDLL/SHAスナップショットを繰り返さない。
