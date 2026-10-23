@@ -41,7 +41,23 @@ inline void Save(IWICImagingFactory* factory, IWICBitmapSource* source,
     } else {
         Must(WICConvertBitmapSource(pixelFormat,source,&toWrite),"ConvertBitmapSource for encoder");
     }
-    Must(frame->WriteSource(toWrite,nullptr),"frame.WriteSource");
+    if (IsEqualGUID(container,GUID_ContainerFormatHEIC)) {
+        // Synthetic image generation explicitly provides pixels. WriteSource
+        // must reject flattened IWICBitmap sources because they can be
+        // materialized from a metadata-bearing rotated original HEIC.
+        // This test alone is permitted to raster-encode its generated grid;
+        // never use this path for a user's existing HEIC rotation.
+        if(width>10000||height>10000)throw std::runtime_error("synthetic grid size");
+        const uint64_t n=uint64_t(width)*height*3u;
+        if(n>0xFFFFFFFFULL)throw std::runtime_error("synthetic grid too large");
+        std::vector<BYTE> pixels(static_cast<size_t>(n));
+        Must(toWrite->CopyPixels(nullptr,width*3,static_cast<UINT>(n),
+                                 pixels.data()),"synthetic RGB CopyPixels");
+        Must(frame->WritePixels(height,width*3,static_cast<UINT>(n),
+                                pixels.data()),"synthetic explicit WritePixels");
+    } else {
+        Must(frame->WriteSource(toWrite,nullptr),"frame.WriteSource");
+    }
     Must(frame->Commit(),"frame.Commit");
     Must(encoder->Commit(),"encoder.Commit");
 }
