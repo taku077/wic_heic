@@ -134,7 +134,6 @@ $report=[ordered]@{
  CollectedAtUtc=[DateTime]::UtcNow.ToString('o')
  WindowsBuild=[string]$os.CurrentBuild
  WindowScan=$windowScan
- PhotosProcessWindowCorrelation=@($processes.ToArray())
  PhotosProcessModuleSnapshot=@($processes.ToArray())
  RegisteredCustomWicDllHashes=$wics
  Interpretation='A codec module mapped in one Photos process does not prove it belongs to the visible editor. Window counts are an instantaneous PID correlation, not proof of which codec the editor used or why controls are disabled. No module loaded now is NOT proof that none was used before.'
