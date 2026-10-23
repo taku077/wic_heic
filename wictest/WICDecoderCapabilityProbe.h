@@ -53,6 +53,50 @@ inline void Verify(IWICImagingFactory* factory, const wchar_t* path,
     printf("WIC_CAPABILITY_STREAM_VERIFIED_CURSOR_RESTORED format=%s mask=0x%X\n",
            isHeic?"HEIC":"PNG",(unsigned)capabilities);
 }
+// Read-only capability survey. It is deliberately compatible with the
+// historical v1.1.18 DLL, which violates current arbitration invariants;
+// no correctness assertions are made inside this observer. Used ONLY on
+// public synthetic HEIC in isolated CI, never user photography.
+inline void Survey() {
+    CComPtr<IWICImagingFactory> factory;
+    if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
+        CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,
+        (void**)&factory)))throw std::runtime_error("Survey WIC factory failed");
+    CComPtr<IWICStream> source;
+    if(FAILED(factory->CreateStream(&source)) ||
+       FAILED(source->InitializeFromFilename(
+          L"samples\\fixture-irot3-exif6-noaux.heic",GENERIC_READ)))
+        throw std::runtime_error("Survey synthetic HEIC stream failed");
+    CComPtr<IWICBitmapDecoder> custom;
+    HRESULT hr=factory->CreateDecoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi, &custom);
+    if(FAILED(hr) || !custom)
+        throw std::runtime_error("Survey explicit-vendor decoder failed");
+    DWORD mask=0xFFFFFFFFu;
+    hr=custom->QueryCapability(source,&mask);
+    if(FAILED(hr))throw std::runtime_error("Survey QueryCapability failed");
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x%X\\n",unsigned(mask));
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_SAME_ENCODER=%u\\n",
+         !!(mask & WICBitmapDecoderCapabilitySameEncoder));
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_ANY_PRIMARY=%u\\n",
+         !!(mask & (WICBitmapDecoderCapabilityCanDecodeAllImages |
+                    WICBitmapDecoderCapabilityCanDecodeSomeImages)));
+    CComPtr<IWICBitmapDecoder> automatic;
+    hr=factory->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&automatic);
+    if(FAILED(hr)||!automatic)
+        throw std::runtime_error("Survey default WIC selection failed");
+    CComPtr<IWICBitmapDecoderInfo> info;
+    if(FAILED(automatic->GetDecoderInfo(&info)) || !info)
+        throw std::runtime_error("Survey decoder info failed");
+    CLSID chosen{};
+    if(FAILED(info->GetCLSID(&chosen)))
+        throw std::runtime_error("Survey chosen CLSID failed");
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_DEFAULT_IS_CUSTOM=%u\\n",
+        !!IsEqualGUID(chosen,CLSID_HEICDecoder));
+    printf("WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS\\n");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
