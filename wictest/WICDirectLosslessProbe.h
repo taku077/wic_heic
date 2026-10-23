@@ -283,6 +283,84 @@ inline void RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(IWICImaging
     puts("WIC_PHOTOS_RASTER_ROTATION_METADATA_LOSS_GUARD_PASS");
 }
 
+// Regression: a Photos-style raster rotation can be hidden under ordinary WIC
+// converter/scaler/clipper wrappers. QueryInterface(IWICBitmapFlipRotator)
+// then fails even though the underlying pixels originated from a HEIC with
+// EXIF / ICC / thumbnails. None of these wrappers carries IHeicRawSource.
+// In-memory output only; original synthetic sample must remain unchanged.
+inline void RejectWrappedRotationWithLostHeicProvenance(IWICImagingFactory* factory) {
+    const wchar_t* inputPath=L"samples\\fixture-irot3-exif6-noaux.heic";
+    const auto original=Read(inputPath);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(inputPath,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"wrapped raster decoder");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"wrapped raster source");
+    CComPtr<IWICBitmapFlipRotator> rotator;
+    Check(factory->CreateBitmapFlipRotator(&rotator),"wrapped raster rotator");
+    Check(rotator->Initialize(source,WICBitmapTransformRotate90),
+        "wrapped raster 90-degree rotate");
+    CComPtr<IWICFormatConverter> converter;
+    Check(factory->CreateFormatConverter(&converter),"wrapped raster converter");
+    Check(converter->Initialize(rotator,GUID_WICPixelFormat24bppRGB,
+        WICBitmapDitherTypeNone,nullptr,0.0,WICBitmapPaletteTypeCustom),
+        "wrapped raster convert to RGB24");
+    UINT w=0,h=0;
+    Check(converter->GetSize(&w,&h),"wrapped raster dimensions");
+    CComPtr<IWICBitmapScaler> scaler;
+    Check(factory->CreateBitmapScaler(&scaler),"wrapped raster scaler");
+    Check(scaler->Initialize(converter,w,h,WICBitmapInterpolationModeNearestNeighbor),
+        "wrapped raster scaler init");
+    CComPtr<IWICBitmapClipper> clipper;
+    Check(factory->CreateBitmapClipper(&clipper),"wrapped raster clipper");
+    WICRect whole{0,0,int(w),int(h)};
+    Check(clipper->Initialize(scaler,&whole),"wrapped raster clipper init");
+
+    IWICBitmapSource* views[]={converter,scaler,clipper};
+    const char* labels[]={"converter","scaler","clipper"};
+    for(int kind=0;kind<3;++kind) {
+        for(int mode=0;mode<2;++mode) {
+            CComPtr<IWICBitmapEncoder> encoder;
+            Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+                &GUID_VendorPrsyahmi,&encoder),"wrapped raster encoder");
+            CComPtr<IStream> memory;
+            Check(CreateStreamOnHGlobal(nullptr,TRUE,&memory),
+                "wrapped raster memory stream");
+            Check(encoder->Initialize(memory,WICBitmapEncoderNoCache),
+                "wrapped raster encoder init");
+            CComPtr<IWICBitmapFrameEncode> frame;
+            CComPtr<IPropertyBag2> options;
+            Check(encoder->CreateNewFrame(&frame,&options),
+                "wrapped raster encoder options");
+            if(mode==1) {
+                if(!options)throw std::runtime_error("Wrapped raster options missing");
+                PROPBAG2 property{};
+                property.pstrName=const_cast<LPOLESTR>(L"HeifCompressionMethod");
+                VARIANT value{};value.vt=VT_UI1;value.bVal=2; // explicit HEVC
+                Check(options->Write(1,&property,&value),
+                    "wrapped raster explicit HEVC");
+            }
+            Check(frame->Initialize(options),"wrapped raster frame init");
+            Check(frame->SetSize(w,h),"wrapped raster frame size");
+            GUID format=GUID_WICPixelFormat24bppRGB;
+            Check(frame->SetPixelFormat(&format),"wrapped raster frame RGB24");
+            HRESULT hr=frame->WriteSource(views[kind],nullptr);
+            printf("WIC_WRAPPED_ROTATED_HEIC_REJECT view=%s compression=%d hr=0x%08X\\n",
+                labels[kind],mode,(unsigned)hr);
+            if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+                throw std::runtime_error("Wrapped rotated HEIC raster accepted without provenance");
+            STATSTG stat{};
+            Check(memory->Stat(&stat,STATFLAG_NONAME),
+                "wrapped raster output stream stat");
+            if(stat.cbSize.QuadPart!=0)
+                throw std::runtime_error("Wrapped rotated HEIC wrote output bytes");
+        }
+    }
+    if(Read(inputPath)!=original)
+        throw std::runtime_error("Wrapped rotation changed the original synthetic HEIC");
+    puts("WIC_WRAPPED_RASTER_ROTATION_METADATA_LOSS_GUARD_PASS");
+}
+
 inline void RejectUnsafeOriginalHeicRasterFallback(IWICImagingFactory* factory) {
     // Regression for a metadata-loss loophole: explicit HEVC and cropped
     // WriteSource previously bypassed the exact-source safeguard and
@@ -743,6 +821,7 @@ inline void Run() {
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
     RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(factory);
+    RejectWrappedRotationWithLostHeicProvenance(factory);
     RejectUnsafeOriginalHeicRasterFallback(factory);
     RejectMutationsAfterLosslessCapture(factory);
     FourTurnsOnlyInMemory(factory);
