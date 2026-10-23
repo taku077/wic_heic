@@ -509,3 +509,10 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 **安全保証の正確な範囲**：これは**CIで用意した空の、SetSize対応IStream**における不完全な出力除去であり、すべての外部ストリームでトランザクション的保存を保証するものではない。`SetSize(0)`が拒否されるデバイスや、呼出し側が開く時点で既存ファイルをtruncateするケースをWIC内部では復元できない。常に元写真と別の空のファイル名で保存することが前提。ユーザーの既存写真を実機における保存試験へ使わない。
 
 **Photos P0は引続き未達**：Windows 10 22H2の標準フォトでHEVC拡張警告が消えた・編集ボタンが有効になった・JPEG同等の回転保存が実際にできたという証拠はない。旧1.1.18を正常版として扱わず、ユーザーPCへの研究版MSI導入も保留。今回の成果をGUI完成率の根拠として大幅上積みしない。
+
+### HEICの途中書込み失敗後は同一エンコーダーを再利用しない（2026-10-24）
+
+- 人工ロスレス／通常圧縮の短い`IStream::Write`による失敗後、`IStream`を空に戻せても、内部の`heif::Context`が既に更新されている可能性がある。同じ`IWICBitmapEncoder::Commit`を**もう1回**試すと、修正前はロスレスで`S_OK`になり不正な再発行を許した。テスト`43f07ac6324f03f8b9394538b992a974e3e5dd65`、[赤CI #40003366880](https://github.com/taku077/wic_heic/actions/runs/40003366880)：`WIC_ENCODER_FAILED_COMMIT_RETRY_LOSSLESS=0x00000000`。
+- 製品修正`f450824ac973cf9a3b0d7143ce98e07667c8a388`、`428aff2f274c98ece6e8157f65753fb2066d7edd`：出力開始を`m_OutputAttempted`に記録し、**成功したCommitだけでなく出力着手後の失敗**も、そのエンコーダーでの再試行やフレーム操作の対象外にする。開始前の引数エラー・フレーム未確定とは区別する。
+- [**CI #40003964073 成功**](https://github.com/taku077/wic_heic/actions/runs/40003964073)：ロスレス失敗後／通常圧縮失敗後の再試行は両方`0x88982F04`（`WINCODEC_ERR_WRONGSTATE`）、元の出力復旧後は残存0バイト。`WIC_ENCODER_FAILED_COMMIT_RETRY_LOSSLESS_BLOCKED_PASS`、`WIC_ENCODER_FAILED_COMMIT_RETRY_RASTER_BLOCKED_PASS`。同じCIで`WIC_HEIC_FRAME_BLOCK_READER_COM_IDENTITY_AND_EXIF_PASS`、両経路の短い出力の復旧、ICC 3144 bytes保存、4回90度全RGB画素一致、旧v1.1.18とのWIC合成HEIC A/Bを再確認。
+- **残る制限**：これは隔離CIの人工ストリームによるWICエンコーダー安全性の改善である。出力先が`SetSize(0)`に非対応の場合は失敗後の切り詰め成功を保証できない。Windows10 PhotosのHEVC拡張警告や編集ボタンが有効になったという証拠ではない。旧1.1.18の保存失敗・画像変形は未解決。ユーザーPC、原本画像、HEIC Managerには変更なし。研究MSI配布ゲートは閉鎖を維持。
