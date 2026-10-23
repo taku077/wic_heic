@@ -24,10 +24,18 @@ static const GUID CLSID_HEICEncoder =
 { 0x0e8ab687, 0x73a5, 0x455b,{ 0x8c, 0x19, 0xb9, 0x3c, 0xa9, 0xac, 0x0e, 0xeb } };
 
 
-// GUID HEIC CONTAINER FORMAT
-// {98ce31dd-5435-41bd-a1af-29c387c20135}
-#define S_GUID_ContainerFormatHEIC "{98ce31dd-5435-41bd-a1af-29c387c20135}"
+// EXPERIMENTAL NATIVE WIC HEIF CONTAINER FORMAT.
+// Microsoft WIC's HEIF identifier differs from this project's original
+// private GUID. Photos may request the native GUID when saving.
+// Validate against the native Microsoft decoder before release.
+// Native {e1e62521-6787-405b-a339-500715b5763f}
+#define S_GUID_ContainerFormatHEIC "{e1e62521-6787-405b-a339-500715b5763f}"
 static const GUID GUID_ContainerFormatHEIC =
+{ 0xe1e62521, 0x6787, 0x405b,{ 0xa3, 0x39, 0x50, 0x07, 0x15, 0xb5, 0x76, 0x3f } };
+
+// Legacy GUID kept for compatibility detection, but not registered in this
+// isolated experiment. Never silently merge native and private formats.
+static const GUID GUID_ContainerFormatHEICLegacy =
 { 0x98ce31dd, 0x5435, 0x41bd,{ 0xa1, 0xaf, 0x29, 0xc3, 0x87, 0xc2, 0x01, 0x35 } };
 
 
