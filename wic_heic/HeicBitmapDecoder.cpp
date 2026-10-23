@@ -90,7 +90,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::QueryCapability(__RPC__in_opt IStr
 		if (!ids.empty()) {
 			// A parsed primary is not a guarantee all auxiliary/sequence images
 			// can be decoded. Do not overclaim CanDecodeAllImages.
-			auto frame = context.get_image_handle(ids.front());
+			// Query the actual HEIF pitm primary, not the first listed item:
+			// arbitrary item ordering must not advertise a secondary as primary.
+			auto frame = context.get_primary_image_handle();
 			if (!frame.empty() && frame.get_width() > 0 &&
 			    frame.get_height() > 0) {
 				capabilities |= WICBitmapDecoderCapabilityCanDecodeSomeImages;
@@ -379,13 +381,30 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 	{
 		DbgLog("GetFrame: %d", index);
 
-		if (index >= (UINT)m_Context.get_number_of_top_level_images()) {
+		const auto ids = m_Context.get_list_of_top_level_image_IDs();
+		if (index >= ids.size()) {
 			return WINCODEC_ERR_FRAMEMISSING;
 		}
 
-		std::vector<heif_item_id> ids = m_Context.get_list_of_top_level_image_IDs();
-
-		heif::ImageHandle handle = m_Context.get_image_handle(ids[index]);
+		// In HEIF the top-level item list is not required to list pitm first.
+		// Windows Photos normally opens WIC frame zero. Returning the first
+		// item instead of the actual primary can display or edit a DIFFERENT
+		// picture and can make lossless source copying target the wrong item.
+		heif::ImageHandle handle;
+		if (index == 0) {
+			handle = m_Context.get_primary_image_handle();
+		} else {
+			UINT otherIndex=0;
+			for (heif_item_id id : ids) {
+				auto candidate = m_Context.get_image_handle(id);
+				if (candidate.empty() || candidate.is_primary_image())
+					continue;
+				if (++otherIndex == index) {
+					handle = candidate;
+					break;
+				}
+			}
+		}
 		if (handle.empty()) {
 			return WINCODEC_ERR_FRAMEMISSING;
 		}
