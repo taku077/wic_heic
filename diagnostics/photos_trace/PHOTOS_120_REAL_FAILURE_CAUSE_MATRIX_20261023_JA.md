@@ -309,3 +309,15 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 **性能・互換性上のトレードオフ**：元HEIC由来でなく純粋に新規生成された `IWICBitmap` も、`WriteSource` だけでは区別できないため安全側に倒して拒否する。新規画像作成を明示する `WritePixels` を使うWIC呼び出し元はエンコード可能。これは既存の一般WICクライアントの互換性に影響し得るので、すべてのWindowsアプリの成功を主張しない。
 
 **限界／未解決**：このガードは `WriteSource` に渡された**識別可能なWICラッパーとIWICBitmap**だけに効く。`WritePixels` が既存HEIC由来のピクセルである場合は原HEICとの対応を識別できず、元画像のメタデータ喪失防止を一般には保証しない。Photosが保存先ファイルをエンコーダー呼び出し前に切り詰めるケースも防げない。そもそもWindows 10 PhotosのHEVC警告・編集ボタン無効は現時点で未解決であり、実機GUIと無劣化回転保存のリリースゲートは閉じたまま。
+
+## HEIC WIC `SetResolution` 成功偽装によるDPI編集黙殺を修正（2026-10-23、CI赤→緑）
+
+**新しく確認した不具合**：`wic_heic/HeicBitmapFrameEncode.cpp::SetResolution(double dpiX,double dpiY)` は引数を読み取らず常に `S_OK` を返していた。WIC APIの定義ではこれは**物理解像度メタデータを設定する操作**であり、既存HEIC原本バイト列の無再圧縮転送の後にDPI 300を指定しても「成功」とする実装は、指定された編集を破棄したまま保存成功と誤報する。Microsoft公式：https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapframeencode-setresolution
+
+- **再現テスト追加** `7df6dd061ece86b2994dd69658e1f4807efd4a70`：`wictest/WICDirectLosslessProbe.h` に、公開人工HEICの原本を `WriteSource` でロスレス保持した後 `SetResolution(300,300)` が `WINCODEC_ERR_WRONGSTATE` を返すこと、フレーム初期化直後の非既定DPIは `WINCODEC_ERR_UNSUPPORTEDOPERATION`、正常な96dpiは `S_OK`、負のDPIは `E_INVALIDARG`、未完成出力が0バイトのままであることを確認する検証を追加。
+- [**失敗CI #39973464774**](https://github.com/taku077/wic_heic/actions/runs/39973464774)：`WIC_LOSSLESS_STATE_UNLOCKED late SetResolution actual=0x00000000` と実測。原本バイト確定後でも更新APIが成功してしまう製品上の欠陥を確認。
+- **製品修正** `d01b81cd92fbc74d304df49861b6541f7fbbabd9`：`m_LosslessReady`／フレーム作成済み／画素書込み済みは遅延DPI設定を `WINCODEC_ERR_WRONGSTATE` で拒否。有限でない、0以下のDPIは `E_INVALIDARG`、96dpi以外の物理解像度変更は現行エンコーダーが書き戻せないため `WINCODEC_ERR_UNSUPPORTEDOPERATION` で明示拒否。96dpiはWICデコーダーが提供する既定値として許可する。
+- この変更により、従来の`wictest/wictest.cpp`の**公開サンプル変換だけ**で入力96.012001dpiの忠実転記要求が失敗するようになった。これは機能未実装を顕在化したもので、安全性ガードを緩めない。試験専用の人工画像トランスコードに限り、96dpi以外を「DPI保全は試験対象外」と明示ログに記録して `SetResolution` を要求せず、画像生成・WIC読み戻しを継続する（`d2c3abec41738e27bac035649ddfb31e6e4386b1`）。**ユーザー写真・一般Photos保存のためのDPI黙殺フォールバックではない**。
+- [**成功CI #39974578063**](https://github.com/taku077/wic_heic/actions/runs/39974578063)：`WIC_EXPLICIT_DPI_CHANGE_MUST_NOT_BE_SILENT_PASS`、`WIC_LOSSLESS_CAPTURE_IMMUTABLE_AND_SOURCE_BYTES_PRESERVED_PASS`、`GEOMETRY_PIXEL_AB_TEST_PASSED`、`HEIC_WIC_ICC_EXACT_ROUNDTRIP_PASSED`、`WIC_PRIMARY_SWITCH_LOSSLESS_WIC_COPY_BYTE_EQUAL_PASS`、`WIC_FOUR_TURNS_EXACT_RGB_PIXEL_IDENTITY_PASS`、歴史的v1.1.18とのWIC選択A/B、WIC/サムネイル別MSI分離試験が全てSUCCESS。ログに`SYNTHETIC_SMOKE_DPI_METADATA_NOT_TRANSFERRED original_x=96.012001 original_y=96.012001` を明示。
+
+**残る機能不足**：任意DPIの実際のHEIF/EXIFメタデータへの書込みは未実装。この段階では安全側に**拒否**するだけであり、ユーザーが求めるPhotos編集・回転保存が成功することを意味しない。96dpi以外の画像を再エンコードしたいWICアプリからは、以前よりエラーが増え得る。一般アプリ互換性上のリスクも残り、修正版を完成MSIとして配布しない。最優先のWindows 10標準フォトのHEVC警告／編集無効化は未解決、実機GUI試験は未実施。既知の旧v1.1.18回転バグは修復済みと見なさない。
