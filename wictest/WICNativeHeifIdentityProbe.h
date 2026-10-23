@@ -34,8 +34,48 @@ inline void Run() {
     // explicit-vendor tests above cannot establish default WIC arbitration.
     // Validate decoder + encoder discovery WITHOUT a vendor on Windows CI.
     CComPtr<IWICBitmapEncoder> autoEncoder;
-    Check(factory->CreateEncoder(GUID_ContainerFormatHeif,
-        nullptr,&autoEncoder),"Resolve default native HEIF encoder");
+    const HRESULT autoHr=factory->CreateEncoder(GUID_ContainerFormatHeif,
+        nullptr,&autoEncoder);
+    if(FAILED(autoHr)) {
+        printf("WIC_NATIVE_HEIF_DEFAULT_ENCODER_FAILED=0x%08X\n",
+            (unsigned)autoHr);
+        CComPtr<IEnumUnknown> enumeration;
+        HRESULT listHr=factory->CreateComponentEnumerator(
+            WICEncoder,WICComponentEnumerateDefault,&enumeration);
+        printf("WIC_NATIVE_HEIF_ENUMERATE_ENCODERS_HR=0x%08X\n",
+            (unsigned)listHr);
+        if(SUCCEEDED(listHr) && enumeration) {
+            IUnknown* element=nullptr;
+            ULONG n=0;
+            while(enumeration->Next(1,&element,&n)==S_OK && element) {
+                CComQIPtr<IWICBitmapEncoderInfo> info(element);
+                element->Release();element=nullptr;
+                if(!info)continue;
+                GUID kind{},clsid{},vendor{};
+                if(FAILED(info->GetContainerFormat(&kind)) ||
+                   !IsEqualGUID(kind,GUID_ContainerFormatHeif))continue;
+                (void)info->GetCLSID(&clsid);
+                (void)info->GetVendorGUID(&vendor);
+                CComPtr<IWICBitmapEncoder> activated;
+                HRESULT activateHr=CoCreateInstance(clsid,nullptr,
+                    CLSCTX_INPROC_SERVER,IID_IWICBitmapEncoder,
+                    reinterpret_cast<void**>(&activated));
+                printf("WIC_NATIVE_HEIF_ENCODER_CANDIDATE clsid=%08X vendor=%08X own=%u activateHr=0x%08X\n",
+                    (unsigned)clsid.Data1,(unsigned)vendor.Data1,
+                    (unsigned)IsEqualGUID(clsid,CLSID_HEICEncoder),
+                    (unsigned)activateHr);
+            }
+        }
+        CComPtr<IWICBitmapEncoder> msEncoder;
+        HRESULT msHr=factory->CreateEncoder(GUID_ContainerFormatHeif,
+            &GUID_VendorMicrosoft,&msEncoder);
+        printf("WIC_NATIVE_HEIF_MS_VENDOR_ENCODER_HR=0x%08X\n",(unsigned)msHr);
+        CComPtr<IWICBitmapEncoder> builtin;
+        HRESULT nativeHr=factory->CreateEncoder(GUID_ContainerFormatHeif,
+            &GUID_VendorMicrosoftBuiltIn,&builtin);
+        printf("WIC_NATIVE_HEIF_BUILTIN_VENDOR_ENCODER_HR=0x%08X\n",(unsigned)nativeHr);
+    }
+    Check(autoHr,"Resolve default native HEIF encoder");
     CComPtr<IWICBitmapEncoderInfo> autoEncoderInfo;
     Check(autoEncoder->GetEncoderInfo(&autoEncoderInfo),
         "Default HEIF encoder information");
