@@ -36,6 +36,7 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	, m_HeifCompressionMethod(0)
 	, m_OptionsInitialized(false)
 	, m_LosslessReady(false)
+	, m_Committed(false)
 	, m_IccExplicitlySet(false)
 	, m_PixelFormat(GUID_WICPixelFormat24bppRGB)
 	, m_PixelFormatExplicitlySet(false)
@@ -92,7 +93,7 @@ ULONG STDMETHODCALLTYPE CHeicBitmapFrameEncode::Release(void)
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Initialize(__RPC__in_opt IPropertyBag2 *pIEncoderOptions)
 {
 	WicHeicDiagnostic::Emit("FrameInitializeEnter",0,0,0,0,pIEncoderOptions?"options":"no-options");
-	if (m_OptionsInitialized) return WINCODEC_ERR_WRONGSTATE;
+	if (m_OptionsInitialized || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	BYTE transform=0, compression=0;
 	if (pIEncoderOptions) {
 		PROPBAG2 props[2]{};
@@ -125,7 +126,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Initialize(__RPC__in_opt IProp
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetSize(UINT uiWidth, UINT uiHeight)
 {
-	if (m_Created || m_HasPixels || m_LosslessReady) return WINCODEC_ERR_WRONGSTATE;
+	if (m_Created || m_HasPixels || m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	if (!uiWidth || !uiHeight || uiWidth > 20000 || uiHeight > 20000)
 		return E_INVALIDARG;
 	m_Width = uiWidth;
@@ -163,7 +164,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 	if (!pPixelFormat) {
 		return E_INVALIDARG;
 	}
-	if (m_Created || m_HasPixels || m_LosslessReady) return WINCODEC_ERR_WRONGSTATE;
+	if (m_Created || m_HasPixels || m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 
 	if (IsEqualGUID(*pPixelFormat, GUID_WICPixelFormat24bppRGB)) {
 		m_PixelFormat = *pPixelFormat;
@@ -216,7 +217,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
-	if (m_Created || m_HasPixels || m_LosslessReady) return WINCODEC_ERR_WRONGSTATE;
+	if (m_Created || m_HasPixels || m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	std::vector<uint8_t> profile;
 	HRESULT hr = HeicColorProfileWic::ReadArray(cCount, ppIColorContext, &profile);
 	if (FAILED(hr)) {
@@ -250,7 +251,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 	}
 	if (!pbPixels) return E_POINTER;
-	if (!m_Width || !m_Height || !lineCount || m_HasPixels || m_LosslessReady) return WINCODEC_ERR_WRONGSTATE;
+	if (!m_Width || !m_Height || !lineCount || m_HasPixels || m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	if (lineCount > m_Height - m_WrittenLines) return E_INVALIDARG;
 
 	// Only the explicitly supported 8-bit interleaved formats may be written
@@ -340,7 +341,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	WicHeicDiagnostic::Emit("WriteSourceEnter",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,prc?"cropped":"full");
 	// A captured lossless container is immutable. A second source write must
 	// never be accepted and then silently ignored by EncoderCommit.
-	if (m_LosslessReady) return WINCODEC_ERR_WRONGSTATE;
+	if (m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	if (!pIBitmapSource) return E_POINTER;
 	// IWICBitmapFrameEncode::WriteSource explicitly allows callers to omit
 	// SetSize and SetPixelFormat. Windows' canonical HEIF no-recompression
@@ -616,12 +617,17 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 {
 	WicHeicDiagnostic::Emit("FrameCommit",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,m_LosslessReady?"lossless":"raster");
-	if (m_LosslessReady && !m_LosslessBytes.empty()) return S_OK;
+	if (m_Committed) return WINCODEC_ERR_WRONGSTATE;
+	if (m_LosslessReady && !m_LosslessBytes.empty()) {
+		m_Committed = true;
+		return S_OK;
+	}
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 	if (!m_HasPixels || m_WrittenLines != m_Height) return WINCODEC_ERR_WRONGSTATE;
 	try
 	{
 		CreateFrame();
+		m_Committed = true;
 		return S_OK;
 	}
 	catch (const heif::Error& ex)
