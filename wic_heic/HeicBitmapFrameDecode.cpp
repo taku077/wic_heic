@@ -257,17 +257,24 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__
 	WicHeicDiagnostic::Emit("DecoderMetadataQuery");
 	DbgLog("%s", __FUNCTION__);
 
-	if (!ppIMetadataQueryReader) {
-		return E_POINTER;
-	}
-
-	CHeicMetadataBlockReader* pMetadataBlockReader = new(std::nothrow) CHeicMetadataBlockReader(this->m_Handle);
-	if (!pMetadataBlockReader) {
+	if (!ppIMetadataQueryReader) return E_POINTER;
+	*ppIMetadataQueryReader = nullptr;
+	try {
+		CHeicMetadataBlockReader* reader =
+			new(std::nothrow) CHeicMetadataBlockReader(m_Handle);
+		if (!reader) return E_OUTOFMEMORY;
+		// The metadata query reader retains its own COM reference to the
+		// underlying block reader if necessary. Drop our creation reference
+		// on both success and failure; repeated Photos metadata queries must
+		// not leak a metadata reader for every call.
+		const HRESULT hr = reader->CreateQueryReader(ppIMetadataQueryReader);
+		reader->Release();
+		return hr;
+	} catch (const std::bad_alloc&) {
 		return E_OUTOFMEMORY;
+	} catch (...) {
+		return WINCODEC_ERR_BADIMAGE;
 	}
-
-	HRESULT hr = pMetadataBlockReader->CreateQueryReader(ppIMetadataQueryReader);
-	return hr;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetColorContexts(UINT cCount, __RPC__inout_ecount_full_opt(cCount) IWICColorContext **ppIColorContexts, __RPC__out UINT *pcActualCount)
