@@ -205,3 +205,22 @@ Microsoft公式 `IWICBitmapFlipRotator` は `IWICBitmapSource` を継承し、�
 | HEIC 4×90°ロスレス・復号RGB比較 | 合格 | RGB 6,220,800バイト完全一致を継続 |
 
 **留意**：この修正は「ICC編集機能を実装した」わけではない。元HEICのICCを勝手に破棄するのではなく、実装できない変更要求を安全に拒否する。元ソースが別の`IWICBitmapSource`ラッパーを通過して出自が消えた場合の安全性は別途検証が必要。あわせてPhotos GUIのHEVC警告解除／編集・回転ボタン／保存成否は未解決。v1.1.18もこれらの保存要件を満たさない既知不具合版。MSIは配布しない。
+
+## 明示したWIC画素形式がロスレス保存で無視されるバグ（2026-10-23）
+
+HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダーが返す画素形式と異なるフォーマット（試験ではRGBA等）を**明示指定**しても、ロスレスHEIC`WriteSource`が元のHEVC圧縮内容をそのままコピーし`S_OK`を返していた。これでは、元の色チャネル構成・ビット深度を変えたい呼び出し側に、変更に成功したと誤解させる。
+
+[CI #39955364781](https://github.com/taku077/wic_heic/actions/runs/39955364781) の人工HEICメモリIStream試験で、**無回転`WriteSource`が`0x00000000`を返して誤成功となる現象を再現**し、意図した赤テストとしてFAILした。
+
+修正コミット：`e017ed871635afbd1dd1bb07f5e95c5bb16057d5`。次の仕様を`HeicBitmapFrameEncode`に実装した。
+- 依頼者からの明示的な`SetPixelFormat`と、`WriteSource`内でWIC規約に従い自動設定した画素形式とを`m_PixelFormatExplicitlySet`で区別する。
+- 元のHEIC圧縮データを直接維持する経路で、**明示した画素形式がソースWICフレームのものと違う場合**、変更要求を隠蔽して成功を返さず、`WINCODEC_ERR_UNSUPPORTEDOPERATION`を返す。通常の再圧縮エンコーダーの意図的な画素形式変更まで禁止するものではない。
+- 未指定の場合は既存の正規`WriteSource`自動設定を維持する。元データへの入力書き込みは行わない。ICC差分・EXIF・HDR保護も維持する。
+
+**[修正後CI #39956148293](https://github.com/taku077/wic_heic/actions/runs/39956148293) 全工程PASS**。
+- 異なるWICピクセル形式の明示要求・無回転：`0x88982F81`、出力0バイト。
+- 同要求・90°ロスレス回転：`0x88982F81`、出力0バイト。
+- `SetSize`/`SetPixelFormat`省略の正常な無回転コピー・90°回転：PASS。
+- EXIF/ICCを含む人工HEICのコンテナー全バイト保持、ICC不一致の拒否、4回90°回転とRGB全6,220,800バイト一致、旧v1.1.18とのA/B比較：再合格。
+
+**注意**：これらは人工HEICの自作WICエンコーダー試験であり、Photos 2026の編集UI・HEVC警告・保存の実機障害が完全解決したことを意味しない。v1.1.18を正常完成版と扱わない。標準フォトの実機ゲートに未到達のため、MSI発行を保留する。
