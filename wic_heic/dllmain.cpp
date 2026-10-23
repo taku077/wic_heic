@@ -218,6 +218,11 @@ HRESULT RegisterEncoder(const std::wstring& dllPath)
 
 		// GUID_WICPixelFormat24bppRGB
 		regEncoder.CreateKeyTree(HKEY_CLASSES_ROOT, "CLSID\\" S_CLSID_HEICEncoder "\\Formats\\{6fddc324-4e03-4bfe-b185-3d77768dc90d}");
+		// Verified on synthetic RGBA8 -> HEIC -> WIC readback, including
+		// alpha channel variation. Advertise real runtime ability to Photos.
+		// Leave 48/64bpp ENCODER formats unregistered until their backend
+		// support is independently demonstrated; decoder registration differs.
+		regEncoder.CreateKeyTree(HKEY_CLASSES_ROOT, "CLSID\\" S_CLSID_HEICEncoder "\\Formats\\{f5c7ad2d-6a8d-43dd-a7a8-a29935261ae9}");
 	}
 	catch (const HeicException& ex)
 	{
