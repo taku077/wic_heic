@@ -272,7 +272,10 @@ inline void RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(IWICImaging
             mode,unsigned(hr));
         if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
             throw std::runtime_error("Rotated HEIC raster lost provenance but was accepted");
-        if(Read(out).size()!=0)
+        STATSTG outputStat{};
+        Check(stream->Stat(&outputStat,STATFLAG_NONAME),
+            "rotation-safety destination status");
+        if(outputStat.cbSize.QuadPart!=0)
             throw std::runtime_error("Rejected HEIC rotation wrote output bytes");
     }
     if(Read(sourcePath)!=original)
