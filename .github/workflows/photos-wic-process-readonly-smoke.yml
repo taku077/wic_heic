@@ -2,7 +2,7 @@ name: Photos WIC process module diagnostic - read-only PS5.1 smoke
 on:
   push:
     branches: [investigate/photos-wic-arbitration-after-120-failure]
-    paths: ['.github/workflows/photos-wic-process-readonly-smoke.yml', 'diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1']
+    paths: ['.github/workflows/photos-wic-process-readonly-smoke.yml', 'diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1', 'diagnostics/photos_trace/Run_Photos_WIC_Process_ReadOnly.cmd']
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,4 +32,14 @@ jobs:
             throw 'Read-only JSON schema/safety assertions failed'
           }
           Write-Host 'PHOTOS_PROCESS_WIC_READONLY_PS51_SMOKE_PASS'
+      - name: Exercise identical one-click CMD launcher without privilege or photo access
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $cmd=(Resolve-Path -LiteralPath 'diagnostics/photos_trace/Run_Photos_WIC_Process_ReadOnly.cmd').Path
+          & cmd.exe /d /c ('"' + $cmd + '"')
+          if($LASTEXITCODE -ne 0){throw 'One-click read-only CMD launcher failed'}
+          $reports=@(Get-ChildItem 'diagnostics/photos_trace' -Filter 'Photos_WIC_Process_ReadOnly_*.json' -File)
+          if($reports.Count -ne 2){throw 'Each invocation must write exactly one new report without overwriting existing files'}
+          Write-Host 'PHOTOS_WIC_ONECLICK_NO_ADMIN_NO_IMAGE_ACCESS_CI_PASS'
           Write-Host 'This Windows Server 2022 test cannot prove Win10 Photos module loading.'
