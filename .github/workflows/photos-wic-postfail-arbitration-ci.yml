@@ -387,7 +387,7 @@ jobs:
             foreach($key in $fullresKeys){
               $values=@()
               foreach($label in @('ORIGINAL118','RESEARCH')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)'
+                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
                 $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
                 if(-not $match.Success){throw ('Missing full-resolution result: '+$label+' '+$key)}
                 $values+= $match.Groups[1].Value.Trim()
@@ -399,7 +399,7 @@ jobs:
                                  'WIC_PHOTOS_PIXEL_GETSIZE_HRESULT',
                                  'WIC_PHOTOS_PIXEL_RGB24_CONVERT_HRESULT',
                                  'WIC_PHOTOS_PIXEL_FULLRES_COPY_HRESULT')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)'
+                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
                 $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
                 if(-not $match.Success -or $match.Groups[1].Value.Trim() -cne '0x00000000'){
                   throw ('Full-resolution HEIC readback failed: '+$label+' '+$key)
