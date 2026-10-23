@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <new>
 // Guard regression tests against malformed frame size, incomplete WritePixels,
 // and false BGR pixel-format negotiation. Uses temporary sample outputs only.
 namespace EncoderGuardProbe {
