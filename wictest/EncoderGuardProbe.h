@@ -24,6 +24,12 @@ inline void Run() {
     CComPtr<IWICStream> stream;
     CComPtr<IWICBitmapFrameEncode> frame;
     Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,&enc),"Create HEIC encoder");
+    // WIC creation lifecycle: no frame may be created until encoder.Initialize.
+    CComPtr<IWICBitmapFrameEncode> prematureFrame;
+    HRESULT beforeInit=enc->CreateNewFrame(&prematureFrame,nullptr);
+    printf("WIC_ENCODER_PREINIT_CREATE_FRAME_HRESULT=0x%08X\\n",unsigned(beforeInit));
+    if(beforeInit!=WINCODEC_ERR_WRONGSTATE || prematureFrame)
+        throw std::runtime_error("Encoder allowed a frame before Initialize");
     HRESULT badInit=enc->Initialize(nullptr,WICBitmapEncoderNoCache);
     if(badInit!=E_INVALIDARG)throw std::runtime_error("guard: null stream not rejected");
     Check(fac->CreateStream(&stream),"Create stream");
@@ -93,6 +99,17 @@ inline void Run() {
     if(frame->Commit()!=WINCODEC_ERR_WRONGSTATE)
         throw std::runtime_error("Frame accepted a repeated Commit");
     Check(enc->Commit(),"encoder.Commit");
+    // Encoder.Commit must seal the image. No subsequent frames or ICC edits
+    // may be accepted, even if the file stream remains open by the caller.
+    CComPtr<IWICBitmapFrameEncode> lateFrame;
+    HRESULT afterCommit=enc->CreateNewFrame(&lateFrame,nullptr);
+    printf("WIC_ENCODER_POSTCOMMIT_CREATE_FRAME_HRESULT=0x%08X\\n",
+        unsigned(afterCommit));
+    if(afterCommit!=WINCODEC_ERR_WRONGSTATE || lateFrame)
+        throw std::runtime_error("Encoder reopened after successful Commit");
+    if(enc->SetColorContexts(0,nullptr)!=WINCODEC_ERR_WRONGSTATE)
+        throw std::runtime_error("Encoder color metadata was mutable after Commit");
+    puts("WIC_ENCODER_INITIALIZE_AND_FINALIZE_STATE_GUARDS_PASS");
     puts("WIC_ENCODER_FRAME_COMMIT_ORDER_ENFORCED_AND_STREAM_UNTOUCHED_PASS");
     frame.Release(); enc.Release(); stream.Release();
     CComPtr<IWICBitmapDecoder> readback;
