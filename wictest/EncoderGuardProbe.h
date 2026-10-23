@@ -86,6 +86,33 @@ inline void VerifyRgbaEncoderCapability(IWICImagingFactory* fac) {
     if(!rgb24||!rgba32||rgb48||rgba64)
         throw std::runtime_error("HEIC encoder registered formats mismatch verified encode capability");
     puts("WIC_HEIC_ENCODER_REGISTERED_RGBA8_AND_REJECTS_UNPROVEN_HIGHBIT_PASS");
+    // WIC metadata must enumerate the real alpha-capable encode format,
+    // not merely accept it via SetPixelFormat. Never advertise 48/64bpp
+    // encode here: native HEVC high-bit-depth backend may reject them.
+    CComPtr<IWICBitmapEncoderInfo> registered;
+    Check(encoder->GetEncoderInfo(&registered),"RGBA8 encoder component info");
+    UINT formatCount=0;
+    Check(registered->GetPixelFormats(0,nullptr,&formatCount),
+        "RGBA8 encoder registered format count");
+    if(formatCount>32u || !formatCount)
+        throw std::runtime_error("RGBA8 encoder registered format count invalid");
+    std::vector<WICPixelFormatGUID> formats(formatCount);
+    UINT gotCount=0;
+    Check(registered->GetPixelFormats(formatCount,formats.data(),&gotCount),
+        "RGBA8 encoder registered formats");
+    bool has24=false,has32=false,claims48=false,claims64=false;
+    for(UINT i=0;i<gotCount;i++){
+        has24|=IsEqualGUID(formats[i],GUID_WICPixelFormat24bppRGB);
+        has32|=IsEqualGUID(formats[i],GUID_WICPixelFormat32bppRGBA);
+        claims48|=IsEqualGUID(formats[i],GUID_WICPixelFormat48bppRGB);
+        claims64|=IsEqualGUID(formats[i],GUID_WICPixelFormat64bppRGBA);
+    }
+    printf("WIC_HEIC_RGBA8_ENCODER_REGISTERED_FORMATS count=%u rgb24=%u rgba32=%u rgb48=%u rgba64=%u\\n",
+        gotCount,unsigned(has24),unsigned(has32),
+        unsigned(claims48),unsigned(claims64));
+    if(!has24 || !has32 || claims48 || claims64)
+        throw std::runtime_error("Encoder WIC format registry falsely under/overreports tested capabilities");
+    puts("WIC_HEIC_RGBA8_ENCODER_REGISTERED_FORMAT_MATCH_PASS");
     puts("WIC_HEIC_RGBA8_ENCODER_AND_ALPHA_READBACK_PASS");
 }
 inline void Run() {
