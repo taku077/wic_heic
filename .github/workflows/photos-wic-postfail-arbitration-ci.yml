@@ -385,6 +385,22 @@ jobs:
               }
             }
             Write-Host 'WIC_PHOTOS_COLORCONTEXT_ONLY_REPORTED_HRESULT_CHANGE_PASS'
+            # The legacy GUI buttons were enabled, but the raster rotation
+            # Save path could silently re-encode HEIC and strip metadata.
+            # Preserve this precise historical-vs-guarded behavior evidence.
+            foreach($method in @(0,2)) {
+              $key='WIC_PHOTOS_EDITOR_MEMONLY_ROTATOR_WRITESOURCE_METHOD_'+$method
+              foreach($label in @('ORIGINAL118','RESEARCH')) {
+                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
+                $m=[regex]::Match([string]$script:abSurveys[$label],$pattern)
+                if(-not $m.Success){throw ('Missing rotator probe '+$label+' '+$key)}
+                $expect=if($label -eq 'ORIGINAL118'){'0x00000000'}else{'0x88982F81'}
+                if($m.Groups[1].Value.Trim() -cne $expect) {
+                  throw ('Unexpected WIC rotated-raster result '+$label+' '+$key+': '+$m.Groups[1].Value)
+                }
+              }
+            }
+            Write-Host 'WIC_LEGACY_118_UNSAFE_RASTER_ROTATION_ACCEPTED_AND_RESEARCH_REJECTS_AB_PASS'
             Write-Host 'PHOTOS_WIC_SYNTHETIC_118_VS_RESEARCH_ARBITRATION_AB_PASS'
             Write-Host 'WINDOWS10_PHOTOS_GUI_NOT_TESTED_MSI_RELEASE_WITHHELD'
           } finally {
