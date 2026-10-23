@@ -43,11 +43,14 @@ foreach($basePath in @(
   'Registry::HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
 )) {
   foreach($entry in @(Get-ItemProperty -Path $basePath -ErrorAction SilentlyContinue)) {
-    if([string]$entry.DisplayName -match '(?i)^Wic.?Heic(?:\s|$)') {
+    $prop=$entry.PSObject.Properties['DisplayName']
+    if($null -eq $prop){continue}
+    $displayName=[string]$prop.Value
+    if($displayName -match '(?i)^Wic.?Heic(?:\s|$)') {
       $msiMatches.Add([pscustomobject][ordered]@{
-        Name=[string]$entry.DisplayName
-        Version=[string]$entry.DisplayVersion
-        ProductKey=[string]$entry.PSChildName
+        Name=$displayName
+        Version=[string]$(if($entry.PSObject.Properties['DisplayVersion']){$entry.PSObject.Properties['DisplayVersion'].Value}else{''})
+        ProductKey=[string]$(if($entry.PSObject.Properties['PSChildName']){$entry.PSObject.Properties['PSChildName'].Value}else{''})
       })
     }
   }

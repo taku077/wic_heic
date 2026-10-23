@@ -13,6 +13,7 @@
 - `WicHeic-Repair-1.1.18-ORIGINAL-x64.msi`：過去実機とのハッシュ完全一致が確認された旧版の復元用。
 - `WicHeic-Repair-1.1.20-TRIAL-x64.msi`：実験版の新MSI。新しい名前で本番版との誤認を防ぐ。
 - `WIC120_MSI_SHA256.txt`：**同じCI実行で作った新MSI**のSHA-256。
+- `WIC120_DLL_SHA256.txt`：**同じCI実行で作ったWIC DLL**のSHA-256。登録DLLの照合にも使用する。
 - `WIC120_OneTimeTrial.ps1`：標準動作は読み取り専用。明示した `-Install` / `-Restore -Session` 以外ではMSIの変更を行わない。
 - `WIC_Preflight_ReadOnly.ps1`、`WIC_Preflight_Compare.ps1`：Windows/COM/MSI/DLLを読取りと復元前後の完全比較。
 - `Synthetic_Test_Only.heic`：公開人工HEIC。実機試験に使うときは新しい作業フォルダへ**コピー**し、原本を保持する。

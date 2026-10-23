@@ -27,9 +27,10 @@ if(-not [Environment]::Is64BitOperatingSystem){throw 'Windows x64 required'}
 $legacy=Join-Path $root 'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi'
 $trial=Join-Path $root 'WicHeic-Repair-1.1.20-TRIAL-x64.msi'
 $digestPath=Join-Path $root 'WIC120_MSI_SHA256.txt'
+$dllDigestPath=Join-Path $root 'WIC120_DLL_SHA256.txt'
 $inventory=Join-Path $root 'WIC_Preflight_ReadOnly.ps1'
 $comparison=Join-Path $root 'WIC_Preflight_Compare.ps1'
-foreach($p in @($legacy,$trial,$digestPath,$inventory,$comparison)){
+foreach($p in @($legacy,$trial,$digestPath,$dllDigestPath,$inventory,$comparison)){
  if(!(Test-Path -LiteralPath $p -PathType Leaf)){throw "Trial kit file missing: $p"}
  Assert-RealPath $p
 }
@@ -38,10 +39,12 @@ $oldMsiSha='4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'
 $oldDllSha='9E9D2F17038C03A5BF8840A8BD43BC4FDA19C91E947C4CD5904A8209051F93D4'
 $newSha=(Get-Content -LiteralPath $digestPath -Raw -Encoding ASCII).Trim().ToUpperInvariant()
 if($newSha -notmatch '^[0-9A-F]{64}$'){throw 'Invalid candidate MSI digest'}
+$newDllSha=(Get-Content -LiteralPath $dllDigestPath -Raw -Encoding ASCII).Trim().ToUpperInvariant()
+if($newDllSha -notmatch '^[0-9A-F]{64}$'){throw 'Invalid candidate DLL digest'}
 if((Hash $legacy) -cne $oldMsiSha){throw 'Original 1.1.18 MSI is NOT the known exact restore copy'}
 if((Hash $trial) -cne $newSha){throw '1.1.20 trial MSI differs from its qualified SHA-256'}
 function ReadState {
- $path=(& $inventory | Select-Object -Last 1)
+ $path=(& {Set-StrictMode -Off; & $inventory | Select-Object -Last 1})
  if(!($path -and (Test-Path -LiteralPath $path -PathType Leaf))){throw 'WIC read-only inventory unavailable'}
  $j=Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
  if($j.Schema -ne 1 -or @($j.Registrations).Count -ne 12){throw 'WIC inventory incomplete'}
@@ -59,6 +62,10 @@ function GlobalState([object]$report,[string]$version,[string]$expectedDllHash) 
  if($others.Count -ne 1 -or $others[0].Name -ne 'WicHeic Repair Test' -or
     $others[0].Version -ne $version){
   throw "Unexpected global WIC/MSI state, expected $version. No changes allowed"
+ }
+ if($version -eq '1.1.18' -and
+    ([string]$others[0].ProductKey).ToUpperInvariant() -cne '{A9F264DD-92D3-419B-8CA0-A88B00FA42F3}'){
+  throw 'Installed old MSI ProductCode differs from exact bundled 1.1.18 installer'
  }
  $preview=@($report.WicHeicMsi | Where-Object {$_.Name -eq 'WicHeic Fast Thumbnail Preview (Experimental)'})
  if($preview.Count -gt 1 -or @($preview | Where-Object {$_.Version -ne '0.4.0'}).Count){
@@ -133,7 +140,7 @@ if($Install) {
  $sessionPath=Join-Path $root ('WIC120_Session_'+[guid]::NewGuid().ToString('N')+'.json')
  $sessionData=[ordered]@{
   Schema=1;OriginalSnapshot=$state.Path;OriginalPreview=$preview
-  ExpectedOldDllSha=$oldDllSha;ExpectedNewMsiSha=$newSha
+  ExpectedOldDllSha=$oldDllSha;ExpectedNewMsiSha=$newSha;ExpectedNewDllSha=$newDllSha
   StartedUtc=[DateTime]::UtcNow.ToString('o')
  }
  $data=($sessionData | ConvertTo-Json -Depth 5)
@@ -152,7 +159,7 @@ if($Install) {
     $newRegs[0].SHA256 -cne $newRegs[1].SHA256){
   throw "1.1.20 installed but decoder/encoder DLLs not equal. Restore using -Restore -Session $sessionPath"
  }
- GlobalState $after.Data '1.1.20' ([string]$newRegs[0].SHA256)
+ GlobalState $after.Data '1.1.20' $newDllSha
  if((PreviewState) -cne $preview){throw 'v0.4 preview changed; trial NOT qualified'}
  Write-Host 'WIC120_INSTALL_VERIFIED_WINDOWS10_PHOTOS_UI_UNTESTED'
  Write-Host "Restore (after testing): .\WIC120_OneTimeTrial.ps1 -Restore -Session '$sessionPath'"
@@ -166,7 +173,8 @@ if($Restore){
  }
  $saved=Get-Content -LiteralPath $Session -Raw -Encoding UTF8 | ConvertFrom-Json
  if($saved.Schema -ne 1 -or $saved.ExpectedOldDllSha -cne $oldDllSha -or
-    $saved.ExpectedNewMsiSha -cne $newSha){throw 'Unknown or mismatched trial session'}
+    $saved.ExpectedNewMsiSha -cne $newSha -or
+    $saved.ExpectedNewDllSha -cne $newDllSha){throw 'Unknown or mismatched trial session'}
  if(-not (Test-Path -LiteralPath $saved.OriginalSnapshot -PathType Leaf)){
   throw 'Original baseline report missing; restoration blocked'
  }
@@ -178,7 +186,7 @@ if($Restore){
     $newRegs[0].SHA256 -cne $newRegs[1].SHA256){
   throw 'Unexpected decoder/encoder state; restoration requires manual review'
  }
- GlobalState $state.Data '1.1.20' ([string]$newRegs[0].SHA256)
+ GlobalState $state.Data '1.1.20' $newDllSha
  Msi 'x' $trial 'Remove120'
  $none=ReadState
  $others=@($none.Data.WicHeicMsi | Where-Object {$_.Name -ne 'WicHeic Fast Thumbnail Preview (Experimental)'})
