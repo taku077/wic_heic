@@ -461,3 +461,12 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - `WIC_PRIMARY_SWITCH_LOSSLESS_WIC_COPY_BYTE_EQUAL_PASS`、ICC 3144bytes正確な往復、主画像認識、完全バイト同一の無再圧縮処理、4回90度の`6220800`RGBバイト完全一致、旧1.1.18とのWIC合成画像A/B、フォト用MSI配布ブロックいずれも維持。
 - 最新コード修正`2f4b4042e87ff76c840f797d5fe38f8e7998c7b5`、テスト入力stride修正`174a1a79a4051e754ea4a0cb4e982babf845df31`。今回ユーザーPCで旧1.1.18の入替・再導入・画像保存はしていない。
 - **Windows 10 Photos GUIのHEVC警告/編集可否は未合格**。登録画素形式の不足は確実に修正されたが、フォト内部のHEVC利用権限とは別であり、因果を断定しない。元進捗42%からの増分はあくまで保守的な暫定評価とする。
+
+## Encoderの32bpp RGBA8画素形式登録：実エンコード＋アルファ保持で能力を実証（2026-10-24）
+
+**背景**：Decoderの32/48/64bpp追加と区別する。Encoderの`SetPixelFormat(GUID_WICPixelFormat32bppRGBA)`が`S_OK`を返すことだけでWindowsへのWIC Encoder Formats登録を増やしてはいけない。HEVCエンコーダーの対応力と戻り値に食い違いがあり得るため。
+
+- 公開の人工64x64 RGBA配列（左透明・右不透明）を`WritePixels`し、`IWICBitmapFrameEncode::Commit`→`IWICBitmapEncoder::Commit`→同じメモリストリームをWICで再読込する試験`b142490ea9788ca26966544353792d1bb8db9553`。[**CI #39996238521 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/39996238521)：`WIC_HEIC_RGBA8_ENCODER_COMMIT_HRESULT=0x00000000`、画素形式`GUID_WICPixelFormat32bppRGBA`保持、透明～不透明アルファの変化保持。`WIC_HEIC_RGBA8_ENCODER_AND_ALPHA_READBACK_PASS`。
+- WIC Encoder登録へ**32bppRGBAだけ**を追加し、他は既存の24bppRGBを維持（`5bdefdb3ca20859c13065a1bf1547d002dc14bdd`、`112fdc4547935c9f76b7f40f7b794631d627289c`）。同時更新で重複した`Formats`登録を`ffa8a424e5a3466c193671ebf11ec583b2f9141c`で1つに整理。Encoder側のWIC登録はDecoderと異なり、**48bpp/64bppを追加しない**。10bit HEVC再圧縮バックエンドのサポートは未保証。
+- [**CI #39996917726 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/39996917726)：Encoder登録は`WIC_HEIC_ENCODER_REGISTERED_RGBA8 count=2 rgb24=1 rgba32=1 rgb48=0 rgba64=0`。`WIC_HEIC_ENCODER_REGISTERED_RGBA8_AND_REJECTS_UNPROVEN_HIGHBIT_PASS`、実HEIC→WICアルファ再読込、8並列10bit HEIC `CopyPixels`、Decoder登録4形式、EXIF/ICC／ロスレス4回90度画素一致、旧版1.1.18とのA/B、MSI隔離試験すべて成功。
+- 本実装はHEICのアルファ付き人工RGB画像を新規保存できることと**WICコンポーネント情報の整合性**の実証であって、Photos 2026.11090.22001.0の警告・編集ボタン・回転保存を実機で直した証明ではない。HEIC Manager非干渉、旧WIC v1.1.18の画像変形問題継続、ユーザー画像・レジストリ未操作、MSI配布禁止を維持。
