@@ -277,6 +277,59 @@ inline void RejectUnsafeOriginalHeicRasterFallback(IWICImagingFactory* factory) 
     printf("WIC_RAW_HEIC_EXPLICIT_HEVC_AND_CROP_FAIL_CLOSED_PASS\n");
 }
 
+inline void RejectMutationsAfterLosslessCapture(IWICImagingFactory* factory) {
+    // Previously several late setters returned S_OK despite EncoderCommit
+    // writing the already-captured original HEIC container unchanged. That
+    // silently discarded requested ICC, geometry and pixel modifications.
+    const wchar_t* sourceFile=L"samples\\fixture-irot3-exif6.heic";
+    const wchar_t* outputFile=L"samples\\fixture-wic-lossless-state-locked.heic";
+    const auto original=Read(sourceFile);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(sourceFile,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"state-lock source decoder");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"state-lock source frame");
+    UINT w=0,h=0;
+    Check(source->GetSize(&w,&h),"state-lock source size");
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"state-lock encoder");
+    CComPtr<IWICStream> stream;
+    Check(factory->CreateStream(&stream),"state-lock stream");
+    Check(stream->InitializeFromFilename(outputFile,GENERIC_WRITE),
+        "state-lock output");
+    Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),
+        "state-lock encoder initialize");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"state-lock create frame");
+    Check(frame->Initialize(nullptr),"state-lock initialize frame");
+    Check(frame->SetSize(w,h),"state-lock set initial geometry");
+    Check(frame->WriteSource(source,nullptr),"state-lock capture source bytes");
+    auto reject=[&](HRESULT hr,const char* name) {
+        if(hr!=WINCODEC_ERR_WRONGSTATE) {
+            printf("WIC_LOSSLESS_STATE_UNLOCKED %s actual=0x%08X\n",
+                name,(unsigned)hr);
+            throw std::runtime_error("Captured source mutated");
+        }
+    };
+    reject(frame->SetSize(w+1,h),"late SetSize");
+    WICPixelFormatGUID format=GUID_WICPixelFormat24bppRGB;
+    reject(frame->SetPixelFormat(&format),"late SetPixelFormat");
+    reject(frame->SetColorContexts(0,nullptr),"late frame SetColorContexts");
+    reject(encoder->SetColorContexts(0,nullptr),"late encoder SetColorContexts");
+    reject(frame->WriteSource(source,nullptr),"second WriteSource");
+    BYTE pixels[3]={0,0,0};
+    reject(frame->WritePixels(1,3,3,pixels),"late WritePixels");
+    Check(frame->Commit(),"state-lock frame commit");
+    Check(encoder->Commit(),"state-lock encoder commit");
+    frame.Release();encoder.Release();stream.Release();
+    if(Read(outputFile)!=original)
+        throw std::runtime_error("State-lock output differs from original HEIC");
+    if(Read(sourceFile)!=original)
+        throw std::runtime_error("State-lock modified original HEIC");
+    printf("WIC_LOSSLESS_CAPTURE_IMMUTABLE_AND_SOURCE_BYTES_PRESERVED_PASS\n");
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -296,6 +349,7 @@ inline void Run() {
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
     RejectUnsafeOriginalHeicRasterFallback(factory);
+    RejectMutationsAfterLosslessCapture(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
 }
 }
