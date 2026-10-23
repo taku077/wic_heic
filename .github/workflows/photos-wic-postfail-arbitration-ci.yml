@@ -317,6 +317,30 @@ jobs:
               if($output -notmatch 'WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS'){throw 'Survey incomplete'}
               $m=[regex]::Match($output,'WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x([a-fA-F0-9]+)')
               if(!$m.Success){throw 'Survey failed to return capability mask'}
+              # Repeat in a FRESH process with the SAME installed codec.
+              # The old and research RGB fingerprints unexpectedly differed,
+              # despite equal geometry and pinned native dependency refs.
+              # Distinguish a stable codec-version difference from unstable
+              # decoding or per-process memory state before attributing cause.
+              $repeatLines=@(& $exe 2>&1)
+              if($LASTEXITCODE -ne 0){throw ('Repeated WIC survey failed: '+$label)}
+              $repeatOutput=$repeatLines -join [Environment]::NewLine
+              foreach($repeatKey in @('WIC_PHOTOS_PIXEL_SIZE',
+                                      'WIC_PHOTOS_PIXEL_FULLRES_BYTES',
+                                      'WIC_PHOTOS_PIXEL_READBACK_FNV64')){
+                $regex='(?m)^'+[regex]::Escape($repeatKey)+'=([^\r\n]+)'
+                $v1=[regex]::Match($output,$regex)
+                $v2=[regex]::Match($repeatOutput,$regex)
+                if(-not $v1.Success -or -not $v2.Success){
+                  throw ('Missing repeated WIC readback: '+$label+' '+$repeatKey)
+                }
+                $stable=$v1.Groups[1].Value.Trim() -ceq $v2.Groups[1].Value.Trim()
+                Write-Host ('WIC_PHOTOS_PIXEL_SAME_CODEC_REPEAT_STABLE label='+$label+
+                  ' metric='+$repeatKey+' equal='+[int]$stable)
+                if(-not $stable -and $label -eq 'RESEARCH'){
+                  throw ('Research WIC non-deterministic full-resolution decoding: '+$repeatKey)
+                }
+              }
               $script:abSurveys[$label]=$output
               Write-Host ('WIC_PHOTOS_AB_'+$label+'='+$output.Replace([Environment]::NewLine,';'))
               return [Convert]::ToUInt32($m.Groups[1].Value,16)
