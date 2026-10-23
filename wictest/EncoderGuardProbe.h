@@ -176,6 +176,48 @@ inline void VerifyPartialLosslessStreamWriteRollback(IWICImagingFactory* fac) {
         "Failed HEIC output left a partial file instead of empty stream");
     puts("WIC_LOSSLESS_PARTIAL_WRITE_ROLLBACK_PASS");
 }
+// Inject the same partial output fault while the HEVC encoder is producing
+// a NEW, explicitly generated RGB image (as opposed to copying original HEIF).
+inline void VerifyPartialRasterStreamWriteRollback(IWICImagingFactory* fac) {
+    constexpr UINT w=192,h=320;
+    std::vector<BYTE> rgb(size_t(w)*h*3u);
+    for(UINT y=0;y<h;y++)for(UINT x=0;x<w;x++){
+        const size_t at=(size_t(y)*w+x)*3u;
+        rgb[at]=BYTE(x);rgb[at+1]=BYTE(y);rgb[at+2]=BYTE(x+y);
+    }
+    CComPtr<IStream> backing;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&backing),"raster short write backing");
+    CComPtr<IStream> fault;
+    fault.Attach(new(std::nothrow) ShortWriteStream(backing));
+    if(!fault)throw std::bad_alloc();
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
+         &GUID_VendorPrsyahmi,&encoder),"raster short write HEIC encoder");
+    Check(encoder->Initialize(fault,WICBitmapEncoderNoCache),
+         "raster short write encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),
+         "raster short write create frame");
+    Check(frame->Initialize(nullptr),"raster short write frame init");
+    Check(frame->SetSize(w,h),"raster short write dimensions");
+    GUID fmt=GUID_WICPixelFormat24bppRGB;
+    Check(frame->SetPixelFormat(&fmt),"raster short write pixel format");
+    Check(frame->WritePixels(h,w*3,UINT(rgb.size()),rgb.data()),
+         "raster short write synthetic grid");
+    Check(frame->Commit(),"raster short write frame Commit");
+    const HRESULT hr=encoder->Commit();
+    printf("WIC_RASTER_PARTIAL_WRITE_REJECT_HRESULT=0x%08X\n",
+        unsigned(hr));
+    if(SUCCEEDED(hr))throw std::runtime_error(
+        "HEVC raster partial output falsely committed");
+    STATSTG st{};
+    Check(backing->Stat(&st,STATFLAG_NONAME),"raster short write leftover");
+    printf("WIC_RASTER_PARTIAL_WRITE_RESIDUAL_BYTES=%llu\n",
+        static_cast<unsigned long long>(st.cbSize.QuadPart));
+    if(st.cbSize.QuadPart!=0)throw std::runtime_error(
+        "Failed HEVC raster encode left a truncated HEIC stream");
+    puts("WIC_RASTER_PARTIAL_WRITE_ROLLBACK_PASS");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> fac;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
@@ -353,5 +395,6 @@ inline void Run() {
     printf("ENCODER_NONEMPTY_STREAM_AND_THUMBNAIL_FAIL_CLOSED_PASSED\n");
     VerifyRgbaEncoderCapability(fac);
     VerifyPartialLosslessStreamWriteRollback(fac);
+    VerifyPartialRasterStreamWriteRollback(fac);
 }
 } // namespace EncoderGuardProbe
