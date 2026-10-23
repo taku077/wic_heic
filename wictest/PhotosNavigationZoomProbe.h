@@ -96,7 +96,7 @@ inline void VerifySharedFrameConcurrentMta() {
                 workers.reserve(n);
                 for(size_t i=0;i<n;i++) {
                     pixels[i].resize(size_t(stride)*height);
-                    workers.emplace_back([i, &ready, &fire, &results, &shared, &box, &pixels] {
+                    workers.emplace_back([i, &ready, &fire, &results, &shared, &box, &pixels, stride] {
                         const HRESULT apartmentWorker=CoInitializeEx(
                             nullptr,COINIT_MULTITHREADED);
                         ready.fetch_add(1,std::memory_order_release);
