@@ -88,8 +88,8 @@ inline void VerifySharedFrameConcurrentMta() {
                 constexpr size_t n=8;
                 constexpr UINT width=48,height=48,stride=width*3;
                 const WICRect box{0,0,INT(width),INT(height)};
-                std::array<std::vector<BYTE>,n> pixels;
-                std::array<HRESULT,n> results{};
+                std::vector<std::vector<BYTE>> pixels(n);
+                std::vector<HRESULT> results(n,S_OK);
                 std::atomic<unsigned> ready{0};
                 std::atomic<bool> fire{false};
                 std::vector<std::thread> workers;
