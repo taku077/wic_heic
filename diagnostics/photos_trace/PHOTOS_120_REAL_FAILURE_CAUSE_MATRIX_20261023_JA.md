@@ -156,3 +156,15 @@ Microsoft公式 `IWICBitmapFlipRotator` は `IWICBitmapSource` を継承し、�
 - 元HEICの `Exif Orientation=6` は正規化されるため、「画像とHEVCが同一」と「全コンテナーバイト列が完全一致」は区別する。
 
 **検証対象の明確な境界**：WICの`IPropertyBag2`経由で`BitmapTransform`が明示され、入力が`IHeicRawSource`を持つ元の自作デコードフレームである場合のみ。本試験は標準Photos 2026の回転ボタンや保存機能の正常動作を証明していない。ヘッダ/メタ構成の異なるHDR・埋め込みサムネイルを含むHEICは別途安全ゲートが必要。実機でv1.1.18を完成・正常版とみなさない。新MSIは未配布。
+
+## Microsoft公式WIC WriteSource省略規約への修正（2026-10-23）
+
+公式一次資料 https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapframeencode-writesource によると、`IWICBitmapFrameEncode::WriteSource`は、`SetSize`未呼出時には入力`IWICBitmapSource`あるいは指定`WICRect`の寸法を採用し、`SetPixelFormat`未呼出時には入力画像の画素形式を採用しなければならない。Microsoft自身のHEIFサンプル https://learn.microsoft.com/en-us/windows/win32/wic/heif-codec の `RotateAndCropSource` もこれらの呼び出しを省略している。
+
+**再現（修正前）**：[CI #39951239948](https://github.com/taku077/wic_heic/actions/runs/39951239948) にて、公開人工HEICの無回転・`SetSize`および`SetPixelFormat`省略の正規`WriteSource`は `0x88982F81` で不合格。この失敗は、Photosが実際にその保存経路を使用している証明ではないが、WIC公開仕様との実在する非互換の証拠。
+
+**修正**：`wic_heic/HeicBitmapFrameEncode.cpp` の`WriteSource`で不足している出力寸法・画素形式のみを入力ソースの`GetSize`/`GetPixelFormat`から安全に設定する。90°/270°の出力寸法は入れ替え、`WICRect`指定は事前に範囲検証。すでに`SetSize`や`SetPixelFormat`が明示された場合は尊重する。ソースの出所を推測せず、HEICロスレスコピー／角度だけを変更するメタデータ保持経路、圧縮不可の拒否条件を温存する。
+
+**修正後**：[CI #39951609128](https://github.com/taku077/wic_heic/actions/runs/39951609128) **全工程成功**。一時的なメモリ`IStream`のみ使用した公式形式の`WriteSource`で、`SetSize`/`SetPixelFormat`なしの無回転コピーと90°ロスレス回転双方が成功し、出力コンテナー全バイトが期待値に一致（10,597バイト）。4回連続回転のRGB全画素一致、危険なラスター回転の拒否、旧版とのA/B API試験も維持。
+
+**次の検証**：EXIF/ICC/サムネイル等を含む異なる人工HEICでも、省略形の`WriteSource`が全バイト保持するか確認。標準フォト実UIの編集・回転・保存とHEVC警告は引き続き **未合格**。安全な復元キットとGUI実機検証が完了するまで、新版MSIを配布しない。v1.1.18も画像変形・保存不具合がある未完成版のまま。
