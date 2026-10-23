@@ -516,3 +516,18 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 - 製品修正`f450824ac973cf9a3b0d7143ce98e07667c8a388`、`428aff2f274c98ece6e8157f65753fb2066d7edd`：出力開始を`m_OutputAttempted`に記録し、**成功したCommitだけでなく出力着手後の失敗**も、そのエンコーダーでの再試行やフレーム操作の対象外にする。開始前の引数エラー・フレーム未確定とは区別する。
 - [**CI #40003964073 成功**](https://github.com/taku077/wic_heic/actions/runs/40003964073)：ロスレス失敗後／通常圧縮失敗後の再試行は両方`0x88982F04`（`WINCODEC_ERR_WRONGSTATE`）、元の出力復旧後は残存0バイト。`WIC_ENCODER_FAILED_COMMIT_RETRY_LOSSLESS_BLOCKED_PASS`、`WIC_ENCODER_FAILED_COMMIT_RETRY_RASTER_BLOCKED_PASS`。同じCIで`WIC_HEIC_FRAME_BLOCK_READER_COM_IDENTITY_AND_EXIF_PASS`、両経路の短い出力の復旧、ICC 3144 bytes保存、4回90度全RGB画素一致、旧v1.1.18とのWIC合成HEIC A/Bを再確認。
 - **残る制限**：これは隔離CIの人工ストリームによるWICエンコーダー安全性の改善である。出力先が`SetSize(0)`に非対応の場合は失敗後の切り詰め成功を保証できない。Windows10 PhotosのHEVC拡張警告や編集ボタンが有効になったという証拠ではない。旧1.1.18の保存失敗・画像変形は未解決。ユーザーPC、原本画像、HEIC Managerには変更なし。研究MSI配布ゲートは閉鎖を維持。
+
+
+## 2026-10-24 続行：未知の IWICBitmapSource ラッパーに隠されたHEIC回転のメタデータ喪失対策（赤→緑）
+
+**新しい事実**：既に対策済みの標準WIC FlipRotator/FormatConverter/Scaler/Clipper/IWICBitmapとは異なり、元のHEICを90°回転した画素を中継するだけの独自 `IWICBitmapSource` COMオブジェクトが、列挙済み危険インターフェースと私有 `IHeicRawSource` のすべてを隠せる。製品側 `WriteSource` はこの「由来不明の画素ソース」を既定(DontCare)で受理し、元コンテナーにあったEXIF、MakerNote、ICC、HDR/auxiliary等を再圧縮出力へ継承する証拠なく `S_OK` を返す危険が残っていた。
+
+- 試験コミット `6e96594d6908bb319a57bf269c2b0909cb9d1805`、ヘッダー修正 `ae1489602e741787e24daf8b8c5ac8dc02bf2bd8`。`OpaqueSyntheticWicSource` は公開人工HEICのWIC回転画素のみを委譲し、外部へ `IUnknown` と `IWICBitmapSource` 以外を公開しない。入力は公開人工サンプル、出力は空のメモリIStream。ユーザー写真・PC・登録は不使用。
+- **RED** [CI #40006588536](https://github.com/taku077/wic_heic/actions/runs/40006588536)：`WIC_OPAQUE_HEIC_SOURCE_REJECT compression=0 hr=0x00000000`、`Opaque HEIC raster silently accepted despite unknown provenance` で意図通りFAIL。先行CI #40006304432 は新規試験コードのヘッダー不足で失敗しており、製品不具合のRED証拠として扱わない。
+- 製品修正 `c9644276aebfed417cace20908cae36f5855b012`：生の元HEIC情報が確認できる無再圧縮経路は維持。標準WICラッパーも従来通り個別に拒否し、それ以外の未知の `IWICBitmapSource` については、明示HEVC圧縮指定があっても `WriteSource` ラスター変換を禁止し `WINCODEC_ERR_UNSUPPORTEDOPERATION` を返す。写真の来歴をピクセルだけから推測しない。
+- 緑修正の最初のCI #40006976862 は新しい拒否2件が `0x88982F81` でPASSしたが、従来の人工PNG/GIF→HEIC総合テストが暗黙の `WriteSource` 転送を使っていたため失敗。そのため **テスト専用の人工PNG/GIF変換だけを明示的 `WritePixels` に移行**したコミット `e6e7d76444b91e196424be1d2354d0375a426ca9`。これは元HEICの損失許容編集ではなく、新規の人工画素入力によるHEIC作成。
+- **GREEN** [CI #40007576374](https://github.com/taku077/wic_heic/actions/runs/40007576374)：全工程 SUCCESS。`WIC_OPAQUE_HEIC_SOURCE_REJECT compression=0 hr=0x88982F81` / `compression=2 hr=0x88982F81`、`WIC_OPAQUE_BITMAPSOURCE_HEIC_PROVENANCE_GUARD_PASS`。また `WIC_FOUR_TURNS_EXACT_RGB_PIXEL_IDENTITY_PASS`（6220800バイト）、フレームメタデータCOM、Exif/ICC、色形式登録4/2、MTA8並列 `CopyPixels`、短いIStream書込みの双方0バイト復旧／Commit再試行禁止、人工PNG/GIF画素エンコード・読戻し、旧1.1.18とのWIC A/Bが合格。ユーザーPC未実施、MSI配布なし。
+
+**重要なトレードオフ**：これによって、元情報を検証できない任意の `IWICBitmapSource` を `WriteSource` でHEICへ新規再圧縮する一般的な互換性も制限される。画素のみの新規ファイル生成は `WritePixels` で可能。ただし、実フォトが未知のラッパーを使うなら安全拒否となり、回転保存を可能にする修正ではない。出自追跡・メタデータ転送が可能な専用編集経路の開発が引き続き必要。Microsoft WIC仕様は `WriteSource` に一般の `IWICBitmapSource` を許しており、この実装の制限は写真保護を優先した研究版ポリシーである。https://learn.microsoft.com/ja-jp/windows/win32/api/wincodec/nf-wincodec-iwicbitmapframeencode-writesource
+
+**標準フォトP0は未達**：HEVC警告解消、編集ボタン有効化、無変形な実GUI回転保存、全メタデータ保持のWindows 10実機試験は成功していない。旧v1.1.18はUI比較基準だけで、変形・保存エラーのある未完成版。HEIC Manager/ユーザー元画像に変更なし。未完成MSI配布ゲートを維持。
