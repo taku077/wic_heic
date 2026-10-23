@@ -104,10 +104,8 @@ $candidates=@(Get-Process -ErrorAction SilentlyContinue | Where-Object {
 })
 foreach($p in $candidates) {
  $identified=New-Object 'System.Collections.Generic.List[string]'
- # Do NOT record DLL paths or mapped bytes. A module basename alone cannot
- # distinguish a stale/unregistered codec DLL from the registered WIC binary.
- # This is a SHA-256 comparison of the MODULE'S ON-DISK FILE with the
- # registered decoder+encoder files; it does not hash process memory.
+ # Compare each mapped DLL's on-disk file with the registered codec DLLs.
+ # Never expose DLL paths, module contents or file hashes per process.
  $mappedComparison='MODULE_NOT_OBSERVED'
  $registeredDecoder=@($wics | Where-Object { $_.Role -eq 'Decoder' } | Select-Object -First 1)
  $registeredEncoder=@($wics | Where-Object { $_.Role -eq 'Encoder' } | Select-Object -First 1)
@@ -115,7 +113,26 @@ foreach($p in $candidates) {
  try {
   foreach($m in $p.Modules) {
    $nm=[IO.Path]::GetFileName([string]$m.ModuleName).ToLowerInvariant()
-   if($nm -match '^(wic_heic[.]dll|wicheicprivatecodec[.]dll|windowscodecs[.]dll|heif[.]dll|hevc[.]dll|mshevcdec[.]dll)
+   if($nm -match '^(wic_heic[.]dll|wicheicprivatecodec[.]dll|windowscodecs[.]dll|heif[.]dll|hevc[.]dll|mshevcdec[.]dll)$'){
+    if(-not $identified.Contains($nm)){$identified.Add($nm)}
+   }
+   if($nm -eq 'wic_heic.dll') {
+    $mappedComparison='MODULE_FILE_HASH_UNAVAILABLE'
+    try {
+     $moduleFile=[string]$m.FileName
+     if(-not [string]::IsNullOrWhiteSpace($moduleFile) -and
+        (Test-Path -LiteralPath $moduleFile -PathType Leaf)) {
+      $actualHash=(Get-FileHash -LiteralPath $moduleFile -Algorithm SHA256 -ErrorAction Stop).Hash
+      if($registeredDecoder.Count -eq 1 -and $registeredEncoder.Count -eq 1 -and
+         $actualHash -eq [string]$registeredDecoder[0].Sha256 -and
+         $actualHash -eq [string]$registeredEncoder[0].Sha256) {
+       $mappedComparison='MATCHES_REGISTERED_ON_DISK_SHA256'
+      } else {
+       $mappedComparison='DIFFERS_FROM_REGISTERED_ON_DISK_SHA256'
+      }
+     }
+    } catch { $mappedComparison='MODULE_FILE_HASH_UNAVAILABLE' }
+   }
   }
  } catch {
   $moduleStatus='UNAVAILABLE_ACCESS_DENIED_OR_PROCESS_EXITED'
@@ -165,92 +182,7 @@ $report=[ordered]@{
  VisiblePhotosWicCorrelation=$correlation
  PhotosProcessModuleSnapshot=@($processes.ToArray())
  RegisteredCustomWicDllHashes=$wics
- Interpretation='The mapped DLL on-disk SHA256 comparison can exclude a different module filename target, but NOT prove the bytes in process memory or which WIC API the editor called. Window PID/module associations are instantaneous. No module loaded now is NOT proof none was used earlier.'
- FileContentsOrPhotosAccessed=$false
- PersistentSystemChanges=$false
-}
-$file=Join-Path $dir ('Photos_WIC_Process_ReadOnly_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+$PID+'.json')
-$payload=$report|ConvertTo-Json -Depth 6
-$buf=(New-Object Text.UTF8Encoding($false)).GetBytes($payload)
-$stream=[IO.File]::Open($file,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
-try {$stream.Write($buf,0,$buf.Length)}finally {$stream.Dispose()}
-Write-Host 'PHOTOS_WIC_PROCESS_WINDOW_CORRELATION_READONLY_PASS'
-Write-Host ('PhotosProcessCandidates='+$processes.Count)
-Write-Host ('WindowScan='+$windowScan)
-Write-Host ('VisiblePhotosWicCorrelation='+$correlation)
-Write-Host "Report=$file"
-Write-Host 'This report cannot by itself establish why editing is disabled.'
-){
-    if(-not $identified.Contains($nm)){$identified.Add($nm)}
-   }
-   if($nm -eq 'wic_heic.dll') {
-    $mappedComparison='MODULE_FILE_HASH_UNAVAILABLE'
-    try {
-     $moduleFile=[string]$m.FileName
-     if(-not [string]::IsNullOrWhiteSpace($moduleFile) -and
-        (Test-Path -LiteralPath $moduleFile -PathType Leaf)){
-      $actualHash=(Get-FileHash -LiteralPath $moduleFile -Algorithm SHA256 -ErrorAction Stop).Hash
-      if($registeredDecoder.Count -eq 1 -and $registeredEncoder.Count -eq 1 -and
-         $actualHash -eq [string]$registeredDecoder[0].Sha256 -and
-         $actualHash -eq [string]$registeredEncoder[0].Sha256) {
-       $mappedComparison='MATCHES_REGISTERED_ON_DISK_SHA256'
-      } else {
-       $mappedComparison='DIFFERS_FROM_REGISTERED_ON_DISK_SHA256'
-      }
-     }
-    } catch {
-     $mappedComparison='MODULE_FILE_HASH_UNAVAILABLE'
-    }
-   }
-  }
- } catch {
-  $moduleStatus='UNAVAILABLE_ACCESS_DENIED_OR_PROCESS_EXITED'
- }
- $topWindows=0;$hostedWindows=0
- if($null -ne $windowCounts -and $windowCounts.ContainsKey([int]$p.Id)) {
-  $topWindows=[int]$windowCounts[[int]$p.Id][0]
-  $hostedWindows=[int]$windowCounts[[int]$p.Id][1]
- }
- $processes.Add([pscustomobject][ordered]@{
-  Name=[string]$p.ProcessName
-  PID=[int]$p.Id
-  ModuleScan=$moduleStatus
-  RelevantModuleBasenames=@($identified.ToArray())
-  VisibleTopLevelWindowCount=$topWindows
-  VisibleHostedChildWindowCount=$hostedWindows
- })
-}
-# Interpret the visible Photos PID to DLL mapping without claiming which
-# process generated a particular message in Windows Photos.
-$visiblePhotos=@($processes | Where-Object {
- ($_.Name -match '^(Microsoft[.]Photos|Photos|PhotosApp)$') -and
- ($_.VisibleTopLevelWindowCount -gt 0 -or $_.VisibleHostedChildWindowCount -gt 0)
-})
-$visibleWithCustom=@($visiblePhotos | Where-Object {
- @($_.RelevantModuleBasenames) -contains 'wic_heic.dll'
-})
-$visibleWithoutCustom=@($visiblePhotos | Where-Object {
- @($_.RelevantModuleBasenames) -notcontains 'wic_heic.dll'
-})
-$correlation='NO_VISIBLE_PHOTOS_PROCESS_OBSERVED'
-if($windowScan -ne 'OK') {
- $correlation='WINDOW_SCAN_UNAVAILABLE'
-} elseif($visibleWithCustom.Count -gt 0 -and $visibleWithoutCustom.Count -gt 0) {
- $correlation='MIXED_VISIBLE_PHOTOS_PROCESSES'
-} elseif($visibleWithCustom.Count -gt 0) {
- $correlation='VISIBLE_PHOTOS_PROCESS_HAS_CUSTOM_WIC_MODULE'
-} elseif($visibleWithoutCustom.Count -gt 0) {
- $correlation='VISIBLE_PHOTOS_PROCESS_WITHOUT_CUSTOM_WIC_MODULE'
-}
-$report=[ordered]@{
- Schema=2
- CollectedAtUtc=[DateTime]::UtcNow.ToString('o')
- WindowsBuild=[string]$os.CurrentBuild
- WindowScan=$windowScan
- VisiblePhotosWicCorrelation=$correlation
- PhotosProcessModuleSnapshot=@($processes.ToArray())
- RegisteredCustomWicDllHashes=$wics
- Interpretation='A codec module mapped in one Photos process does not prove it belongs to the visible editor. Window counts are an instantaneous PID correlation, not proof of which codec the editor used or why controls are disabled. No module loaded now is NOT proof that none was used before.'
+ Interpretation='A mapped WIC DLL on-disk hash match excludes a different path target, but cannot prove the executing memory image or prove which WIC API the editor called. Module/window PID associations are snapshots, not codec-use evidence.'
  FileContentsOrPhotosAccessed=$false
  PersistentSystemChanges=$false
 }
