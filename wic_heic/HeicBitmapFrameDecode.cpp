@@ -104,6 +104,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::QueryInterface(REFIID riid, vo
 		*ppvObject = static_cast<IWICBitmapSource*>(this);
 	} else if (IsEqualGUID(riid, IID_IWICBitmapFrameDecode)) {
 		*ppvObject = static_cast<IWICBitmapFrameDecode*>(this);
+	} else if (IsEqualGUID(riid, IID_IWICMetadataBlockReader)) {
+		*ppvObject = static_cast<IWICMetadataBlockReader*>(this);
 	} else {
 		hr = E_NOINTERFACE;
 	}
@@ -275,6 +277,60 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__
 	} catch (...) {
 		return WINCODEC_ERR_BADIMAGE;
 	}
+}
+
+// HEIC metadata belongs to the frame itself, so QueryInterface for
+// IWICMetadataBlockReader must return THIS frame. A standalone helper reader
+// could expose a second IUnknown identity and violate core COM invariants.
+// Delegate the enumeration work to the existing EXIF/XMP block parser.
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetContainerFormat(GUID* pguidContainerFormat)
+{
+	if (!pguidContainerFormat) return E_POINTER;
+	*pguidContainerFormat = GUID_ContainerFormatHEIC;
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetCount(UINT* pcCount)
+{
+	if (!pcCount) return E_POINTER;
+	*pcCount=0;
+	try {
+		CHeicMetadataBlockReader* blocks = new(std::nothrow) CHeicMetadataBlockReader(m_Handle);
+		if (!blocks) return E_OUTOFMEMORY;
+		const HRESULT hr=blocks->GetCount(pcCount);
+		blocks->Release();
+		return hr;
+	} catch(const std::bad_alloc&) {return E_OUTOFMEMORY;}
+	catch(...) {return WINCODEC_ERR_BADIMAGE;}
+}
+
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetReaderByIndex(UINT nIndex,
+    IWICMetadataReader** ppIMetadataReader)
+{
+	if (!ppIMetadataReader) return E_POINTER;
+	*ppIMetadataReader=nullptr;
+	try {
+		CHeicMetadataBlockReader* blocks = new(std::nothrow) CHeicMetadataBlockReader(m_Handle);
+		if (!blocks) return E_OUTOFMEMORY;
+		const HRESULT hr=blocks->GetReaderByIndex(nIndex,ppIMetadataReader);
+		blocks->Release();
+		return hr;
+	} catch(const std::bad_alloc&) {return E_OUTOFMEMORY;}
+	catch(...) {return WINCODEC_ERR_BADIMAGE;}
+}
+
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetEnumerator(IEnumUnknown** ppIEnumMetadata)
+{
+	if (!ppIEnumMetadata) return E_POINTER;
+	*ppIEnumMetadata=nullptr;
+	try {
+		CHeicMetadataBlockReader* blocks = new(std::nothrow) CHeicMetadataBlockReader(m_Handle);
+		if (!blocks) return E_OUTOFMEMORY;
+		const HRESULT hr=blocks->GetEnumerator(ppIEnumMetadata);
+		blocks->Release();
+		return hr;
+	} catch(const std::bad_alloc&) {return E_OUTOFMEMORY;}
+	catch(...) {return WINCODEC_ERR_BADIMAGE;}
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetColorContexts(UINT cCount, __RPC__inout_ecount_full_opt(cCount) IWICColorContext **ppIColorContexts, __RPC__out UINT *pcActualCount)
