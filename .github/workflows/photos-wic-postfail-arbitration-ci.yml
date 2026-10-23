@@ -362,7 +362,7 @@ jobs:
             foreach($key in $stableMetrics) {
               $values=@()
               foreach($label in @('ORIGINAL118','RESEARCH')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)'
+                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
                 $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
                 if(-not $match.Success){throw ('Missing editor observation: '+$label+' '+$key)}
                 $values+= $match.Groups[1].Value.Trim()
@@ -375,9 +375,9 @@ jobs:
             foreach($kind in @('CONTAINER','FRAME')){
               $key='WIC_PHOTOS_EDITOR_'+$kind+'_COLORCONTEXTS_HRESULT'
               $oldMatch=[regex]::Match([string]$script:abSurveys['ORIGINAL118'],
-                  '(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)')
+                  '(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)')
               $newMatch=[regex]::Match([string]$script:abSurveys['RESEARCH'],
-                  '(?m)^'+[regex]::Escape($key)+'=([^\\r\\n]+)')
+                  '(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)')
               if(-not $oldMatch.Success -or -not $newMatch.Success -or
                  $oldMatch.Groups[1].Value -cne '0x88982F81' -or
                  $newMatch.Groups[1].Value -cne '0x00000000'){
