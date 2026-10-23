@@ -9,6 +9,9 @@ private:
 	bool m_IccExplicitlySet;
 	// Disallow new frames or metadata changes after a successful Commit.
 	bool m_Committed;
+	// First output attempt is terminal even if IStream partially fails.
+	// A retry could duplicate libheif context frames or leak truncated data.
+	bool m_OutputAttempted;
 	IStream* m_Stream;
 
 public:
