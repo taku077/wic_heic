@@ -316,9 +316,15 @@ inline void RejectWrappedRotationWithLostHeicProvenance(IWICImagingFactory* fact
     WICRect whole{0,0,int(w),int(h)};
     Check(clipper->Initialize(scaler,&whole),"wrapped raster clipper init");
 
-    IWICBitmapSource* views[]={converter,scaler,clipper};
-    const char* labels[]={"converter","scaler","clipper"};
-    for(int kind=0;kind<3;++kind) {
+    // A WIC caller may materialize the rotated HEIC into an IWICBitmap.
+    // Unlike FlipRotator/Scaler/Converter, the resulting bitmap no longer
+    // exposes any transformation or source-provenance interface.
+    CComPtr<IWICBitmap> materialized;
+    Check(factory->CreateBitmapFromSource(rotator,WICBitmapCacheOnLoad,
+        &materialized),"materialize HEIC rotation without provenance");
+    IWICBitmapSource* views[]={converter,scaler,clipper,materialized};
+    const char* labels[]={"converter","scaler","clipper","bitmap"};
+    for(int kind=0;kind<4;++kind) {
         for(int mode=0;mode<2;++mode) {
             CComPtr<IWICBitmapEncoder> encoder;
             Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
