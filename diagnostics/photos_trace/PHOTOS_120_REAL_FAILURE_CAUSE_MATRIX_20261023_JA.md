@@ -283,3 +283,16 @@ HEICに対して`IWICBitmapFrameEncode::SetPixelFormat`で元WICデコーダー�
 4. 旧版の回転表示の破綻が実機報告されているので、RGB完全一致を理由に研究版を旧版へ近づける修正を行うのは危険。独立の期待画像・色空間基準でどちらが正しいかを評価する必要がある。
 
 **未解決・リリースゲート**：本結果がPhotos 2026.11090.22001.0のHEVC警告／編集ボタン制御と因果関係を持つ証拠はない。Windows10実機GUIのフル表示、回転保存、実ファイル保護も未達。追加MSI配布は保留。次の調査はこの実測差分の原因解析と、標準Photosの実際のコーデック選択・UI判定経路の把握を区別して進める。
+
+## 主画像IDが先頭でないHEICのWICフレーム取り違え：赤→緑の実証と修正（2026-10-23）
+
+**実際に発見したバグ**：`CHeicBitmapDecoder::GetFrame(0)` はHEIF `pitm` 主画像を使わず `get_list_of_top_level_image_IDs()[0]` を採用していた。`QueryCapability` も先頭項目から機能を判断していた。主画像IDとトップレベル項目配列の並びが異なるファイルで、WIC 0番フレームが**非主画像**になり、標準フォトや保存の対象画像取り違えにつながり得る。
+
+**異なる試験条件（既存試験の繰り返しではない）**：
+- Git管理済みの公開人工HEIC `fixture-irot3-exif6-noaux.heic` は1080×1920の画像を含み、`pitm` の主画像ID=1、画像項目ID=1と2、Exif項目ID=3を持つ。ローカルメモリ複製の`pitm`のIDを1→2と**2バイトフィールドの1バイトのみ**変更し、元の人工ファイルを一切変更しない。
+- 改変した人工コンテナーからWIC `GetFrame(0)` を取得、内部`IHeicRawSource::ReadFullContent`でそれが現在の主画像を示すかを試験。`GetFrame(1)` は非主画像として原本転送を拒否すべき。メモリ内だけで完結する。テスト `wictest/WICDecoderCapabilityProbe.h::VerifyPrimarySelectionWhenPitmChanges`。
+- 試験追加 `d6e825691152eba8a93c06492cd63e78f11b9ea6`、専用テストヘッダー修正 `fd15695e5a89469f42551576fc244607a7b6fdf9`。[失敗CI #39969145167](https://github.com/taku077/wic_heic/actions/runs/39969145167)：`WIC_PRIMARY_SWITCH_FRAME_ZERO_RAW_HRESULT=0x88982F81`、「WIC GetFrame(0) does not point to HEIF pitm primary」。これが**製品コードにある再現可能なバグ**である。
+- 修正 `71158e42ece7d224eda307050a443ae59361cb72`：`GetFrame(0)`で`get_primary_image_handle()`を選択し、2番以降にその他の画像を重複なく割り当てる。`QueryCapability`でも主画像を基準に判断する。[成功CI #39969507523](https://github.com/taku077/wic_heic/actions/runs/39969507523)：`WIC_PRIMARY_SWITCH_FRAME_ZERO_RAW_HRESULT=0x00000000`、`WIC_PRIMARY_HEIC_FRAME_ZERO_INVARIANT_PASS`。他の4回転・画素一致、変換ラッパーの損失防止、ICC、WICとv0.4.0隔離共存、歴史的v1.1.18とのA/BテストもPASS。
+- 追加保存検証 `308a6941b3744c9d05c97d44142bb2b8c0554bf9`：`pitm=2`になった合成人工HEICについて、WICエンコーダーの実際の`WriteSource/Commit`が元コンテナーと**全バイト一致**すること、非主画像は`WINCODEC_ERR_UNSUPPORTEDOPERATION`で拒否され、出力ストリームが0バイトに留まることを検証する。検証結果は同コミットのWindows CIを参照。
+
+**重要な限定**：この不整合は「トップレベル画像の列挙順が主画像順と違う」HEICに特有であり、ユーザー実機で報告されたHEVC拡張警告・編集ボタン無効化や全ての回転バグの単一原因だと断定しない。Win10 Photos GUIの実機確認は未実施。歴史的v1.1.18は引き続き画像変形と保存エラーを抱える比較版。未確認MSIの配布は禁止。次に必要なのは実際のフォトからどのWIC/HEVC経路が選択されるかの切り分け。
