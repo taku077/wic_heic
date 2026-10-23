@@ -98,7 +98,11 @@ inline void Run() {
     Check(protectedFrame->SetSize(W,H),"Protected dimensions");
     GUID rgb=GUID_WICPixelFormat24bppRGB;
     Check(protectedFrame->SetPixelFormat(&rgb),"Protected format");
-    Check(protectedFrame->WriteSource(source,nullptr),"Protected source");
+    // Preserve the output-stream sentinel test without using the now
+    // forbidden ambiguous bitmap WriteSource. Explicit pixels are safe
+    // here because the grid was generated in this test, not from HEIC.
+    Check(protectedFrame->WritePixels(H,W*3,static_cast<UINT>(pixels.size()),
+                                       pixels.data()),"Protected synthetic pixels");
     Check(protectedFrame->Commit(),"Protected frame commit");
     HRESULT protectHr=protectedEnc->Commit();
     if(protectHr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
