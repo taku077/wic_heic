@@ -297,6 +297,21 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
+          # Source-of-truth: the SHA-pinned 1.1.18 MSI artifact in Actions
+          # run 39433397223 was built at a18b9ab, NOT at later f5b66fe.
+          # The intervening 59 commits include material 10-bit frame decoder
+          # and ICC changes, so using f5 as the binary's source baseline
+          # misattributes real WIC pixel and color-context differences.
+          $historicalRun=Invoke-RestMethod -Method Get -Uri 'https://api.github.com/repos/taku077/wic_heic/actions/runs/39433397223' -Headers @{
+            Authorization='Bearer '+ '${{ github.token }}'
+            'X-GitHub-Api-Version'='2022-11-28'
+            'User-Agent'='WIC-Photos-Research-CI'
+          }
+          if($historicalRun.head_sha -cne 'a18b9ab146ca4d6f7b46a86507d7f0d0d882dc87' -or
+             $historicalRun.conclusion -cne 'success') {
+            throw 'Historical 1.1.18 MSI source provenance changed unexpectedly'
+          }
+          Write-Host 'WIC_118_SOURCE_COMMIT_PROVENANCE_PINNED_PASS'
           $old=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'historical118') -Recurse -Filter '*.msi' -File)
           if($old.Count -ne 1){throw 'Historical 1.1.18 MSI missing or ambiguous'}
           if((Get-FileHash -LiteralPath $old[0].FullName -Algorithm SHA256).Hash -ne '4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'){throw 'Historical MSI hash mismatch'}
