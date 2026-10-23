@@ -22,6 +22,8 @@ private:
 	// An absent ICC request differs from SetColorContexts(0).
 	bool m_IccExplicitlySet;
 	WICPixelFormatGUID m_PixelFormat;
+	// Caller-specified output format vs WriteSource's implicit negotiation.
+	bool m_PixelFormatExplicitlySet;
 	int m_BitDepthPerChannel;
 
 protected:

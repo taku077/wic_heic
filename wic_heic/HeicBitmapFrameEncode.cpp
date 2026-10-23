@@ -37,6 +37,7 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	, m_LosslessReady(false)
 	, m_IccExplicitlySet(false)
 	, m_PixelFormat(GUID_WICPixelFormat24bppRGB)
+	, m_PixelFormatExplicitlySet(false)
 	, m_BitDepthPerChannel(8)
 {
 	// The encoder owns each frame; never AddRef the parent here.
@@ -188,6 +189,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 	// Report the actual accepted pixel format back to the caller.
 	// Otherwise Photos may write BGR bytes into an RGB frame or vice versa.
 	*pPixelFormat = m_PixelFormat;
+	m_PixelFormatExplicitlySet=true;
 	WicHeicDiagnostic::Emit("SetPixelFormat",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod);
 	return S_OK;
 }
@@ -272,6 +274,19 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 // context request. SetColorContexts(0) is NOT the same as no request.
 // Query only the exact COM source frame passed to WriteSource, never a
 // previously viewed image or process-global state.
+// Never report a bit-depth/channel-format conversion as completed merely
+// because the HEVC source was copied without decoding. An omitted caller
+// SetPixelFormat is different: the lossless original may be retained.
+static bool RequestedPixelFormatMatchesSource(IWICBitmapSource* source,
+    bool explicitlySet, const WICPixelFormatGUID& requested)
+{
+    if(!explicitlySet) return true;
+    if(!source) return false;
+    WICPixelFormatGUID actual{};
+    return SUCCEEDED(source->GetPixelFormat(&actual)) &&
+           IsEqualGUID(actual,requested);
+}
+
 static bool RequestedICCMatchesSource(IWICBitmapSource* bitmap,
     bool explicitlySet, const std::vector<uint8_t>& requested)
 {
@@ -338,6 +353,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		if (FAILED(hr)) return hr;
 		hr=SetPixelFormat(&sourceFormat);
 		if (FAILED(hr)) return hr;
+		// The automatic negotiation is NOT an explicit caller request.
+		m_PixelFormatExplicitlySet=false;
 		WicHeicDiagnostic::Emit("WriteSourceAutoPixelFormat",m_Width,m_Height,
 			m_BitmapTransform,m_HeifCompressionMethod,"source-format");
 	}
@@ -359,9 +376,11 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 			// No explicit color request retains the entire source container.
 			const bool sameIcc=RequestedICCMatchesSource(pIBitmapSource,
 				m_IccExplicitlySet,m_IccProfile);
+			const bool sameFormat=RequestedPixelFormatMatchesSource(
+				pIBitmapSource,m_PixelFormatExplicitlySet,m_PixelFormat);
 			UINT w=0,h=0;
 			HRESULT hr = pIBitmapSource->GetSize(&w,&h);
-			if (SUCCEEDED(hr) && sameIcc && m_Width == w && m_Height == h) {
+			if (SUCCEEDED(hr) && sameIcc && sameFormat && m_Width == w && m_Height == h) {
 				std::vector<uint8_t> originalBytes;
 				hr = originalSource->ReadFullContent(&originalBytes);
 				originalSource->Release();
@@ -403,6 +422,15 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 			WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
 				m_BitmapTransform,m_HeifCompressionMethod,
 				"lossless-rotation-icc-edit-not-supported",
+				WINCODEC_ERR_UNSUPPORTEDOPERATION);
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
+		if(!RequestedPixelFormatMatchesSource(pIBitmapSource,
+		        m_PixelFormatExplicitlySet,m_PixelFormat)) {
+			raw->Release();
+			WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+				m_BitmapTransform,m_HeifCompressionMethod,
+				"lossless-rotation-pixel-format-change-not-supported",
 				WINCODEC_ERR_UNSUPPORTEDOPERATION);
 			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 		}
