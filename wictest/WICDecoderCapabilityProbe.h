@@ -184,6 +184,47 @@ inline void Survey() {
         static_cast<unsigned long long>(fullBytes));
     printf("WIC_PHOTOS_PIXEL_READBACK_FNV64=%016llX\n",
         static_cast<unsigned long long>(fingerprint));
+    // Synthetic-only aggregate diagnostics, not image bytes. The preceding
+    // A/B showed deterministic but different full-frame RGB hashes. A color
+    // histogram is invariant to pixel positions; matching histogram with
+    // differing full-frame hash means rearrangement, not channel change.
+    uint64_t quadrantTotals[4][3]{};
+    uint32_t histogram[3][256]{};
+    for(UINT y=0;y<frameHeight;++y) {
+        const size_t row=static_cast<size_t>(y)*static_cast<size_t>(strideBytes);
+        for(UINT col=0;col<frameWidth;++col) {
+            const unsigned quadrant=(y>=frameHeight/2?2u:0u)+
+                                    (col>=frameWidth/2?1u:0u);
+            const size_t pixel=row+static_cast<size_t>(col)*3u;
+            for(unsigned channel=0;channel<3;++channel) {
+                const unsigned value=readback[pixel+channel];
+                quadrantTotals[quadrant][channel]+=value;
+                ++histogram[channel][value];
+            }
+        }
+    }
+    uint64_t histogramFingerprint=14695981039346656037ull;
+    for(unsigned channel=0;channel<3;++channel)
+        for(unsigned value=0;value<256;++value) {
+            uint32_t count=histogram[channel][value];
+            for(unsigned shift=0;shift<32;shift+=8) {
+                histogramFingerprint^=static_cast<BYTE>(count>>shift);
+                histogramFingerprint*=1099511628211ull;
+            }
+        }
+    uint64_t channels[3]{};
+    for(unsigned q=0;q<4;++q)
+        for(unsigned c=0;c<3;++c)channels[c]+=quadrantTotals[q][c];
+    printf("WIC_PHOTOS_PIXEL_CHANNEL_TOTALS=%llu,%llu,%llu\n",
+        (unsigned long long)channels[0],(unsigned long long)channels[1],
+        (unsigned long long)channels[2]);
+    printf("WIC_PHOTOS_PIXEL_HISTOGRAM_FNV64=%016llX\n",
+        (unsigned long long)histogramFingerprint);
+    for(unsigned q=0;q<4;++q)
+        printf("WIC_PHOTOS_PIXEL_QUADRANT_%u_CHANNEL_TOTALS=%llu,%llu,%llu\n",
+            q,(unsigned long long)quadrantTotals[q][0],
+            (unsigned long long)quadrantTotals[q][1],
+            (unsigned long long)quadrantTotals[q][2]);
     puts("WIC_PHOTOS_SYNTHETIC_FULLRES_RGB_READBACK_PASS");
     // Observation-only editor preflight matrix. These probes use only an
     // already-present synthetic HEIC and transient COM objects; no WriteSource,
