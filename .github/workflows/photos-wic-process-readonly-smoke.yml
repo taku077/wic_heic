@@ -28,9 +28,22 @@ jobs:
           $items=@(Get-ChildItem 'diagnostics/photos_trace' -Filter 'Photos_WIC_Process_ReadOnly_*.json' -File)
           if($items.Count -ne 1){throw 'Diagnostic must create exactly one new JSON'}
           $j=Get-Content -LiteralPath $items[0].FullName -Encoding UTF8 -Raw | ConvertFrom-Json
-          if($j.Schema -ne 1 -or $j.PersistentSystemChanges -ne $false -or $j.FileContentsOrPhotosAccessed -ne $false){
+          if($j.Schema -ne 2 -or $j.PersistentSystemChanges -ne $false -or $j.FileContentsOrPhotosAccessed -ne $false){
             throw 'Read-only JSON schema/safety assertions failed'
           }
+          if($j.WindowScan -notin @('OK','UNAVAILABLE')){throw 'Window probe must declare its observation quality'}
+          foreach($proc in @($j.PhotosProcessModuleSnapshot)){
+            if($proc.VisibleTopLevelWindowCount -lt 0 -or $proc.VisibleHostedChildWindowCount -lt 0){
+              throw 'Visible window associations must be nonnegative'
+            }
+          }
+          # A dedicated privacy guard: process/window observation MUST NOT
+          # query window titles, screenshot pixels, real photos or documents.
+          $body=Get-Content -LiteralPath $script -Raw -Encoding UTF8
+          foreach($forbidden in @('GetWindowText(', 'PrintWindow(', 'BitBlt(', 'CopyFromScreen(')){
+            if($body.Contains($forbidden)){throw ('Unexpected privacy-invasive API: '+$forbidden)}
+          }
+          Write-Host 'PHOTOS_VISIBLE_UWP_WINDOW_PID_MAP_PRIVACY_GUARD_PASS'
           Write-Host 'PHOTOS_PROCESS_WIC_READONLY_PS51_SMOKE_PASS'
       - name: Exercise identical one-click CMD launcher without privilege or photo access
         shell: powershell
