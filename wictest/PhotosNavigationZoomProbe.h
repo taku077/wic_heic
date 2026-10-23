@@ -115,7 +115,18 @@ inline void VerifySharedFrameConcurrentMta() {
                     std::this_thread::yield();
                 fire.store(true,std::memory_order_release);
                 for(auto& worker:workers)worker.join();
+                // Fingerprint only the disposable synthetic pixels. WIC
+                // HRESULTs and a per-worker byte digest distinguish a
+                // decode failure from nondeterministic thread-visible data.
+                // Do not log paths, image contents or personal metadata.
                 for(size_t i=0;i<n;i++) {
+                    uint64_t digest=14695981039346656037ull;
+                    for(BYTE v:pixels[i]){
+                        digest^=v; digest*=1099511628211ull;
+                    }
+                    printf("WIC_PHOTOS_SHARED_FRAME_WORKER_%zu_HR=0x%08X HASH=%016llX\\n",
+                        i,unsigned(results[i]),
+                        static_cast<unsigned long long>(digest));
                     if(FAILED(results[i])||pixels[i]!=pixels[0])
                         throw std::runtime_error(
                             "Concurrent MTA CopyPixels corrupted common HEIC frame");
