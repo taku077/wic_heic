@@ -7,6 +7,7 @@
 #include "PhotosWicTrace.h"
 #include "HeicColorProfileWic.h"
 #include <stdexcept>
+#include <cmath>
 
 // Convert a row of 16-bit WIC channels (0..65535) to HEIF 10-bit sample
 // values (0..1023). Round-to-nearest minimizes quantization error.
@@ -135,6 +136,25 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetSize(UINT uiWidth, UINT uiH
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetResolution(double dpiX, double dpiY)
 {
+	// WIC SetResolution is a metadata-setting operation, not a request to
+	// resample pixels. Reporting S_OK on an unsupported DPI silently discards
+	// the caller's requested physical-resolution edit during save.
+	// In particular, once lossless HEIC source bytes have been captured they
+	// are immutable and MUST NOT accept any late setters.
+	if (m_Created || m_HasPixels || m_LosslessReady)
+		return WINCODEC_ERR_WRONGSTATE;
+	if (!std::isfinite(dpiX) || !std::isfinite(dpiY) ||
+	    dpiX <= 0.0 || dpiY <= 0.0)
+		return E_INVALIDARG;
+	// The current WIC decoder exposes 96 dpi; native HEIF encoding does not
+	// yet implement propagation of arbitrary physical-resolution metadata.
+	// A default 96-dpi request is supported without changing encoded bytes.
+	if (dpiX != 96.0 || dpiY != 96.0) {
+		WicHeicDiagnostic::Emit("SetResolutionRejected",0,0,
+			m_BitmapTransform,m_HeifCompressionMethod,
+			"dpi-metadata-edit-not-supported",WINCODEC_ERR_UNSUPPORTEDOPERATION);
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	}
 	return S_OK;
 }
 
