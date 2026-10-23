@@ -327,7 +327,13 @@ jobs:
             $env:WIC_HEIC_CAPABILITY_SURVEY_ONLY='1'
             try {
               $lines=@(& $exe 2>&1)
-              if($LASTEXITCODE -ne 0){throw ('Survey failed: '+$label)}
+              if($LASTEXITCODE -ne 0){
+                # These are fixed public synthetic HEIC probe metrics only.
+                # Do not print user paths, image pixels or metadata.
+                Write-Host ('WIC_HISTORICAL_SYNTHETIC_SURVEY_FAILURE label='+$label+
+                   ' lines='+($lines -join ';'))
+                throw ('Survey failed: '+$label)
+              }
               $output=$lines -join [Environment]::NewLine
               if($output -notmatch 'WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS'){throw 'Survey incomplete'}
               $m=[regex]::Match($output,'WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x([a-fA-F0-9]+)')
