@@ -71,8 +71,29 @@ inline void Run() {
     hr=frame->WritePixels(1,srcStride,srcStride,widePixels.data());
     if(hr!=WINCODEC_ERR_WRONGSTATE && hr!=E_INVALIDARG)
         throw std::runtime_error("guard: writing after full frame accepted");
+    // WIC's two-phase encoder contract requires frame.Commit() before
+    // encoder.Commit(). Having all raster rows is not permission to publish
+    // a frame that the client has never finalized.
+    STATSTG beforeFrameCommit{};
+    Check(stream->Stat(&beforeFrameCommit,STATFLAG_NONAME),
+        "Uncommitted frame destination stat");
+    if(beforeFrameCommit.cbSize.QuadPart!=0)
+        throw std::runtime_error("Uncommitted raster frame already emitted bytes");
+    const HRESULT earlyCommit=enc->Commit();
+    printf("WIC_ENCODER_COMMIT_BEFORE_FRAME_COMMIT_HRESULT=0x%08X\\n",
+        unsigned(earlyCommit));
+    if(earlyCommit!=WINCODEC_ERR_WRONGSTATE)
+        throw std::runtime_error("Encoder accepted uncommitted frame");
+    STATSTG afterEarlyCommit{};
+    Check(stream->Stat(&afterEarlyCommit,STATFLAG_NONAME),
+        "Failed early encoder commit destination stat");
+    if(afterEarlyCommit.cbSize.QuadPart!=0)
+        throw std::runtime_error("Encoder published bytes from uncommitted frame");
     Check(frame->Commit(),"frame.Commit");
+    if(frame->Commit()!=WINCODEC_ERR_WRONGSTATE)
+        throw std::runtime_error("Frame accepted a repeated Commit");
     Check(enc->Commit(),"encoder.Commit");
+    puts("WIC_ENCODER_FRAME_COMMIT_ORDER_ENFORCED_AND_STREAM_UNTOUCHED_PASS");
     frame.Release(); enc.Release(); stream.Release();
     CComPtr<IWICBitmapDecoder> readback;
     Check(fac->CreateDecoderFromFilename(L"samples\\guard-writepixels.heic",nullptr,
