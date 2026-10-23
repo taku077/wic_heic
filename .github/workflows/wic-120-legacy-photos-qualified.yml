@@ -325,6 +325,13 @@ jobs:
             }
             $oldDllHash=(Get-FileHash -LiteralPath $oldLocation -Algorithm SHA256).Hash
             Write-Host ('WIC_HISTORICAL_118_DLL_SHA256='+$oldDllHash)
+            # The user's 2026-10-23 read-only report explicitly identifies
+            # this exact v1.1.18 DLL. A different historical installer is not
+            # a valid restore package for their PC.
+            if($oldDllHash -ne '9E9D2F17038C03A5BF8840A8BD43BC4FDA19C91E947C4CD5904A8209051F93D4'){
+              throw 'Historical 1.1.18 DLL differs from the actual user baseline'
+            }
+            Write-Host 'WIC_USER_BASELINE_118_DLL_HASH_MATCH_PASS'
             Msi i $new;$newInstalled=$true;$oldInstalled=$false
             $dll=[string](Get-Item -LiteralPath $decoder -ErrorAction Stop).GetValue('')
             if(!(Test-Path -LiteralPath $dll -PathType Leaf)){throw 'Upgraded global decoder missing'}
