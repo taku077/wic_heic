@@ -187,16 +187,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 	WicHeicDiagnostic::Emit("DecoderCopyPixels",prc?UINT(prc->Width):UINT(m_Handle.get_width()),prc?UINT(prc->Height):UINT(m_Handle.get_height()),0,0,prc?"region":"full");
 	DbgLog("%s: (prc=%p, cbStride=%u, cbBufferSize=%u, pbBuffer=%p)", __FUNCTION__, prc, cbStride, cbBufferSize, pbBuffer);
 
-	try
-	{
-		DecodeImage();
-	}
-	catch (...)
-	{
-		DbgLog("%s: Exception", __FUNCTION__);
-		return WINCODEC_ERR_BADIMAGE;
-	}
-
+	// Photos may probe zoom regions and buffer requirements repeatedly.
+	// Validate caller geometry BEFORE full HEVC decompression so invalid
+	// requests cannot incur an expensive decode or high memory pressure.
 	if (!pbBuffer) {
 		DbgLog("%s: pbBuffer is null", __FUNCTION__);
 		return E_POINTER;
@@ -212,10 +205,6 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 		rc = *prc;
 	}
 
-	DbgLog("CopyPixels: (X=%d,Y=%d,W=%d,H=%d), outStride=%u, inStride=%d, bpp=%d",
-		rc.X, rc.Y, rc.Width, rc.Height,
-		cbStride, m_Stride, m_Bpp);
-
 	if (rc.X < 0 || rc.Y < 0 || rc.Width <= 0 || rc.Height <= 0 ||
 		uint64_t(rc.X) + UINT(rc.Width) > UINT(m_Handle.get_width()) ||
 		uint64_t(rc.Y) + UINT(rc.Height) > UINT(m_Handle.get_height()))
@@ -224,8 +213,19 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 	const uint64_t rowBytes = uint64_t(UINT(rc.Width)) * bytesPerPixel;
 	const uint64_t inputOffset = uint64_t(UINT(rc.X)) * bytesPerPixel;
 	const uint64_t outputBytes = (uint64_t(UINT(rc.Height)) - 1) * cbStride + rowBytes;
-	if (rowBytes > cbStride || outputBytes > cbBufferSize ||
-		inputOffset + rowBytes > m_Stride) return E_INVALIDARG;
+	if (rowBytes > cbStride || outputBytes > cbBufferSize)
+		return E_INVALIDARG;
+	try {
+		DecodeImage();
+	} catch (...) {
+		DbgLog("%s: HEIC decode failed", __FUNCTION__);
+		return WINCODEC_ERR_BADIMAGE;
+	}
+	if (!m_PlaneInterleaved || m_Stride <= 0 ||
+	    inputOffset + rowBytes > UINT(m_Stride))
+		return WINCODEC_ERR_BADIMAGE;
+	DbgLog("CopyPixels: (X=%d,Y=%d,W=%d,H=%d), outStride=%u, inStride=%d, bpp=%d",
+		rc.X, rc.Y, rc.Width, rc.Height,cbStride, m_Stride, m_Bpp);
 	const uint8_t* plane = m_PlaneInterleaved +
 		(size_t(m_Stride) * size_t(rc.Y)) + size_t(inputOffset);
 	uint8_t* out = pbBuffer;
