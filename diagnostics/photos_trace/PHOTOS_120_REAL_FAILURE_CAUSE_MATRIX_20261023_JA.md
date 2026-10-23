@@ -548,3 +548,20 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 **因果関係の範囲**：旧1.1.18も同じAVIF誤登録を含むので、これは研究版だけで標準フォトのHEVC拡張警告が復活した原因ではない。Windows10 Photosでの実際のHEIC編集・回転ボタン復活、正しい回転保存はなお未達。今回の改善をP0 GUI実証済として進捗率を上げない。
 
 **安全上の制約**：ユーザーPCの旧v1.1.18、未導入の別v0.4.0、HEIC Manager、ユーザー写真には一切アクセス・変更していない。研究版MSI配布禁止、元画像自動上書き・削除禁止。次の課題はPhotos UIからのWIC/MF API呼出し実測と、過去A-B-Aでの編集可否の因果特定。既に実施済みのプロセスDLL/SHAスナップショットを繰り返さない。
+
+## 2026-10-24：実旧MSIのビルド元を復元して8bit強制処理を直接検証
+
+この記録内で「歴史的1.1.18のソース」を `f5b66fe89fa203c89967b46399ed6af61a6161e8` と扱っていた箇所は、**旧MSIそのもののソース参照としては誤り**。実際にCI比較で使用しているSHA-256 `4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6` のMSIは [Actions #39433397223](https://github.com/taku077/wic_heic/actions/runs/39433397223)（head SHA `a18b9ab146ca4d6f7b46a86507d7f0d0d882dc87`）で生成された。a18→f5間は59コミット。GitHub Actionsの現行WIC A/Bは過去と同じMSIを使用し、今回そのワークフロー実行のHEADが a18 であることまで GitHub API で自動検証するゲートを追加（`WIC_118_SOURCE_COMMIT_PROVENANCE_PINNED_PASS`）。
+
+### 10bitデコードの実際の旧ソース構造
+- a18 `wic_heic/HeicBitmapFrameDecode.cpp` のコンストラクターには `bpc==10` で `GUID_WICPixelFormat48bppRGB` を設定するコードがある。一部の古い枝では `m_Bpp=32` と48bit間の不整合が見られるが、**直後の `// No HDR support for now` が常に `m_chroma=heif_chroma_interleaved_RGB`, `m_PixelFormat=GUID_WICPixelFormat24bppRGB`, `m_Bpp=24` に上書きする**。ゆえに当該MSIでこの不整合のある48bitコピー経路が走ったと断定してはいけない。旧版は10/12bit入力であっても8bit WIC出力に降格する。
+- 後続f5および研究版は強制RGB24処理を廃止し、10bitソースをWIC 48bpp little-endian、全16bitレンジへ正規化する。これにより旧版とのRGB24ハッシュ差を生み得るが、UIエラーの因果は未確定。
+- 旧MSIの `IWICBitmapFrameDecode::GetColorContexts` は `WINCODEC_ERR_UNSUPPORTEDOPERATION`、f5以降のソースに存在するICC対応処理は旧MSIのバイナリ機能に含まれない。旧バイナリの実測とf5ソース比較を混同しない。
+
+### 人工HEICで実行確認（CI）
+- A/B計測 `wictest/WICDecoderCapabilityProbe.h`：人工10bit HEICのWIC frame0 `GetPixelFormat` と、16×8領域に対する元ピクセル形式の `CopyPixels` を使用。バッファのデータ書込みが宣言したバイト幅どおりか、書き込み前の合成センチネルが末尾に残らないかを測る。ユーザー写真・画像ファイルへの書込みなし。
+- ソース検証の途中で、旧版で48bppが実行されると誤認したテストを作成し [CI #40010897316](https://github.com/taku077/wic_heic/actions/runs/40010897316) で不合格。「旧v1.1.18はRGB48ではない」とログを採取し、旧版コンストラクターの最終的なRGB24強制書換えを発見。修正したテストは **旧24bpp／新48bpp** を個別に正当な仕様として照合する。
+- [**CI #40011973420 全工程SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40011973420)：`WIC_118_SOURCE_COMMIT_PROVENANCE_PINNED_PASS`、`WIC_PHOTOS_NATIVE_HEIC_WIC_BPP=24`（旧版）、`=48`（研究版）、両方の小領域8行が実際に更新され、`WIC_ACTUAL_118_FORCES_RGB24_WHILE_RESEARCH_PRESERVES_RGB48_PASS`。このCIでRGB24フル画像の旧版・研究版FNV64は依然不一致 `WIC_PHOTOS_AB_FULLRES_RGB_FINGERPRINT_MATCH=0`。加えて研究版の4×90度回転（RGB 6,220,800バイト完全一致）、無圧縮保存、ICC/EXIF、部分書込み0バイト復旧、旧MSI復元・プライベートv0.4.0共存ゲートはすべて再合格。
+- 実行結果の限界：CIはWindows Server 2022でWIC APIを検証したものであり、Windows10標準Photosの「HEVC拡張警告」消失、編集ボタン有効化、回転保存の成功や劣化無しを証明しない。ユーザーPCのv1.1.18・写真・HEIC Managerへ変更なし、新MSI配布禁止を継続。
+
+**開発判断**：旧GUIでボタンが有効だったという理由で旧RGB24強制処理を研究版へ無条件で戻すと、10bit画像の精度低下となる。研究版の48bpp保持を守りつつ、**8bitソースを使った旧MSI／研究版のPhotos編集可否比較**と、Photos GUIのWIC/MF経路を別途切り分ける。GUIで警告が復活する原因が10bit処理だと決めつけない。
