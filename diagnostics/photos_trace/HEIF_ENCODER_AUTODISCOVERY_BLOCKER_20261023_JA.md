@@ -25,3 +25,9 @@
 - https://github.com/taku077/wic_heic/actions/runs/39923083939
 - https://learn.microsoft.com/en-us/windows/win32/wic/-wic-codec-error-codes
 - https://learn.microsoft.com/en-us/windows/win32/wic/-wic-generalregentries
+
+## 隔離環境で実施した追加調査（2026-10-23後続）
+- [CI #39924123008](https://github.com/taku077/wic_heic/actions/runs/39924123008): Windows Server 2022のHKLM Microsoft HEIF CLSIDを直接変更しようとしたところ `Requested registry access is not allowed` で失敗。**変更自体が行われておらず、WICの選択結果を検証できない**。ユーザー実機の権限昇格や所有権変更を要求しない。
+- [CI #39925406775](https://github.com/taku077/wic_heic/actions/runs/39925406775): 使い捨てCIユーザーのHKCU\\Software\\Classesに、一時的な `ArbitrationPriority=1` オーバーレイを作成して自動HEIFエンコーダーを再試験したが、引き続き `WINCODEC_ERR_COMPONENTINITIALIZEFAILURE (0x88982F8B)`。終了時に `LAB_HKCU_NATIVE_HEIF_PRIORITY_OVERLAY_REMOVED_PASS` を確認。**レジストリ優先度の簡単な調整は採用しない**。
+- 検証対象はGitHubの使い捨て Windows Server 2022のみであり、Windows 10 Photosにこの結果を直接外挿しない。
+- 代替研究: 2026-10-20および10-22に実機Photos UIで一時成功した「独自HEICコンテナーGUIDを用いるv1.1.18同系統」を安全な候補として継続調査。[旧GUID v1.1.20分離候補](https://github.com/taku077/wic_heic/tree/candidate/photos-legacy-wic-120-safegate) は本件ネイティブGUID実験を巻き込まない。
