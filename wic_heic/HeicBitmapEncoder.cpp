@@ -260,7 +260,23 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 				return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 			ULONG written=0;
 			hr=m_Stream->Write(bytes.data(),static_cast<ULONG>(bytes.size()),&written);
-			if(FAILED(hr)||written!=bytes.size())return STG_E_WRITEFAULT;
+			if(FAILED(hr)||written!=bytes.size()) {
+				// Even a short S_OK write leaves a corrupt HEIC prefix in
+				// an initially empty output stream. Roll it back where the
+				// caller's IStream implements SetSize. Never report success
+				// for an incomplete image, and do not touch input images.
+				ULARGE_INTEGER empty{};
+				const HRESULT reset=m_Stream->SetSize(empty);
+				if(SUCCEEDED(reset)) {
+					LARGE_INTEGER begin{};
+					m_Stream->Seek(begin,STREAM_SEEK_SET,nullptr);
+				}
+				WicHeicDiagnostic::Emit("EncoderCommitPartialWriteRollback",
+					m_Frames[0]->m_Width,m_Frames[0]->m_Height,0,0,
+					SUCCEEDED(reset)?"empty-stream-restored":"stream-rollback-unavailable",
+					STG_E_WRITEFAULT);
+				return STG_E_WRITEFAULT;
+			}
 			m_Committed = true;
 			WicHeicDiagnostic::Emit("EncoderCommitLossless",m_Frames[0]->m_Width,m_Frames[0]->m_Height,m_Frames[0]->m_BitmapTransform,m_Frames[0]->m_HeifCompressionMethod,"heif-copied");
 			return S_OK;
