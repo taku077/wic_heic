@@ -61,7 +61,7 @@ inline void Run() {
     // Navigate image A -> B -> A with independent WIC decoder lifetimes;
     // the Photos GUI's actual keyboard controls cannot run on Server CI.
     Probe(factory,L"samples\\fixture-irot3-exif6-noaux.heic");
-    Probe(factory,L"samples\\03.heic");
+    Probe(factory,L"samples\\fixture-irot3-exif6.heic");
     Probe(factory,L"samples\\fixture-irot3-exif6-noaux.heic");
     puts("WIC_PHOTOS_MULTIFILE_NAVIGATION_DECODE_REGRESSION_PASS");
 }
