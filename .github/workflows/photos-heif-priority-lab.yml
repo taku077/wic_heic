@@ -1,0 +1,325 @@
+name: DISPOSABLE LAB - native HEIF arbitration priority (never deploy)
+on:
+  push:
+    branches: [experiment/photos-heif-priority-disposable-ci]
+    paths: ['.github/workflows/photos-heif-priority-lab.yml', 'wic_heic/**', 'wictest/**', 'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Reuse existing native library cache keyed to pinned submodules
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $refs=(git submodule status --recursive) -join ([string][char]10)
+          $sig=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))).Substring(0,20)
+          "CODEC_DEPS=$sig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore known-good native codec libs
+        id: native
+        uses: actions/cache/restore@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Prepare pinned native dependencies on isolated runner only if uncached
+        if: steps.native.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            choco install nasm -y --no-progress
+            if($LASTEXITCODE -ne 0){throw 'NASM bootstrap failed'}
+            $env:PATH="C:\Program Files\NASM;$env:PATH"
+          }
+          Push-Location 'wic_heic/3rdparty'
+          try {
+            foreach($part in @('libde265','kvazaar','libheif')){
+              cmd /c "call build-$part.bat x64"
+              if($LASTEXITCODE -ne 0){throw "Native dependency failed: $part"}
+            }
+          } finally {Pop-Location}
+      - name: Cache matching deps after clean native compile
+        if: steps.native.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build separate global WIC and isolated 0.4.0 private-preview installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wic_heic.sln /t:Restore /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Solution restore failed'}
+          # Build DLL first, then global MSI with FastPreview.wxs excluded only
+          # from the disposable runner's working tree. Restoring the .wxs file
+          # is mandatory before building the separate v0.4.0 preview MSI.
+          msbuild wic_heic/wic_heic.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Global WIC DLL build failed'}
+          $previewSource='Installer/FastPreview.wxs'
+          $isolatedName='Installer/FastPreview.wxs.ci-global-disabled'
+          if((Test-Path -LiteralPath $isolatedName) -or
+             !(Test-Path -LiteralPath $previewSource)){throw 'Installer isolation preflight failed'}
+          Move-Item -LiteralPath $previewSource -Destination $isolatedName -ErrorAction Stop
+          try {
+            msbuild Installer/Installer.wixproj /p:Configuration=Release /p:Platform=x64 /nologo
+            if($LASTEXITCODE -ne 0){throw 'Global WIC MSI isolated build failed'}
+          } finally {
+            Move-Item -LiteralPath $isolatedName -Destination $previewSource -ErrorAction Stop
+          }
+          if(!(Test-Path -LiteralPath $previewSource) -or
+             (Test-Path -LiteralPath $isolatedName)){
+            throw 'Preview Wix source not restored after global build'
+          }
+          Write-Host 'GLOBAL_WIC_MSI_AND_V04_WIX_SOURCE_ISOLATION_PASS'
+          $msi=@(Get-ChildItem -LiteralPath 'Installer/(Build)' -Filter 'WicHeic.msi' -File -Recurse |
+            Where-Object {$_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]'})
+          if($msi.Count -ne 1){throw "Expected one global WIC x64 MSI"}
+          $dir=Join-Path $env:RUNNER_TEMP 'wic_coexist'
+          New-Item -ItemType Directory -Path $dir | Out-Null
+          Copy-Item -LiteralPath $msi[0].FullName -Destination (Join-Path $dir 'global.msi')
+          Copy-Item -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Destination (Join-Path $dir 'global.dll')
+          # Build WIC read/encode/rotation smoke probe before rebuilding the
+          # decoder with the v0.4 private-only macro.
+          msbuild wictest/wictest.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'WIC integration test executable build failed'}
+          $env:CL='/DWIC_HEIC_PRIVATE_FAST_ADAPTIVE'
+          try {
+            msbuild wic_heic/wic_heic.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /nologo
+            if($LASTEXITCODE -ne 0){throw 'Private 2/4 worker build failed'}
+          } finally {Remove-Item Env:\CL -ErrorAction SilentlyContinue}
+          Copy-Item 'wic_heic/(Build)/x64/Release/wic_heic.dll' 'Installer/WicHeicPrivateCodec.dll'
+          # The standalone read-only diagnosis tool is NEVER packaged in
+          # either codec MSI. File/registry tracing also stays compiled out of
+          # both release DLLs; an opt-in diagnostic DLL requires an explicit
+          # separate compiler definition and distribution.
+          foreach($dll in @((Join-Path $env:RUNNER_TEMP 'wic_coexist/global.dll'),
+                             'Installer/WicHeicPrivateCodec.dll')){
+            $raw=[IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $dll).Path)
+            $ascii=[Text.Encoding]::ASCII.GetString($raw)
+            if($ascii.Contains('WIC_HEIC_TRACE v1')){
+              throw ('Production codec unexpectedly contains diagnostic trace: '+$dll)
+            }
+          }
+          Write-Host 'WIC_GLOBAL_AND_PRIVATE_MSI_DIAGNOSTIC_TRACE_ABSENT_PASS'
+          msbuild wictest/isolated_shell/HeicShellFastPreview.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Preview Shell handler build failed'}
+          msbuild Installer/FastPreview.wixproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Preview MSI build failed'}
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo
+          if($LASTEXITCODE -ne 0){throw 'Disposable 8bit 12MP HEIC generator build failed'}
+          $generator=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          $codec=(Resolve-Path 'Installer/WicHeicPrivateCodec.dll').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          & $generator $codec $fixture
+          if($LASTEXITCODE -ne 0){throw 'Disposable 12MP Main 8bit HEIC generation failed'}
+      - name: Prepare one-time opt-in Photos restore field kit on disposable CI runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $stage=Join-Path $env:RUNNER_TEMP 'Photos_WIC_P0_Trial_Integration'
+          if(Test-Path -LiteralPath $stage){throw 'Refuse to overwrite field trial staging'}
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          $files=@{
+            'Installer/(Build)/x64/Release/en-US/WicHeic.msi'='WicHeic-Repair-EXPERIMENTAL-x64.msi'
+            'diagnostics/windows_install/Install_Experimental_WIC.ps1'='Install_Experimental_WIC.ps1'
+            'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1'='Uninstall_WIC_Trial_RestorePreview.ps1'
+            'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1'='WIC_Preflight_ReadOnly.ps1'
+            'diagnostics/photos_trace/WIC_Photos_P0_OneTimeTrial_README_JA.md'='README_JA.md'
+          }
+          foreach($pair in $files.GetEnumerator()){
+            Copy-Item -LiteralPath $pair.Key -Destination (Join-Path $stage $pair.Value) -ErrorAction Stop
+          }
+          # Synthetic 4032x3024 8bit Main HEIC generated afresh in isolated CI;
+          # avoid using a 10bit RExt diagnostic for the user's initial UI check.
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic') -Destination (Join-Path $stage 'Synthetic_Test_Only.heic') -ErrorAction Stop
+          $digest=(Get-FileHash -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll' -Algorithm SHA256).Hash
+          # The x64 Global WIC DLL has been overwritten by the PRIVATE adaptive
+          # build, so take expected public hash ONLY from pinned global stash.
+          $digest=(Get-FileHash -LiteralPath (Join-Path $env:RUNNER_TEMP 'wic_coexist/global.dll') -Algorithm SHA256).Hash
+          [IO.File]::WriteAllText((Join-Path $stage 'EXPECTED_GLOBAL_WIC_DLL_SHA256.txt'),($digest+[Environment]::NewLine),[Text.Encoding]::ASCII)
+          foreach($p in @('Install_Experimental_WIC.ps1','Uninstall_WIC_Trial_RestorePreview.ps1','WIC_Preflight_ReadOnly.ps1')){
+            $full=(Join-Path $stage $p)
+            $errors=$null;$tokens=$null
+            $null=[Management.Automation.Language.Parser]::ParseFile($full,[ref]$tokens,[ref]$errors)
+            if($errors.Count){throw "Windows PS5.1 syntax guard failed: $p"}
+          }
+          Write-Host 'HEIC_ONE_TIME_TRIAL_KIT_SOURCE_AND_SAFETY_SCRIPTS_PREPARED'
+      - name: Verify global decoder-encoder and private preview stay installed independently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $temp=Join-Path $env:RUNNER_TEMP 'wic_coexist'
+          $global=(Resolve-Path -LiteralPath (Join-Path $temp 'global.msi')).Path
+          $preview=(Resolve-Path -LiteralPath '(Build)/x64/Release/en-US/WicHeicFastPreview.msi').Path
+          $expectedWic=(Get-FileHash -LiteralPath (Join-Path $temp 'global.dll') -Algorithm SHA256).Hash
+          $expectedPrivate=(Get-FileHash -LiteralPath 'Installer/WicHeicPrivateCodec.dll' -Algorithm SHA256).Hash
+          if($expectedWic -eq $expectedPrivate){throw 'Public/private WIC builds unexpectedly identical'}
+          $decoder='{6215667C-74CA-4076-A769-3F834C3F25F5}'
+          $encoder='{0E8AB687-73A5-455B-8C19-B93CA9AC0EEB}'
+          $handler='{D973196C-165C-4FCE-8838-17C37037D384}'
+          $shell='{E357FCCD-A995-4576-B01F-234630154E96}'
+          function ReadVal([string]$p,[string]$root){
+            if($root -eq 'HKLM'){$hive=[Microsoft.Win32.Registry]::LocalMachine}
+            else{$hive=[Microsoft.Win32.Registry]::CurrentUser}
+            $k=$hive.OpenSubKey($p)
+            if(!$k){return ''}
+            try{return [string]$k.GetValue('')}finally{$k.Close()}
+          }
+          function TestGlobal([bool]$exists){
+            foreach($cls in @($decoder,$encoder)){
+              $p=ReadVal "SOFTWARE\Classes\CLSID\$cls\InprocServer32" 'HKLM'
+              if(!$exists){if($p){throw 'Unexpected system WIC registration'};continue}
+              if(!$p -or !(Test-Path -LiteralPath $p -PathType Leaf)){throw "Missing global WIC CLSID: $cls"}
+              if((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash -ne $expectedWic){throw 'System WIC DLL changed'}
+            }
+          }
+          function TestPreview([bool]$exists){
+            $p=ReadVal "SOFTWARE\Classes\CLSID\$handler\InprocServer32" 'HKLM'
+            $u=ReadVal "Software\Classes\.heic\ShellEx\$shell" 'HKCU'
+            if(!$exists){if($p -or $u){throw 'Thumbnail handler unexpectedly registered'};return}
+            if(!$p -or !(Test-Path -LiteralPath $p -PathType Leaf) -or $u -cne $handler){throw 'Preview handler/association missing'}
+            $private=Join-Path (Split-Path -Parent $p) 'WicHeicPrivateCodec.dll'
+            if(!(Test-Path -LiteralPath $private -PathType Leaf)){throw 'Private preview codec missing'}
+            if((Get-FileHash -LiteralPath $private -Algorithm SHA256).Hash -ne $expectedPrivate){throw 'Private preview codec changed'}
+          }
+          function Msi([string]$operation,[string]$path){
+            $argsText="/$operation "+'"'+$path+'"'+' /qn /norestart'
+            $process=Start-Process -FilePath 'msiexec.exe' -ArgumentList $argsText -Wait -PassThru
+            if($process.ExitCode -ne 0){throw "MSI $operation failed code=$($process.ExitCode)"}
+          }
+          TestGlobal $false;TestPreview $false
+          $g=$false;$p=$false
+          try {
+            Msi 'i' $global;$g=$true
+            TestGlobal $true;TestPreview $false
+            Msi 'i' $preview;$p=$true
+            TestGlobal $true;TestPreview $true
+            Msi 'x' $preview;$p=$false
+            TestGlobal $true;TestPreview $false
+            Msi 'x' $global;$g=$false
+            TestGlobal $false;TestPreview $false
+            Write-Host 'HEIC_GLOBAL_THEN_PREVIEW_COINSTALL_AND_ROLLBACK_PASS'
+          } finally {
+            if($p){Msi 'x' $preview}
+            if($g){Msi 'x' $global}
+          }
+          # This is the actual user repair ordering: leave v0.4 present,
+          # add global WIC, remove ONLY global WIC, then remove preview.
+          TestGlobal $false;TestPreview $false
+          $g=$false;$p=$false
+          try {
+            Msi 'i' $preview;$p=$true
+            TestGlobal $false;TestPreview $true
+            $stage=Join-Path $env:RUNNER_TEMP 'Photos_WIC_P0_Trial_Integration'
+            & (Join-Path $stage 'Install_Experimental_WIC.ps1') -CheckOnly
+            if(-not $?){throw 'Field trial pre-install gate failed'}
+            & (Join-Path $stage 'Install_Experimental_WIC.ps1')
+            if(-not $?){throw 'Field trial global WIC installation failed'}
+            $g=$true
+            TestGlobal $true;TestPreview $true
+            # Populate pinned synthetic lossless 90/180/270° fixtures in the
+            # disposable runner exactly as the original native WIC CI does.
+            # No real user media, and the repo fixture is hash-audited below.
+            python -m py_compile 'tools/lossless_heic_rotate_experimental.py'
+            if($LASTEXITCODE -ne 0){throw 'Lossless generator Python syntax invalid'}
+            python 'tools/test_lossless_heic_rotate.py'
+            if($LASTEXITCODE -ne 0){throw 'Lossless synthetic fixture preparation failed'}
+            # Real WIC decoding, encoding, orientation and EXIF readback must
+            # work WITH v0.4 registered; COM registration alone is insufficient.
+            $test=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+            $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+            $fixtureHash=(Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash
+            # LAB ONLY on disposable GitHub runner: never install/change
+            # the Microsoft native codec registry on a user's PC.
+            # The native HEIF encoder was chosen but failed to instantiate;
+            # test whether ArbitrationPriority can safely prefer ours.
+            $nativeCls='{0DBECEC1-9EB3-4860-9C6F-DDBE86634575}'
+            $relative="SOFTWARE\\Classes\\CLSID\\$nativeCls"
+            $nativeKey=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($relative,$true)
+            if($null -eq $nativeKey){throw 'Lab: Windows native HEIF encoder key missing'}
+            $oldValue=$nativeKey.GetValue('ArbitrationPriority',$null)
+            $oldKind=$null
+            if($null -ne $oldValue){$oldKind=$nativeKey.GetValueKind('ArbitrationPriority')}
+            Write-Host ('LAB_NATIVE_HEIF_PRIORITY_BEFORE='+$(if($null -eq $oldValue){'ABSENT'}else{$oldValue.ToString()}))
+            Push-Location 'wictest'
+            try {
+              $nativeKey.SetValue('ArbitrationPriority',1,[Microsoft.Win32.RegistryValueKind]::DWord)
+              Write-Host 'LAB_NATIVE_HEIF_PRIORITY_TEMPORARILY_SET_TO_1'
+              & $test
+              if($LASTEXITCODE -ne 0){throw 'Lab: native HEIF arbitration still failed'}
+            } finally {
+              if($null -eq $oldValue){$nativeKey.DeleteValue('ArbitrationPriority',$false)}
+              else{$nativeKey.SetValue('ArbitrationPriority',$oldValue,$oldKind)}
+              $after=$nativeKey.GetValue('ArbitrationPriority',$null)
+              if($null -eq $oldValue -and $null -ne $after){throw 'Lab native HEIF registry restore failed'}
+              if($null -ne $oldValue -and $oldValue.ToString() -ne $after.ToString()){throw 'Lab native HEIF prior value mismatch'}
+              $nativeKey.Close()
+              Pop-Location
+              Write-Host 'LAB_NATIVE_HEIF_PRIORITY_RESTORED_EXACTLY'
+            }
+            if((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -ne $fixtureHash) {
+              throw 'CI input HEIC was changed by WIC interoperability test'
+            }
+            Write-Host 'HEIC_NATIVE_WIC_DECODE_ENCODE_ROTATE_AND_V04_PREVIEW_COEXIST_PASS'
+            & (Join-Path $stage 'Uninstall_WIC_Trial_RestorePreview.ps1') -CheckOnly
+            if(-not $?){throw 'Field trial pre-uninstall guard failed'}
+            & (Join-Path $stage 'Uninstall_WIC_Trial_RestorePreview.ps1')
+            if(-not $?){throw 'Field trial rollback script failed'}
+            $g=$false
+            TestGlobal $false;TestPreview $true
+            Write-Host 'HEIC_FIELD_TRIAL_INSTALL_ROLLBACK_PRESERVES_EXISTING_V04_PASS'
+            Msi 'x' $preview;$p=$false
+            TestGlobal $false;TestPreview $false
+            Write-Host 'HEIC_V040_PREVIEW_THEN_GLOBAL_COINSTALL_AND_INDEPENDENT_ROLLBACK_PASS'
+          } finally {
+            if($g){Msi 'x' $global}
+            if($p){Msi 'x' $preview}
+          }
+          if(@(git diff --name-only -- 'Installer/' 'wic_heic/').Count -ne 0) {
+            throw 'Disposable CI modified the tracked production files.'
+          }
+          Write-Host 'NO_USER_PC_TESTED=1 WINDOWS_PHOTOS_EDITOR_UNVERIFIED=1 NO_AUTO_INSTALL=1'
+      - name: Assemble clean one-time opt-in trial package only after both complete passes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $source=Join-Path $env:RUNNER_TEMP 'Photos_WIC_P0_Trial_Integration'
+          $out=Join-Path $env:RUNNER_TEMP 'WIC_Photos_P0_Win10_Trial_Candidate'
+          if(Test-Path -LiteralPath $out){throw 'Field artifact staging collision'}
+          New-Item -ItemType Directory -Path $out | Out-Null
+          foreach($name in @(
+            'WicHeic-Repair-EXPERIMENTAL-x64.msi','Install_Experimental_WIC.ps1',
+            'Uninstall_WIC_Trial_RestorePreview.ps1','WIC_Preflight_ReadOnly.ps1',
+            'EXPECTED_GLOBAL_WIC_DLL_SHA256.txt','README_JA.md','Synthetic_Test_Only.heic'
+          )){
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $out $name) -ErrorAction Stop
+          }
+          if(@(Get-ChildItem -LiteralPath $out -File).Count -ne 7){throw 'Candidate kit incomplete'}
+          Write-Host 'HEIC_PHOTOS_SINGLE_P0_TRIAL_PACKAGE_PREPARED_WINDOWS10_UNVERIFIED'
+      # The Windows 10 Photos 2026.11090.22001.0 field report explicitly
+      # showed HEVC extension warning + edit/rotate disabled AFTER the trial
+      # global WIC MSI was installed. Native WIC CI success is not Photos UI
+      # compatibility. Do not issue or reissue an unverified MSI artifact.
+      - name: P0 release gate - WITHHELD until actual Windows 10 Photos editor works
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $built=Join-Path $env:RUNNER_TEMP 'WIC_Photos_P0_Win10_Trial_Candidate'
+          if(-not (Test-Path -LiteralPath (Join-Path $built 'README_JA.md'))){
+            throw 'Synthetic kit staging verification failed'
+          }
+          Write-Host 'PHOTOS_2026_EDITOR_HEVC_WARNING_PERSISTS_AFTER_GLOBAL_WIC_INSTALL'
+          Write-Host 'WINDOWS10_PHOTOS_ACTUAL_ROTATE_EDIT_PASS=0'
+          Write-Host 'EXPERIMENTAL_MSI_ARTIFACT_RELEASE_BLOCKED_NO_FURTHER_FIELD_TESTS'
