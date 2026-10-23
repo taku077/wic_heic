@@ -219,6 +219,26 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 {
 	WicHeicDiagnostic::Emit("EncoderCommitEnter",0,0,0,0,m_Frames.size()==1?"one-frame":"many-frames");
+	// HEVC encoding writes through CHeifStreamWriter. If the destination
+	// IStream accepts only a prefix (even with HRESULT S_OK), libheif throws
+	// after bytes have already reached the destination. In that case a
+	// caller-visible error must not leave a corrupt HEIC prefix behind when
+	// the initially-empty stream supports truncation.
+	auto rollbackRasterPartial = [this]() {
+		if (!m_Stream) return;
+		STATSTG st{};
+		if (FAILED(m_Stream->Stat(&st,STATFLAG_NONAME)) ||
+		    st.cbSize.QuadPart==0) return;
+		ULARGE_INTEGER zero{};
+		const HRESULT reset=m_Stream->SetSize(zero);
+		if (SUCCEEDED(reset)) {
+			LARGE_INTEGER begin{};
+			m_Stream->Seek(begin,STREAM_SEEK_SET,nullptr);
+		}
+		WicHeicDiagnostic::Emit("EncoderRasterPartialWriteRollback",0,0,0,0,
+			SUCCEEDED(reset)?"empty-stream-restored":"stream-rollback-unavailable",
+			reset);
+	};
 	try
 	{
 		if (m_Committed) return WINCODEC_ERR_WRONGSTATE;
@@ -303,16 +323,19 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 	}
 	catch (const heif::Error& ex)
 	{
+		rollbackRasterPartial();
 		Log("Call to CHeicBitmapEncoder::Commit failed: %s", ex.get_message().c_str());
 		return WINCODEC_ERR_INVALIDPARAMETER;
 	}
 	catch (const std::exception& ex)
 	{
+		rollbackRasterPartial();
 		Log("Call to CHeicBitmapEncoder::Commit failed: %s", ex.what());
 		return WINCODEC_ERR_GENERIC_ERROR;
 	}
 	catch (...)
 	{
+		rollbackRasterPartial();
 		Log("Call to CHeicBitmapEncoder::Commit failed: Unknown exception");
 		return WINCODEC_ERR_GENERIC_ERROR;
 	}
