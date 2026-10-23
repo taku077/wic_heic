@@ -51,8 +51,12 @@ inline void Run() {
     if(!IsEqualGUID(bgr,GUID_WICPixelFormat24bppRGB))
         throw std::runtime_error("guard: BGR negotiation must report RGB");
     HRESULT hr=frame->WriteSource(source,nullptr);
-    printf("GUARD WRONG_SIZE_WriteSource=0x%08X (expected E_INVALIDARG)\n",(unsigned)hr);
-    if(hr!=E_INVALIDARG) throw std::runtime_error("guard: dimensions must be rejected");
+    printf("GUARD WRONG_SIZE_WriteSource=0x%08X (expected safe rejection)\n",(unsigned)hr);
+    // A bitmap with untraceable HEIC provenance now fails before the
+    // geometry check. Both failure codes reject the unsafe write; neither
+    // may be converted into a success or any output bytes.
+    if(hr!=E_INVALIDARG && hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("guard: unsafe bitmap or wrong dimensions accepted");
     hr=frame->Commit();
     if(hr!=WINCODEC_ERR_WRONGSTATE) throw std::runtime_error("guard: incomplete frame committed");
 
