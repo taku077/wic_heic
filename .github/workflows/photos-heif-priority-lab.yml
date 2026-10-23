@@ -241,33 +241,33 @@ jobs:
             $test=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
             $fixture=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
             $fixtureHash=(Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash
-            # LAB ONLY on disposable GitHub runner: never install/change
-            # the Microsoft native codec registry on a user's PC.
-            # The native HEIF encoder was chosen but failed to instantiate;
-            # test whether ArbitrationPriority can safely prefer ours.
+            # LAB ONLY on GitHub's disposable Windows runner: never touch
+            # machine-wide Microsoft registrations or the user's computer.
+            # HKCR merges HKCU\Software\Classes with HKLM\Software\Classes;
+            # check whether a per-user priority overlay affects WIC arbitration.
             $nativeCls='{0DBECEC1-9EB3-4860-9C6F-DDBE86634575}'
-            $relative="SOFTWARE\Classes\CLSID\$nativeCls"
-            $nativeKey=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($relative,$true)
-            if($null -eq $nativeKey){throw 'Lab: Windows native HEIF encoder key missing'}
-            $oldValue=$nativeKey.GetValue('ArbitrationPriority',$null)
-            $oldKind=$null
-            if($null -ne $oldValue){$oldKind=$nativeKey.GetValueKind('ArbitrationPriority')}
-            Write-Host ('LAB_NATIVE_HEIF_PRIORITY_BEFORE='+$(if($null -eq $oldValue){'ABSENT'}else{$oldValue.ToString()}))
+            $relative="Software\Classes\CLSID\$nativeCls"
+            $existing=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($relative,$false)
+            if($existing){
+              $existing.Close()
+              throw 'Lab refused to overwrite an existing per-user Microsoft key'
+            }
+            $overlay=$null
             Push-Location 'wictest'
             try {
-              $nativeKey.SetValue('ArbitrationPriority',1,[Microsoft.Win32.RegistryValueKind]::DWord)
-              Write-Host 'LAB_NATIVE_HEIF_PRIORITY_TEMPORARILY_SET_TO_1'
+              $overlay=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($relative)
+              if($null -eq $overlay){throw 'Lab HKCU overlay creation denied'}
+              $overlay.SetValue('ArbitrationPriority',1,[Microsoft.Win32.RegistryValueKind]::DWord)
+              Write-Host 'LAB_HKCU_NATIVE_HEIF_PRIORITY_OVERLAY_SET_1'
               & $test
-              if($LASTEXITCODE -ne 0){throw 'Lab: native HEIF arbitration still failed'}
+              if($LASTEXITCODE -ne 0){throw 'Lab: native HEIF auto-selection failed with HKCU override'}
             } finally {
-              if($null -eq $oldValue){$nativeKey.DeleteValue('ArbitrationPriority',$false)}
-              else{$nativeKey.SetValue('ArbitrationPriority',$oldValue,$oldKind)}
-              $after=$nativeKey.GetValue('ArbitrationPriority',$null)
-              if($null -eq $oldValue -and $null -ne $after){throw 'Lab native HEIF registry restore failed'}
-              if($null -ne $oldValue -and $oldValue.ToString() -ne $after.ToString()){throw 'Lab native HEIF prior value mismatch'}
-              $nativeKey.Close()
+              if($overlay){$overlay.Close()}
+              [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($relative,$false)
+              $check=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($relative,$false)
+              if($check){$check.Close();throw 'Lab: HKCU overlay cleanup failed'}
               Pop-Location
-              Write-Host 'LAB_NATIVE_HEIF_PRIORITY_RESTORED_EXACTLY'
+              Write-Host 'LAB_HKCU_NATIVE_HEIF_PRIORITY_OVERLAY_REMOVED_PASS'
             }
             if((Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -ne $fixtureHash) {
               throw 'CI input HEIC was changed by WIC interoperability test'
