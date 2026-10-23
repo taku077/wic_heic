@@ -1,0 +1,35 @@
+name: Photos WIC process module diagnostic - read-only PS5.1 smoke
+on:
+  push:
+    branches: [investigate/photos-wic-arbitration-after-120-failure]
+    paths: ['.github/workflows/photos-wic-process-readonly-smoke.yml', 'diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  read_only_probe:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate and invoke diagnostic in actual Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5){throw 'Required actual PS5.1'}
+          $script='diagnostics/photos_trace/Photos_WIC_Process_ReadOnly.ps1'
+          $tok=$null;$err=$null
+          $null=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path,[ref]$tok,[ref]$err)
+          if($err.Count -ne 0){throw 'Read-only process probe syntax failed'}
+          & $script
+          if(!$?){throw 'Read-only process probe failed'}
+          $items=@(Get-ChildItem 'diagnostics/photos_trace' -Filter 'Photos_WIC_Process_ReadOnly_*.json' -File)
+          if($items.Count -ne 1){throw 'Diagnostic must create exactly one new JSON'}
+          $j=Get-Content -LiteralPath $items[0].FullName -Encoding UTF8 -Raw | ConvertFrom-Json
+          if($j.Schema -ne 1 -or $j.PersistentSystemChanges -ne $false -or $j.FileContentsOrPhotosAccessed -ne $false){
+            throw 'Read-only JSON schema/safety assertions failed'
+          }
+          Write-Host 'PHOTOS_PROCESS_WIC_READONLY_PS51_SMOKE_PASS'
+          Write-Host 'This Windows Server 2022 test cannot prove Win10 Photos module loading.'
