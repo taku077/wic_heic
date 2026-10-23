@@ -394,3 +394,12 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 4. **修正**：エンコーダーに`m_Committed`を追加。`CreateNewFrame`はエンコーダー未初期化・確定済み・前フレーム未確定なら`WINCODEC_ERR_WRONGSTATE`、保存完了後のICC変更も拒否。成功した親`Commit`でのみ確定状態にする。コード`dd9134de2863059f06a20a21fe604e313c95f855`、`0749c1115f48c2590e61a0556b55ca01cce5a472`。
 5. **過去A/B試験の誤った前提を是正**：旧1.1.18と研究版の「13 API安定比較」自体がエンコーダー`Initialize`を省略した後に`CreateNewFrame`を行っていた。この旧版の不正受理を研究版へ強制するのは不合理なため、比較プローブで公開人工WICメモリストリームを明示的に`Initialize`した後に作成（`a04ad2a87b397277f97878b6112b026121015afc`）。新しい仕様違反を無効化するのではなく、**公式のWIC順序で旧・新の両方を比較**。[成功CI #39988330685](https://github.com/taku077/wic_heic/actions/runs/39988330685)：`WIC_ENCODER_PREINIT_CREATE_FRAME_HRESULT=0x88982F04`、`WIC_ENCODER_OVERLAPPING_FRAME_HRESULT=0x88982F04`、`WIC_ENCODER_POSTCOMMIT_CREATE_FRAME_HRESULT=0x88982F04`、エンコーダー早期Commit拒否、正規保存・ICC・4回転全RGB画素一致、旧版との合成人工HEIC A/BすべてPASS。
 6. **既知の制限**：これらはWIC公開契約とメタデータ保存の安全性を改善したもので、標準フォトのHEVC拡張警告・編集ボタン無効化が解消したという証明ではない。さらにPhotosが指定するWIC frame のメタデータ更新を完全にサポートしたわけでもない。Windows10 Photos GUIとJPEG同等の無再圧縮回転は未合格、**ユーザー向けMSI配布禁止継続**。
+
+## 未初期化／読込失敗したデコーダーからの架空フレーム照会：赤→緑（2026-10-24）
+
+**確認した実バグ**：`CHeicBitmapDecoder::GetFrameCount`は`Initialize`を一度も成功させていなくても、空の`m_Context`からフレーム数0を返し`S_OK`としていた。同じ状態で`GetFrame(0)`は`WINCODEC_ERR_FRAMEMISSING`を返し、API間の状態矛盾がある。また元実装では`m_Reader`が解析前に確保されるため、malformed PNG/HEIFで`Initialize`が`WINCODEC_ERR_BADIMAGE`に失敗した場合にも`m_Reader`が非NULLに残り、プロファイル・サムネイルの条件確認が実際の初期化成功を意味していなかった。
+
+- テスト`62460f661cf6ad584661f388485e4f48e22c4fe6`、[**失敗CI #39988937212**](https://github.com/taku077/wic_heic/actions/runs/39988937212)：`WIC_DECODER_UNOPENED_FRAME_QUERIES count_hr=0x00000000 count=0 frame_hr=0x88982F62`。WIC初期化なしなのにGetFrameCountが成功することを実証。
+- 製品修正`b1c0de561851aebe22b51434dc96985e8040e48f`、`8c80675575eb17b71c78896f75dc4d3befbe3af4`：`m_Initialized`を導入し、HEIF解析が最後まで成功した場合のみ真。GetFrameCount/GetFrame/GetColorContexts/GetThumbnail/CopyOriginalBytesで解析成功確認。フレーム数は失敗時も0に初期化。
+- [**成功CI #39989287630**](https://github.com/taku077/wic_heic/actions/runs/39989287630)：`WIC_DECODER_UNOPENED_FRAME_QUERIES count_hr=0x88982F04 count=0 frame_hr=0x88982F04`、`WIC_DECODER_FAILED_INIT_FRAME_QUERIES count_hr=0x88982F04 count=0 frame_hr=0x88982F04`、`WIC_DECODER_FRAME_QUERIES_REQUIRE_SUCCESSFUL_INITIALIZATION_PASS`。従来のHEIC画像・主画像の完全コピー・ICC・ロスレス4回90度画素一致、旧v1.1.18とのWIC A/Bも全工程PASS。
+- **範囲**：これは画像の不正入力後の状態矛盾を直すもので、Windows 10 PhotosのHEVC警告／編集ボタンの修復が実機で確認されたわけではない。ユーザー写真はテスト対象外、ユーザーPCの設定は変更せず、研究版MSIの配布禁止を維持。
