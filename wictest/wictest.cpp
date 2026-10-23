@@ -19,6 +19,7 @@
 #include "NativeLosslessProbe.h"
 #include "WICDirectLosslessProbe.h"
 #include "WICDecoderCapabilityProbe.h"
+#include "PhotosNavigationZoomProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -376,6 +377,7 @@ int main()
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
 		WICDecoderCapabilityProbe::Run();
+		PhotosNavigationZoomProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		ICCProfileProbe::Run();
