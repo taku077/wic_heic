@@ -219,6 +219,67 @@ inline void RejectRasterOnlyRotation(IWICImagingFactory* factory) {
         throw std::runtime_error("WIC raster wrapper was incorrectly treated as lossless source");
 }
 
+inline void RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(IWICImagingFactory* factory) {
+    // The original 1.1.18 could enable the Photos edit/rotate buttons but
+    // could lose metadata, stretch the image, or fail while saving. This
+    // test covers a specific unsafe WriteSource route, not Photos itself.
+    const wchar_t* sourcePath=L"samples\fixture-irot3-exif6-noaux.heic";
+    const auto original=Read(sourcePath);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(sourcePath,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"rotation-safety decoder");
+    CComPtr<IWICBitmapFrameDecode> input;
+    Check(decoder->GetFrame(0,&input),"rotation-safety source");
+    CComPtr<IWICBitmapFlipRotator> rotate;
+    Check(factory->CreateBitmapFlipRotator(&rotate),"rotation-safety rotator");
+    Check(rotate->Initialize(input,WICBitmapTransformRotate90),
+        "rotation-safety rotator initialize");
+    UINT w=0,h=0;
+    Check(rotate->GetSize(&w,&h),"rotation-safety dimensions");
+    // First case is the implicit "DontCare" HEVC encoder option, which
+    // previously permitted unannounced lossy conversion of a HEIC raster.
+    // Second case explicitly requests HEVC but still lacks original
+    // metadata/auxiliary provenance.
+    for(int mode=0;mode<2;++mode) {
+        const wchar_t* out=mode==0?
+            L"samples\fixture-wic-rotator-default-rejected.heic":
+            L"samples\fixture-wic-rotator-explicit-rejected.heic";
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"rotation-safety encoder");
+        CComPtr<IWICStream> stream;
+        Check(factory->CreateStream(&stream),"rotation-safety output stream");
+        Check(stream->InitializeFromFilename(out,GENERIC_WRITE),
+            "rotation-safety unique synthetic destination");
+        Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),
+            "rotation-safety encoder initialize");
+        CComPtr<IWICBitmapFrameEncode> frame;
+        CComPtr<IPropertyBag2> bag;
+        Check(encoder->CreateNewFrame(&frame,&bag),"rotation-safety frame");
+        if(mode==1) {
+            if(!bag)throw std::runtime_error("No frame option bag");
+            PROPBAG2 prop{}; prop.pstrName=const_cast<LPOLESTR>(
+                L"HeifCompressionMethod");
+            VARIANT value{};value.vt=VT_UI1;value.bVal=2;
+            Check(bag->Write(1,&prop,&value),"rotation-safety explicit HEVC option");
+        }
+        Check(frame->Initialize(bag),"rotation-safety frame initialize");
+        Check(frame->SetSize(w,h),"rotation-safety size");
+        GUID pf=GUID_WICPixelFormat24bppRGB;
+        Check(frame->SetPixelFormat(&pf),"rotation-safety pixel format");
+        const HRESULT hr=frame->WriteSource(rotate,nullptr);
+        printf("WIC_PHOTOS_RASTER_ROTATOR_SAVE_REJECT mode=%d hr=0x%08X\n",
+            mode,unsigned(hr));
+        if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+            throw std::runtime_error("Rotated HEIC raster lost provenance but was accepted");
+        if(Read(out).size()!=0)
+            throw std::runtime_error("Rejected HEIC rotation wrote output bytes");
+    }
+    if(Read(sourcePath)!=original)
+        throw std::runtime_error("Rejected rotation changed synthetic original");
+    puts("WIC_PHOTOS_RASTER_ROTATION_METADATA_LOSS_GUARD_PASS");
+}
+
 inline void RejectUnsafeOriginalHeicRasterFallback(IWICImagingFactory* factory) {
     // Regression for a metadata-loss loophole: explicit HEVC and cropped
     // WriteSource previously bypassed the exact-source safeguard and
@@ -348,6 +409,7 @@ inline void Run() {
     PreserveExplicitIccOnDefaultCopy(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
+    RejectImplicitOrExplicitWicRotateRasterWithoutProvenance(factory);
     RejectUnsafeOriginalHeicRasterFallback(factory);
     RejectMutationsAfterLosslessCapture(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
