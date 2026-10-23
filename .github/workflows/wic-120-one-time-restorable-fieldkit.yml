@@ -391,13 +391,14 @@ jobs:
           $sha=(Get-FileHash -LiteralPath (Join-Path $stage 'WicHeic-Repair-1.1.20-TRIAL-x64.msi') -Algorithm SHA256).Hash
           [IO.File]::WriteAllText((Join-Path $stage 'WIC120_MSI_SHA256.txt'),
              $sha+[Environment]::NewLine,[Text.Encoding]::ASCII)
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'Photos_WIC_P0_Trial_Integration/EXPECTED_GLOBAL_WIC_DLL_SHA256.txt') -Destination (Join-Path $stage 'WIC120_DLL_SHA256.txt') -ErrorAction Stop
           foreach($script in @('WIC120_OneTimeTrial.ps1','WIC_Preflight_ReadOnly.ps1','WIC_Preflight_Compare.ps1')){
             $p=Join-Path $stage $script
             $tokens=$null;$errors=$null
             $null=[Management.Automation.Language.Parser]::ParseFile($p,[ref]$tokens,[ref]$errors)
             if($errors.Count){throw ('PowerShell 5.1 syntax validation failed: '+$script)}
           }
-          if(@(Get-ChildItem -LiteralPath $stage -File).Count -ne 8){throw 'Complete kit expected exactly eight files'}
+          if(@(Get-ChildItem -LiteralPath $stage -File).Count -ne 9){throw 'Complete kit expected exactly nine files'}
           Write-Host 'WIC120_EXACT_OLD_MSI_AND_NEW_MSI_WITH_RECOVERY_SCRIPTS_STAGED_PASS'
           Write-Host ('WIC120_FIELDKIT_MSI_SHA256='+$sha)
       - name: Exercise identical Win10 field kit scripts - precheck, upgrade and exact rollback in disposable CI
@@ -440,6 +441,33 @@ jobs:
             if($previewInstalled){Msi x $preview}
           }
           Write-Host 'WIC120_COMPLETEKIT_TESTED_ONLY_ON_WINDOWS_SERVER_WIN10_PHOTOS_GUI_UNVERIFIED'
+      - name: Curate nine immutable trial kit files without disposable CI logs or sessions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $stage=Join-Path $env:RUNNER_TEMP 'WIC120_OneTime_CompleteKit'
+          $pub=Join-Path $env:RUNNER_TEMP 'WIC120_Clean_ForUser'
+          if(Test-Path -LiteralPath $pub){throw 'Curated publication folder collision'}
+          New-Item -ItemType Directory -Path $pub | Out-Null
+          $allow=@(
+            'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi',
+            'WicHeic-Repair-1.1.20-TRIAL-x64.msi',
+            'WIC120_MSI_SHA256.txt','WIC120_DLL_SHA256.txt',
+            'WIC120_OneTimeTrial.ps1','WIC_Preflight_ReadOnly.ps1',
+            'WIC_Preflight_Compare.ps1','README_JA.md','Synthetic_Test_Only.heic'
+          )
+          foreach($name in $allow){
+            $src=Join-Path $stage $name
+            $dst=Join-Path $pub $name
+            if(!(Test-Path -LiteralPath $src -PathType Leaf)){throw "Missing curated trial file $name"}
+            Copy-Item -LiteralPath $src -Destination $dst -ErrorAction Stop
+            if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -ne
+               (Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash){
+              throw "Curated trial file bytes changed: $name"
+            }
+          }
+          if(@(Get-ChildItem -LiteralPath $pub -File).Count -ne 9){throw 'Curated kit count incorrect'}
+          Write-Host 'WIC120_CLEAN_NINE_FILE_KIT_NO_CI_LOG_OR_SESSION_PASS'
       - name: Verify exact x64 MSI artifact identity and digest
         shell: pwsh
         run: |
@@ -465,6 +493,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WIC120-Win10-Photos-OneTime-CompleteRecoveryKit-UNVERIFIED
-          path: ${{ runner.temp }}/WIC120_OneTime_CompleteKit/
+          path: ${{ runner.temp }}/WIC120_Clean_ForUser/
           if-no-files-found: error
           retention-days: 30
