@@ -94,17 +94,28 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::QueryCapability(__RPC__in_opt IStr
 			if (!frame.empty() && frame.get_width() > 0 &&
 			    frame.get_height() > 0) {
 				capabilities |= WICBitmapDecoderCapabilityCanDecodeSomeImages;
-				// Metadata is enumerated by our IWICMetadataBlockReader.
-				(void)frame.get_list_of_metadata_block_IDs();
-				capabilities |= WICBitmapDecoderCapabilityCanEnumerateMetadata;
-				const auto thumbnails = frame.get_list_of_thumbnail_IDs();
-				if (!thumbnails.empty()) {
-					auto thumbnail = frame.get_thumbnail(thumbnails.front());
-					if (!thumbnail.empty() && HeicThumbnailGeometry::Compatible(
-					        frame.get_width(),frame.get_height(),
-					        thumbnail.get_width(),thumbnail.get_height())) {
-						capabilities |= WICBitmapDecoderCapabilityCanDecodeThumbnail;
+				// A valid primary HEIC stays decodable even if metadata
+				// or an optional embedded thumbnail is malformed. WIC arbitration
+				// must not discard already verified primary-image capability merely
+				// because an unrelated auxiliary item cannot be inspected.
+				try {
+					(void)frame.get_list_of_metadata_block_IDs();
+					capabilities |= WICBitmapDecoderCapabilityCanEnumerateMetadata;
+				} catch (...) {
+					WicHeicDiagnostic::Emit("DecoderOptionalMetadataUnavailable");
+				}
+				try {
+					const auto thumbnails = frame.get_list_of_thumbnail_IDs();
+					if (!thumbnails.empty()) {
+						auto thumbnail = frame.get_thumbnail(thumbnails.front());
+						if (!thumbnail.empty() && HeicThumbnailGeometry::Compatible(
+						        frame.get_width(),frame.get_height(),
+						        thumbnail.get_width(),thumbnail.get_height())) {
+							capabilities |= WICBitmapDecoderCapabilityCanDecodeThumbnail;
+						}
 					}
+				} catch (...) {
+					WicHeicDiagnostic::Emit("DecoderOptionalThumbnailUnavailable");
 				}
 			}
 		}
