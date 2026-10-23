@@ -48,3 +48,18 @@
 **CIのWindows Server 2022にMicrosoft PhotosのWindows 10 GUIが存在するわけではないため、最終確認は実機のみ。** 回転ボタン復活と無再圧縮保存・メタデータ保全は別の合格項目。
 
 GitHub: https://github.com/taku077/wic_heic/tree/feature/photos-120-one-time-restore-kit
+
+## 実機判定：2026-10-23 19:14 JST、試験終了・不合格
+
+Windows 10 Pro 22H2 build 19045、Microsoft Photos 2026.11090.22001.0、HEIF拡張1.2.48.0、HEVC拡張なしで、ユーザーがv1.1.20を**正常インストール**した状態のGUIを確認した。
+
+- インストール後の事前/事後レポートは、v1.1.18→v1.1.20へのMSI更新とDecoder/EncoderのCOM登録、v1.1.20 DLL SHA-256一致を裏付ける。
+- **Windows 10のフォトは「完全な解像度で表示するにはHEVCビデオ拡張機能が必要です」と引き続き表示**。画像の簡易表示はできるが、編集と回転ボタンはグレーアウト。ユーザー本人が「注意文言が復活して、回転編集不可状態に戻りました」と報告。よって**Windows 10 Photos互換性の実機ゲートはFAIL**。
+- 独立サムネイルv0.4.0は、今回の実機試験時点ではアンインストール済み。**「v0.4.0との共存」が原因であるという推測はしない**。
+- WICとMSIのGitHub Actions CI成功は、Windows PhotosのHEVC／Media Foundation経路と編集可否を保証しない。MicrosoftによるWindows10 PhotosのHEIF＋HEVC要件とも整合するが、Photos内部の実際の判定経路は未捕捉。旧v1.1.18で警告やボタンが一時解消された過去のユーザー観察を否定しない。
+- ユーザーに新しいMSIを連続して試してもらわない。**v1.1.20を推奨／完成と呼ばない**。本候補は実機不採用。GitHub Actionsで生成済みのCI artifactは再導入を推奨するものではない。
+- 現場には**正確な旧v1.1.18 MSIとセッションJSONが存在する**。失敗したv1.1.20は、同梱した `WIC120_OneTimeTrial.ps1 -Restore -Session <元セッション>` で切り戻し、`WIC_RESTORE_COMPARISON=PASS` および `WIC120_USER_BASELINE_118_FULL_RESTORE_PASS` を確認する。現時点では実機の復元完了はユーザーから未報告であるため、**復旧成功と記録しない**。
+- この試験でスクリーンショットに写っていたものはユーザーの**実写真**であり、ユーザー実写真・スクリーンショット・EXIF等をGitHubへ転載・解析投入しない。回転・上書き・保存を試さない。今後は公開人工HEICのみ。
+- 無料・Microsoft標準「フォト」・HEVC拡張未導入の条件下で、独自WICコンポーネントだけで編集UI制限を解除できることは**未立証**。Windows純正HEIF/Media Foundationのライセンスや内部権限を偽装する方針は取らない。次の作業は、旧版復元確認後、WICデコーダー単体の合格とPhotos UIの機能制限を区別する読み取り専用診断・差分調査。
+
+**本ドキュメントの前半は実機試験の実施手順として書かれたものであり、上記の実機FAIL判定後は追加インストールを勧めない。**
