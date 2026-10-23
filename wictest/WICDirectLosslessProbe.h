@@ -536,9 +536,17 @@ inline void FourTurnsOnlyInMemory(IWICImagingFactory* factory) {
 // canonical HEIF encoding sequence without inventing a Photos API path.
 // Source is an immutable synthetic file, destination only an IStream in RAM.
 inline void CanonicalWicWriteSourceWithoutSetSizeOrPixelFormat(IWICImagingFactory* factory) {
-    const wchar_t* sample=L"samples\\fixture-irot3-exif6-noaux.heic";
+    struct Fixture {const wchar_t* path;bool allowRotation;};
+    const Fixture fixtures[]={
+        {L"samples\\fixture-irot3-exif6-noaux.heic",true},
+        {L"samples\\fixture-irot3-exif6.heic",false},
+        {L"samples\\icc-roundtrip.heic",false}
+    };
+    for(const auto& fixture:fixtures) {
+    const wchar_t* sample=fixture.path;
     const auto original=Read(sample);
     for(BYTE transform : {BYTE(0),BYTE(1)}) {
+        if(transform && !fixture.allowRotation)continue;
         CComPtr<IWICBitmapDecoder> decoder;
         Check(factory->CreateDecoderFromFilename(sample,nullptr,GENERIC_READ,
             WICDecodeMetadataCacheOnDemand,&decoder),"canonical source read");
@@ -587,6 +595,8 @@ inline void CanonicalWicWriteSourceWithoutSetSizeOrPixelFormat(IWICImagingFactor
         printf("WIC_CANONICAL_IMPLICIT_SETTINGS_PASS transform=%u bytes=%zu\n",
             unsigned(transform),actual.size());
     }
+    }
+    puts("WIC_CANONICAL_IMPLICIT_EXIF_ICC_AUXILIARY_BYTE_PRESERVATION_PASS");
 }
 
 inline void Run() {
