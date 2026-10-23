@@ -319,6 +319,12 @@ jobs:
           $oldInstalled=$false;$newInstalled=$false
           try{
             Msi i $old;$oldInstalled=$true
+            $oldLocation=[string](Get-Item -LiteralPath $decoder -ErrorAction Stop).GetValue('')
+            if(!(Test-Path -LiteralPath $oldLocation -PathType Leaf)){
+              throw 'Historical 1.1.18 installed decoder DLL absent'
+            }
+            $oldDllHash=(Get-FileHash -LiteralPath $oldLocation -Algorithm SHA256).Hash
+            Write-Host ('WIC_HISTORICAL_118_DLL_SHA256='+$oldDllHash)
             Msi i $new;$newInstalled=$true;$oldInstalled=$false
             $dll=[string](Get-Item -LiteralPath $decoder -ErrorAction Stop).GetValue('')
             if(!(Test-Path -LiteralPath $dll -PathType Leaf)){throw 'Upgraded global decoder missing'}
@@ -334,6 +340,27 @@ jobs:
           }
           if(Test-Path -LiteralPath $decoder){throw 'Global WIC registration remained after uninstall'}
           Write-Host 'WIC_120_UNINSTALL_CLEAN_REGISTRATION_PASS'
+          # Only a fully reversible replacement qualifies for a user's
+          # installed historical v1.1.18. Prove reinstall restores the exact
+          # old codec DLL bytes before offering any Windows 10 field build.
+          $restoredOld=$false
+          try {
+            Msi i $old;$restoredOld=$true
+            $restoredDll=[string](Get-Item -LiteralPath $decoder -ErrorAction Stop).GetValue('')
+            if(!(Test-Path -LiteralPath $restoredDll -PathType Leaf)){
+              throw 'Historical WIC was not restored'
+            }
+            $restoredHash=(Get-FileHash -LiteralPath $restoredDll -Algorithm SHA256).Hash
+            if($restoredHash -ne $oldDllHash){
+              throw 'Restored historical WIC DLL differs from pre-upgrade bytes'
+            }
+            Write-Host 'WIC_120_TO_118_HISTORICAL_MSI_BYTE_IDENTICAL_RESTORE_PASS'
+          } finally {
+            if($restoredOld){Msi x $old}
+          }
+          if(Test-Path -LiteralPath $decoder){
+            throw 'Historical WIC registration remains after restore/cleanup'
+          }
       - name: Verify exact x64 MSI artifact identity and digest
         shell: pwsh
         run: |
