@@ -12,6 +12,7 @@ CHeicBitmapEncoder::CHeicBitmapEncoder()
 	: m_Count(1)
 	, m_IccExplicitlySet(false)
 	, m_Committed(false)
+	, m_OutputAttempted(false)
 	, m_Stream(nullptr)
 {
 }
@@ -118,7 +119,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::GetEncoderInfo(__RPC__deref_out_op
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
-	if (m_Committed) return WINCODEC_ERR_WRONGSTATE;
+	if (m_Committed || m_OutputAttempted) return WINCODEC_ERR_WRONGSTATE;
 	std::vector<uint8_t> profile;
 	HRESULT hr = HeicColorProfileWic::ReadArray(cCount, ppIColorContext, &profile);
 	if (FAILED(hr)) {
@@ -166,7 +167,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 		if (!ppIFrameEncode) return E_POINTER;
 		*ppIFrameEncode=nullptr;
 		if (ppIEncoderOptions) *ppIEncoderOptions=nullptr;
-		if (!m_Stream || m_Committed) return WINCODEC_ERR_WRONGSTATE;
+		if (!m_Stream || m_Committed || m_OutputAttempted) return WINCODEC_ERR_WRONGSTATE;
 		// WIC requires finishing one frame before starting the next.
 		// This is essential with NoCache, which cannot buffer overlapping
 		// partially-defined images safely.
@@ -241,7 +242,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 	};
 	try
 	{
-		if (m_Committed) return WINCODEC_ERR_WRONGSTATE;
+		if (m_Committed || m_OutputAttempted) return WINCODEC_ERR_WRONGSTATE;
 		// Reject existing output for both lossless and raster encodes.
 		// This does not undo truncation by the caller before Initialize.
 		if (!m_Stream) return WINCODEC_ERR_NOTINITIALIZED;
@@ -279,6 +280,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			if(bytes.empty()||bytes.size()>0xFFFFFFFFULL)
 				return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 			ULONG written=0;
+			m_OutputAttempted=true;
 			hr=m_Stream->Write(bytes.data(),static_cast<ULONG>(bytes.size()),&written);
 			if(FAILED(hr)||written!=bytes.size()) {
 				// Even a short S_OK write leaves a corrupt HEIC prefix in
@@ -306,6 +308,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			   frame->m_WrittenLines!=frame->m_Height)
 				return WINCODEC_ERR_WRONGSTATE;
 		}
+		// Failure after native encoding begins may leave m_Context mutated.
+		// Reject repeated Commit attempts even if stream rollback succeeded.
+		m_OutputAttempted=true;
 		heif::Encoder encoder(heif_compression_HEVC);
 		CHeifStreamWriter writer(m_Stream);
 
