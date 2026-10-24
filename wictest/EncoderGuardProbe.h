@@ -297,7 +297,7 @@ inline void VerifyTransactionalRevertAfterShortHeicWrite(IWICImagingFactory* fac
 }
 // Inject the same partial output fault while the HEVC encoder is producing
 // a NEW, explicitly generated RGB image (as opposed to copying original HEIF).
-inline void VerifyPartialRasterStreamWriteRollback(IWICImagingFactory* fac) {
+inline void VerifyPartialRasterStreamWriteRollback(IWICImagingFactory* fac, bool transacted=false) {
     constexpr UINT w=192,h=320;
     std::vector<BYTE> rgb(size_t(w)*h*3u);
     for(UINT y=0;y<h;y++)for(UINT x=0;x<w;x++){
@@ -307,7 +307,7 @@ inline void VerifyPartialRasterStreamWriteRollback(IWICImagingFactory* fac) {
     CComPtr<IStream> backing;
     Check(CreateStreamOnHGlobal(nullptr,TRUE,&backing),"raster short write backing");
     CComPtr<IStream> fault;
-    fault.Attach(new(std::nothrow) ShortWriteStream(backing));
+    fault.Attach(new(std::nothrow) ShortWriteStream(backing,!transacted,true,transacted));
     if(!fault)throw std::bad_alloc();
     CComPtr<IWICBitmapEncoder> encoder;
     Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
@@ -344,7 +344,8 @@ inline void VerifyPartialRasterStreamWriteRollback(IWICImagingFactory* fac) {
     if(afterRetry.cbSize.QuadPart!=0)
         throw std::runtime_error("HEVC Commit retry recreated failed output");
     puts("WIC_ENCODER_FAILED_COMMIT_RETRY_RASTER_BLOCKED_PASS");
-    puts("WIC_RASTER_PARTIAL_WRITE_ROLLBACK_PASS");
+    puts(transacted?"WIC_RASTER_PARTIAL_WRITE_TRANSACTION_REVERT_PASS":
+                    "WIC_RASTER_PARTIAL_WRITE_ROLLBACK_PASS");
 }
 // Synthetic-only retry regression: WriteSource previously inferred frame
 // dimensions/pixel-format before discovering that the opaque bitmap must be
@@ -582,5 +583,6 @@ inline void Run() {
     VerifyNoSetSizeStreamCanStillSaveCompleteHEIC(fac);
     VerifyTransactionalRevertAfterShortHeicWrite(fac);
     VerifyPartialRasterStreamWriteRollback(fac);
+    VerifyPartialRasterStreamWriteRollback(fac,true);
 }
 } // namespace EncoderGuardProbe
