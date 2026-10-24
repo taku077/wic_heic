@@ -281,15 +281,18 @@ inline void VerifyRejectedWriteSourceDoesNotLeakAutosetters(IWICImagingFactory* 
     if(!reference)throw std::runtime_error("HEIC retry fixture not found");
     std::vector<BYTE> expected(std::istreambuf_iterator<char>{reference},
                                 std::istreambuf_iterator<char>{});
-    HGLOBAL global=nullptr;
-    Check(GetHGlobalFromStream(output,&global),"HEIC retry memory handle");
-    const SIZE_T size=GlobalSize(global);
-    const void* data=GlobalLock(global);
-    if(!data)throw std::runtime_error("HEIC retry memory inaccessible");
-    const bool identical=size==expected.size() &&
-        memcmp(data,expected.data(),expected.size())==0;
-    GlobalUnlock(global);
-    if(!identical)
+    STATSTG outStat{};
+    Check(output->Stat(&outStat,STATFLAG_NONAME),"HEIC retry output size");
+    if(outStat.cbSize.QuadPart!=expected.size())
+        throw std::runtime_error("HEIC retry output container size changed");
+    LARGE_INTEGER origin{};
+    Check(output->Seek(origin,STREAM_SEEK_SET,nullptr),
+        "HEIC retry stream rewind");
+    std::vector<BYTE> observed(expected.size());
+    ULONG read=0;
+    Check(output->Read(observed.data(),ULONG(observed.size()),&read),
+        "HEIC retry stream readback");
+    if(read!=observed.size()||observed!=expected)
         throw std::runtime_error("HEIC retry lost exact Exif/ICC/container bytes");
     puts("WIC_REJECTED_WRITE_SOURCE_DID_NOT_POISON_RETRY_AND_EXACT_HEIC_BYTES_PASS");
 }
