@@ -798,3 +798,22 @@ Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder�
 **保証の限界**：非トランザクション型かつ `SetSize` 不可の出力先で書込みが途中失敗した場合、WICコーデック内部からその外部ファイルの全消去や原子的上書き防止を保証することはできない。エンコーダーは失敗を返し、復旧できたと偽装しない。呼出元アプリが元画像を事前に上書き／切詰める場合もこのWIC DLLだけでは保護できないため、実機の標準Photos試験は**人工HEICと独立コピーのみ**という不変条件を維持。
 
 **進捗評価**：今回は保存処理の事故復旧の一部が拡張された製品コード修正であり、標準Photosの編集ボタン有効化・HEVC拡張警告の解消・回転保存成功の直接検証ではない。暫定52％は維持し、新規MSIや細切れの実機検査を依頼しない。
+
+## 2026-10-24：標準WIC HEIC直接画素回転IF試作と互換性ゲート
+
+**目的**：Win10標準PhotosのHEIC編集ボタンが無効となる問題に近い、標準WICの回転経路を改善する。ユーザーの実機・個人写真・v1.1.18インストール状態には触れず、公開人工HEICとWindows Server 2022の隔離CIのみで検証。
+
+**仕様確認**：
+- Microsoftの公式WIC文書は、`IWICBitmapSourceTransform` をHEIFフレームで用いることを示し、実装を推奨している。回転/ROI/画素形式/サイズをデコーダー側で処理できればWICが外部ラッパーで行う処理を減らせる：https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapsourcetransform
+- ただし、同じコンテナー形式で編集・保存できることや、標準PhotosのHEVC拡張チェックを迂回できることは意味しない。**フレーム画素の回転機能とHEICの無再圧縮回転保存は別機能**。
+- `IWICBitmapDecoder::GetMetadataQueryReader` がHEICコンテナーで未対応なのは、JPEG等のWIC単一フレーム形式では通常フレーム側からExif等を取得する、というMicrosoft公式の契約に沿うため、GUIボタンを狙って偽のコンテナーメタデータを申告する変更はしない：https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapdecoder-getmetadataqueryreader
+
+**試験的実装（本流には**残さず差し戻し済み**）**：
+- `CHeicBitmapFrameDecode` に `IWICBitmapSourceTransform` を追加し、元10/12/16bit精度を保持して0/90/180/270度の画素転置・ROIを処理。拡大縮小や反転・未知画素形式は拒否。COM `IUnknown` 同一性も担保する。
+- 最初の回帰テストは `WIC_BITMAP_24bppRGB` と誤想定し、実際の公開fixtureが **10bit/48bppRGB（1画素6バイト）** だったため、標準WIC rotatorが `0x88982F8C`（出力バッファ不足）となった。**このエラーだけを新IFの互換性不具合と断定したのは誤り**。画素形式を正した試験で、[CI #40082957064](https://github.com/taku077/wic_heic/actions/runs/40082957064) にて `WIC_HEIC_SOURCE_TRANSFORM_ROTATION_0/1/2/3_CROP_PIXEL_EQUAL_PASS` と COM ID、安全な引数拒否のPASSを確認。
+- **別の統合回帰が残った**：同じCIの後続 `GeometryProbe` で、Windowsの標準 `IWICBitmapFlipRotator` から `IWICImagingFactory::CreateBitmapFromSource` で8bit合成HEICをラスター化する既存経路が失敗（`materialize synthetic reference raster`）。従来通過していた既存アプリ機能を壊すため、この段階では**直接回転IFを公開しない**判断とした。試作コードの本流残存禁止。
+- 研究差し戻し：`wic_heic/HeicBitmapFrameDecode.h` / `.cpp` / `wictest/wictest.cpp` を最後の成功済み版へ戻し、実験用 `WICSourceTransformProbe.h` を削除。最終的な製品コードは前回CI成功済みバージョンと同一。
+- **将来の保護ゲートを追加**：`wictest/PhotosNavigationZoomProbe.h` に `Verify10BitWicClipRotateMaterialization` を新設。公開10bit HEICの原画素を取得した後、標準 `IWICBitmapClipper` → `IWICBitmapFlipRotator` → `CreateBitmapFromSource` → `CopyPixels` について0/90/180/270度と全6バイトRGBチャンネルの完全一致を検証する。人工画像読み取り専用、保存ファイル生成なし。
+- [**最終CI #40083397893 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40083397893)：`WIC_HEIC_10BIT_STANDARD_CLIP_ROTATE_0/1/2/3_MATERIALIZE_PASS`、`WIC_HEIC_10BIT_STANDARD_CLIP_ROTATE_MATERIALIZE_PASS`、既存の無再圧縮HEIC90/180/270度・Exif一致・旧研究WIC比較・Media Foundation非干渉もすべてPASS。
+
+**成果の解釈**：既存のHEIC閲覧・ラスター化回転機能を保持したまま、新しい10bit標準WIC経路の回帰保護を追加できた。**直接回転IFの実装自体は未採用**であり、研究版の標準Photos GUI編集・保存・HEVC警告の修正達成は**未確認**。主観的な52％をこの回帰テストだけで引き上げない。無根拠なMSI配布を行わず、実機での個別テストも依頼しない。
