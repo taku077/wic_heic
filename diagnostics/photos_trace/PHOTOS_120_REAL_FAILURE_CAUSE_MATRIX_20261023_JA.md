@@ -748,6 +748,6 @@ Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder�
 - 完了後にユーザーが送るファイルは **`WIC_Batch_*.zip` 1個**。内部はユーザー名／DLLファイルパス／レジストリ製品キーなしの技術的診断値を記載した `WIC_Batch_Sanitized_Report.txt` **1個だけ**。`BATCH_COLLECTION_STATUS=COMPLETE` は診断収集の完了に限り、標準フォト編集・回転保存成功の意味ではない。
 - 実機テスト依頼はこの先、**Windows 10標準フォトの警告・編集・人工画像の90/180/270度・4×90度・保存・メタデータ・サムネイル向き整合・復旧**を、一つの候補と一回の試験でまとめて評価できる場合に限定する。実機でユーザー写真は使わない。作業方針は `diagnostics/photos_trace/WIC_PHOTOS_ONE_BATCH_POLICY_20261024_JA.md` に文書化。
 
-**CIエビデンス**：[**#40076800037 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40076800037)。Windows Server 2022でネイティブEXEのビルド、既存の画像なし診断、SHA確認済み人工HEIC、改ざん拒否、**PowerShell 5.1での一括実行・プライバシー監査・ZIP1個のみの生成**を成功確認。GitHub artifact `Photos_HEVC_ReadOnly_Win10_x64` は統合ランチャー／日本語運用文書も含む（artifact ID `12553188792`、2026-11-07 UTCまで）。
+**CIエビデンス**：先行 #40076800037 SUCCESS、**最終 [#40076956160 SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40076956160)**。Windows Server 2022でネイティブEXEのビルド、既存の画像なし診断、SHA確認済み人工HEIC、改ざん拒否、**PowerShell 5.1での一括実行・プライバシー監査・ZIP1個のみの生成**を成功確認。GitHub artifactは単一の `Run_Photos_Batch_ReadOnly.cmd` と統合ランチャー／日本語運用文書を含み、旧2種類の個別CMDを同梱しない（最終アーティファクト名 `Photos_WIC_OneBatch_Win10_x64`、artifact ID `12553970556`、2026-11-07 UTCまで）。
 
 **重要**：これは**試験回数を減らすためのツール改善であり、製品WICがPhotos GUIのHEVC警告や編集・回転保存に対応したとの成果ではない**。暫定の50％は完成基準の実績とは言えず、CIツール追加だけで数字を引き上げない。次の作業はPhotosの編集可否と保存結果を変える安全なコード上の改善に集中し、小刻みな実機試験要求を差し控える。
