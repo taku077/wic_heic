@@ -125,6 +125,60 @@ inline void SurveyExistingEightBitGeneratedFixture(IWICImagingFactory* factory,
     CComPtr<IWICBitmapFrameDecode> frame;
     if(FAILED(decoder->GetFrame(0,&frame))||!frame)
         throw std::runtime_error("8bit A/B synthetic frame unavailable");
+
+    // This second-stage capability arbitration is image-specific and is
+    // NOT a Photos GUI capability test. Both inputs have been created by
+    // the same research HEIC encoder earlier in the isolated CI run.
+    // Compare the original 1.1.18's unconditional 0x15 advertising
+    // against the current on-stream bitmap/metadata/thumbnail checks.
+    CComPtr<IWICStream> capStream;
+    if(FAILED(factory->CreateStream(&capStream))||
+       FAILED(capStream->InitializeFromFilename(syntheticPath,GENERIC_READ)))
+        throw std::runtime_error("8bit A/B capability stream unavailable");
+    CComPtr<IWICBitmapDecoder> vendor;
+    if(FAILED(factory->CreateDecoder(GUID_ContainerFormatHEIC,
+         &GUID_VendorPrsyahmi,&vendor))||!vendor)
+        throw std::runtime_error("8bit A/B vendor capability decoder unavailable");
+    LARGE_INTEGER one{};one.QuadPart=1;
+    ULARGE_INTEGER seekBefore{},seekAfter{};
+    if(FAILED(capStream->Seek(one,STREAM_SEEK_SET,&seekBefore)))
+        throw std::runtime_error("8bit A/B capability stream seek failed");
+    DWORD capabilityMask=0xFFFFFFFFu;
+    HRESULT capabilityHr=vendor->QueryCapability(capStream,&capabilityMask);
+    LARGE_INTEGER none{};
+    if(FAILED(capStream->Seek(none,STREAM_SEEK_CUR,&seekAfter))||
+       seekBefore.QuadPart!=seekAfter.QuadPart)
+        throw std::runtime_error("8bit A/B QueryCapability changed stream position");
+    printf("WIC_PHOTOS_8BIT_%s_QUERYCAP_HRESULT=0x%08X\n",
+           label,unsigned(capabilityHr));
+    printf("WIC_PHOTOS_8BIT_%s_QUERYCAP_MASK=0x%X\n",
+           label,unsigned(capabilityMask));
+    if(FAILED(capabilityHr))
+        throw std::runtime_error("8bit A/B capability survey failed");
+    // Synthetic encoded images have no embedded thumbnail. Check actual
+    // decoder/frame thumbnail APIs, not merely a capability declaration.
+    CComPtr<IWICBitmapSource> containerThumbnail;
+    HRESULT containerThumbnailHr=decoder->GetThumbnail(&containerThumbnail);
+    printf("WIC_PHOTOS_8BIT_%s_CONTAINER_THUMBNAIL_HRESULT=0x%08X\n",
+           label,unsigned(containerThumbnailHr));
+    CComPtr<IWICBitmapSource> frameThumbnail;
+    HRESULT frameThumbnailHr=frame->GetThumbnail(&frameThumbnail);
+    printf("WIC_PHOTOS_8BIT_%s_FRAME_THUMBNAIL_HRESULT=0x%08X\n",
+           label,unsigned(frameThumbnailHr));
+    if(SUCCEEDED(containerThumbnailHr)||SUCCEEDED(frameThumbnailHr))
+        throw std::runtime_error("8bit synthetic unexpected embedded thumbnail");
+    UINT containerColorCount=0,frameColorCount=0;
+    const HRESULT containerColorHr=decoder->GetColorContexts(0,nullptr,&containerColorCount);
+    const HRESULT frameColorHr=frame->GetColorContexts(0,nullptr,&frameColorCount);
+    printf("WIC_PHOTOS_8BIT_%s_CONTAINER_ICC_HRESULT=0x%08X\n",
+           label,unsigned(containerColorHr));
+    printf("WIC_PHOTOS_8BIT_%s_CONTAINER_ICC_COUNT=%u\n",
+           label,containerColorCount);
+    printf("WIC_PHOTOS_8BIT_%s_FRAME_ICC_HRESULT=0x%08X\n",
+           label,unsigned(frameColorHr));
+    printf("WIC_PHOTOS_8BIT_%s_FRAME_ICC_COUNT=%u\n",
+           label,frameColorCount);
+
     UINT w=0,h=0;
     if(FAILED(frame->GetSize(&w,&h)) || w==0 || h==0)
         throw std::runtime_error("8bit A/B synthetic dimensions missing");
