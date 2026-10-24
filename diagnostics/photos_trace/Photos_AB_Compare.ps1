@@ -9,7 +9,7 @@ $folder=Join-Path $root 'Photos_AB_Results'
 # legacy v0.1 Photos_AB_A.json / B.json without altering them.
 function LatestPhase([string]$phase) {
   $items=@(Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match ('^Photos_AB_'+$phase+'(?:_[0-9]{8}_[0-9]{6}_[0-9]{3}_[0-9a-fA-F]{8})?\\.json$') } |
+    Where-Object { $_.Name -match ('^Photos_AB_'+$phase+'(?:_[0-9]{8}_[0-9]{6}_[0-9]{3}_[0-9a-fA-F]{8})?\.json$') } |
     Sort-Object LastWriteTimeUtc,Name -Descending)
   if(-not $items.Count) {
     throw ('No phase '+$phase+' report yet. Run 01 for OLD or 02 for RESEARCH first.')
