@@ -12,6 +12,7 @@ on:
       - feature/wic-lossless-source-transfer
       - diagnostic/photos-wic-calltrace
       - fix/encoder-geometry-failsafe
+      - fix/photos-118-selfwic-incremental
   workflow_dispatch:
 
 permissions:
@@ -157,7 +158,7 @@ jobs:
               }
               if (-not (Test-Path -LiteralPath $trace)) { throw 'WIC opt-in trace was not produced' }
               $events = Get-Content -LiteralPath $trace
-              foreach ($required in @('FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed','EncoderSetThumbnail','EncoderSetColorContexts','EncoderMetadataWriterUnavailable')) {
+              foreach ($required in @('FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed','EncoderSetThumbnail','EncoderSetColorContexts','EncoderMetadataWriterUnavailable','WriteSourceOriginalExact')) {
                 if (-not ($events | Where-Object { $_ -like "*event=$required *" })) { throw "Missing expected diagnostic event: $required" }
               }
               if ($events -match '(?i)\\samples\\|[A-Z]:\\|\.heic|\.jpg|\.png|GPS|EXIF|maker.?note') {
@@ -463,6 +464,7 @@ jobs:
           }
 
       - name: Upload MSI only after isolated installation verification
+        if: github.ref != 'refs/heads/fix/photos-118-selfwic-incremental'
         uses: actions/upload-artifact@v4
         with:
           name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
