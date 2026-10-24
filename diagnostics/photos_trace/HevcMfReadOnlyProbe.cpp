@@ -243,6 +243,8 @@ void DecodePinnedSynthetic(IWICImagingFactory* factory,
     if(FAILED(hr))return;
     UINT width=0,height=0;
     hr=frame->GetSize(&width,&height);
+    std::printf("HEVC_SYNTHETIC_WIC role=%s stage=frame_size hr=0x%08lX width=%u height=%u\n",
+        role,static_cast<unsigned long>(hr),width,height);
     if(FAILED(hr)||width<16||height<8)return;
     ComPtr<IWICBitmapSource> rgb;
     hr=WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
@@ -301,6 +303,8 @@ void DecodePinnedSyntheticAutomatic(IWICImagingFactory* factory,
     if(FAILED(hr)||!frame)return;
     UINT w=0,h=0;
     hr=frame->GetSize(&w,&h);
+    std::printf("HEVC_SYNTHETIC_AUTO stage=frame_size hr=0x%08lX width=%u height=%u\n",
+        static_cast<unsigned long>(hr),w,h);
     if(FAILED(hr)||w<16||h<8)return;
     ComPtr<IWICBitmapSource> rgb;
     hr=WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
