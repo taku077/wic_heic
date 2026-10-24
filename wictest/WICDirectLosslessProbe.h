@@ -111,6 +111,52 @@ inline void PreserveCompleteHEICOnDefaultCopy(IWICImagingFactory* factory) {
     printf("WIC_DEFAULT_HEIC_COPY_EXIF_ICC_HDR_FULL_BYTE_EQUALITY_PASS bytes=%zu\\n",actual.size());
 }
 
+// A Photos-style caller may explicitly select HEVC, even for an unchanged
+// source that is already HEVC-coded. No metadata or pixel edits are requested.
+// Such a source should remain byte-exact; unknown raster sources stay rejected.
+inline void PreserveOriginalHevcWithExplicitHevcOption(IWICImagingFactory* factory) {
+    const wchar_t* path=L"samples\\fixture-irot3-exif6.heic";
+    const auto original=Read(path);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"explicit HEVC source");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"explicit HEVC frame");
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"explicit HEVC encoder");
+    CComPtr<IStream> output;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&output),"explicit HEVC memory output");
+    Check(encoder->Initialize(output,WICBitmapEncoderNoCache),
+        "explicit HEVC encoder initialize");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    CComPtr<IPropertyBag2> bag;
+    Check(encoder->CreateNewFrame(&frame,&bag),"explicit HEVC frame options");
+    if(!bag)throw std::runtime_error("Explicit HEVC options missing");
+    PROPBAG2 key{};key.pstrName=const_cast<LPOLESTR>(L"HeifCompressionMethod");
+    VARIANT method{};method.vt=VT_UI1;method.bVal=2;
+    Check(bag->Write(1,&key,&method),"explicit HEVC compression requested");
+    Check(frame->Initialize(bag),"explicit HEVC frame initialize");
+    // Exercise Microsoft's canonical WriteSource path without SetSize or
+    // SetPixelFormat, which must infer these values from the original frame.
+    Check(frame->WriteSource(source,nullptr),"explicit HEVC raw source copy");
+    Check(frame->Commit(),"explicit HEVC frame commit");
+    Check(encoder->Commit(),"explicit HEVC encoder commit");
+    STATSTG st{};
+    Check(output->Stat(&st,STATFLAG_NONAME),"explicit HEVC output size");
+    if(st.cbSize.QuadPart!=original.size())
+        throw std::runtime_error("Explicit HEVC save changed original byte count");
+    LARGE_INTEGER start{};
+    Check(output->Seek(start,STREAM_SEEK_SET,nullptr),"explicit HEVC output seek");
+    std::vector<uint8_t> actual(original.size());
+    ULONG read=0;
+    Check(output->Read(actual.data(),static_cast<ULONG>(actual.size()),&read),
+        "explicit HEVC output read");
+    if(read!=actual.size() || actual!=original || Read(path)!=original)
+        throw std::runtime_error("Explicit HEVC save changed pixels or metadata");
+    puts("WIC_EXPLICIT_HEVC_VERIFIED_SOURCE_CONTAINER_BYTE_EXACT_PASS");
+}
+
 inline void PreserveExplicitIccOnDefaultCopy(IWICImagingFactory* factory) {
     const wchar_t* sourceFile=L"samples\\icc-roundtrip.heic";
     const wchar_t* destFile=L"samples\\icc-exact-default-copy.heic";
@@ -957,6 +1003,7 @@ inline void Run() {
     if(Read(L"samples\\fixture-irot3-exif6-noaux.heic")!=original)
         throw std::runtime_error("Original synthetic HEIC was modified");
     PreserveCompleteHEICOnDefaultCopy(factory);
+    PreserveOriginalHevcWithExplicitHevcOption(factory);
     PreserveExplicitIccOnDefaultCopy(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
