@@ -23,7 +23,8 @@ inline std::vector<uint8_t> Read(const wchar_t* file) {
 inline void SingleRotation(IWICImagingFactory* factory,
                            BYTE transform,
                            const wchar_t* path,
-                           const wchar_t* expectedPath) {
+                           const wchar_t* expectedPath,
+                           bool fullRect=false) {
     // Only synthetic public samples are used. Each output is a unique file.
     CComPtr<IWICBitmapDecoder> decoder;
     Check(factory->CreateDecoderFromFilename(
@@ -56,7 +57,11 @@ inline void SingleRotation(IWICImagingFactory* factory,
     UINT expectedW=(transform&1)?1920:1080;
     UINT expectedH=(transform&1)?1080:1920;
     Check(frame->SetSize(expectedW,expectedH),"set rotated size");
-    Check(frame->WriteSource(source,nullptr),"preserve original HEVC source");
+    UINT srcWidth=0,srcHeight=0;
+    Check(source->GetSize(&srcWidth,&srcHeight),"source dimensions for full-image rect");
+    WICRect entire{0,0,static_cast<INT>(srcWidth),static_cast<INT>(srcHeight)};
+    Check(frame->WriteSource(source,fullRect?&entire:nullptr),
+        "save Exif HEIC using lossless WIC original-source rotation");
     Check(frame->Commit(),"frame.Commit");
     Check(encoder->Commit(),"encoder.Commit");
     frame.Release();encoder.Release();stream.Release();options.Release();
@@ -75,6 +80,40 @@ inline void SingleRotation(IWICImagingFactory* factory,
     Check(result->GetSize(&w,&h),"get saved HEIC dimensions");
     if(w!=expectedW||h!=expectedH)throw std::runtime_error(
         "HEIC rotated dimensions incorrect");
+    // Prove the saved disk file still carries an EXIF Orientation exposed by
+    // WIC, rather than merely proving the encoder returned S_OK.
+    CComPtr<IWICMetadataQueryReader> exif;
+    Check(result->GetMetadataQueryReader(&exif),"read saved Exif query reader");
+    PROPVARIANT angle;
+    PropVariantInit(&angle);
+    HRESULT metadataHr=exif->GetMetadataByName(L"/app1/ifd/{ushort=274}",&angle);
+    const unsigned savedOrientation=(angle.vt==VT_UI2)?angle.uiVal:
+        (angle.vt==VT_UI4)?angle.ulVal:999;
+    PropVariantClear(&angle);
+    Check(metadataHr,"verify Exif in saved rotated HEIC");
+    if(savedOrientation!=1)
+        throw std::runtime_error("Rotated disk HEIC retains conflicting Exif orientation");
+    if(fullRect) {
+        // The fixture has unambiguous HEIF irot and Exif. Full source WICRect
+        // must preserve the same complete HEIF as the NULL-rectangle route.
+        CComPtr<IWICBitmapFlipRotator> expected;
+        Check(factory->CreateBitmapFlipRotator(&expected),"make WIC rotation reference");
+        const WICBitmapTransformOptions rotation=(transform==1)?WICBitmapTransformRotate90:
+            (transform==2)?WICBitmapTransformRotate180:WICBitmapTransformRotate270;
+        Check(expected->Initialize(source,rotation),"rotate artificial reference raster");
+        WICPixelFormatGUID fmtSaved{},fmtExpected{};
+        Check(result->GetPixelFormat(&fmtSaved),"output pixel format");
+        Check(expected->GetPixelFormat(&fmtExpected),"expected pixel format");
+        if(!IsEqualGUID(fmtSaved,fmtExpected) || !IsEqualGUID(fmtSaved,GUID_WICPixelFormat24bppRGB))
+            throw std::runtime_error("Lossless WIC rotation unexpected pixel format");
+        std::vector<BYTE> got(size_t(w)*h*3),want(size_t(w)*h*3);
+        Check(result->CopyPixels(nullptr,w*3,UINT(got.size()),got.data()),"saved rotated disk pixels");
+        Check(expected->CopyPixels(nullptr,w*3,UINT(want.size()),want.data()),"WIC reference rotated pixels");
+        if(got!=want)
+            throw std::runtime_error("Lossless saved disk pixels differ from 90 degree WIC rotation");
+        printf("WIC_PHOTOS_LIKE_FULLRECT_EXIF_ROTATE_SAVE_PASS bytes=%zu size=%ux%u orientation=1 pixels=identical\\n",
+            produced.size(),w,h);
+    }
 }
 inline void RejectAuxiliaryImage(IWICImagingFactory* factory) {
     CComPtr<IWICBitmapDecoder> decoder;
@@ -335,6 +374,8 @@ inline void Run() {
         L"samples\\fixture-lossless-cw180.heic");
     SingleRotation(factory,3,L"samples\\fixture-wic-direct-lossless-270.heic",
         L"samples\\fixture-lossless-cw270.heic");
+    SingleRotation(factory,1,L"samples\\fixture-wic-photos-like-fullrect-exif.heic",
+        L"samples\\fixture-lossless-cw90.heic",true);
     if(Read(L"samples\\fixture-irot3-exif6-noaux.heic")!=original)
         throw std::runtime_error("Original synthetic HEIC was modified");
     UnmodifiedOriginalExact(factory);
