@@ -337,6 +337,30 @@ jobs:
             Write-Host ('WIC_PHOTOS_HEVC_MF_MSI_AB_'+$label+'='+$normalized)
             return $normalized
           }
+          # The exact public synthetic HEIC is the ONLY image passed to the
+          # opt-in WIC decode comparison; never any user/photo path.
+          $fixturePath='wictest/samples/fixture-irot3-exif6-noaux.heic'
+          $fixtureGitHash=(& git hash-object -- $fixturePath).Trim()
+          if($LASTEXITCODE -ne 0 -or $fixtureGitHash -cne '126b24780e8c36a0e1521df982067ab12f971470') {
+            throw 'HEIC A/B public synthetic fixture changed'
+          }
+          Copy-Item -LiteralPath $fixturePath -Destination (Join-Path $mfDir 'fixture-irot3-exif6-noaux.heic')
+          function SyntheticDecoderSurvey([string]$label) {
+            $rows=@(& $mfExe '--synthetic-wic-test' 2>&1)
+            if($LASTEXITCODE -ne 0 -or
+               -not ($rows -match '^HEVC_SYNTHETIC_GIT_BLOB_VERIFIED_PASS bytes=10597') -or
+               -not ($rows -match '^HEVC_SYNTHETIC_WIC_COMPARISON_COMPLETE')) {
+              throw ('Pinned HEIC synthetic WIC decode trial failed '+$label)
+            }
+            if(-not ($rows -match '^HEVC_SYNTHETIC_WIC role=custom_heic stage=copy_pixels hr=0x00000000')){
+              $rows|ForEach-Object{Write-Host $_}
+              throw ('Installed '+$label+' custom HEIC decoder cannot copy pixels from pinned synthetic image')
+            }
+            Write-Host ('WIC_HEIC_AB_SYNTHETIC_'+$label+'_READBACK_PASS')
+            $script:syntheticWic[$label]=($rows -join '|')
+          }
+          $script:syntheticWic=@{}
+          Write-Host 'WIC_HEIC_AB_SYNTHETIC_PUBLIC_SOURCE_VERIFIED_PASS'
           $baselineMf=MFInventory 'BASELINE_NO_WIC'
           Write-Host 'WIC_PHOTOS_HEVC_MF_MSI_AB_BASELINE_PASS'
           $old=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'historical118') -Recurse -Filter '*.msi' -File)
@@ -405,17 +429,20 @@ jobs:
             Msi i $old[0].FullName
             $installed='old'
             $oldMask=Survey 'ORIGINAL118'
+            SyntheticDecoderSurvey 'ORIGINAL118'
             $oldMf=MFInventory 'HISTORICAL118_INSTALLED'
             Msi x $old[0].FullName
             $installed=''
             Msi i $new
             $installed='new'
             $newMask=Survey 'RESEARCH'
+            SyntheticDecoderSurvey 'RESEARCH'
             $newMf=MFInventory 'RESEARCH_INSTALLED'
             if($baselineMf -cne $oldMf -or $baselineMf -cne $newMf){
               throw 'Unexpected Media Foundation inventory mutation by WIC MSI'
             }
             Write-Host 'WIC_PHOTOS_HEVC_MFT_INVENTORY_UNCHANGED_ACROSS_BOTH_WIC_MSIS_PASS'
+            Write-Host 'WIC_HEIC_AB_SYNTHETIC_BOTH_CUSTOM_DECODERS_READBACK_PASS'
             Msi x $new
             $installed=''
             if($oldMask -ne 0x15){throw ('Unexpected legacy mask '+$oldMask)}
