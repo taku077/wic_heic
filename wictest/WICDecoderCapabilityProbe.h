@@ -648,6 +648,17 @@ inline void Survey() {
             CComPtr<IWICMetadataQueryWriter> frameWriter;
             hr=newFrame->GetMetadataQueryWriter(&frameWriter);
             printf("WIC_PHOTOS_EDITOR_FRAME_METADATA_WRITER_HRESULT=0x%08X\n",unsigned(hr));
+            // Query writer again in the legal initialized-frame state:
+            // historical version had no writer; research supports verified
+            // unchanged-source metadata writes without losing EXIF/ICC.
+            hr=newFrame->Initialize(nullptr);
+            printf("WIC_PHOTOS_EDITOR_FRAME_INIT_HRESULT=0x%08X\n",unsigned(hr));
+            if(SUCCEEDED(hr)){
+                frameWriter.Release();
+                hr=newFrame->GetMetadataQueryWriter(&frameWriter);
+                printf("WIC_PHOTOS_EDITOR_FRAME_READY_METADATA_WRITER_HRESULT=0x%08X\n",
+                    unsigned(hr));
+            }
         }
     }
     // Reproduce the dangerous Photos-style WIC raster rotation in MEMORY.
