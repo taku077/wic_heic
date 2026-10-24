@@ -1,0 +1,41 @@
+# Windows10標準フォト HEIC P0 完了条件とクリティカルパス
+
+更新：2026-10-24。旧「暫定52％」進捗表記を廃止する。**今回の評価基準は Windows10標準Photos 2026.11090.22001.0 の人工HEIC実機操作であり、Windows Server 2022 CI、コード行数、テスト件数、MSI作成、診断ZIPは一切進捗点に算入しない。**
+
+## 完成条件の現在値：0 / 3
+
+| 実機人工HEICによる判定 | 合否 | 必要な証拠 |
+|---|---|---|
+| 1. HEVCビデオ拡張未購入の状態で、標準Photosの「HEVC拡張が必要」警告なし | 未合格 | 変更前後の同じPhotos/Windowsバージョン、一致した人工HEIC、実際のUI |
+| 2. 編集・回転ボタンが有効で、クリック後の操作が機能する | 未合格 | Photos GUIの人工HEICで操作可能（起動やWIC直接API成功だけでは不可） |
+| 3. 人工HEICの90/180/270度と4回90度の保存・再読込・幾何/画素検証、元画像/Exif/ICC/対応メタ情報/サムネイル向きが一致、失敗時も復旧可能 | 未合格 | 元ファイル不変、作業コピーのみ、新MSI／アンインストールの復旧検証 |
+
+**進捗の算定**：この3項目のうち実機合格した項目だけを1増やす。部分的なCI改善・WIC APIの機能実装は別記録に残すがP0完成率に加算しない。すべて揃う前に「Photos完成」や「52％」等の意味のない数字を表示しない。
+
+## 既存の重要な確定事実（重複しない）
+
+- Windows10 Pro 22H2 build 19045、Photos 2026.11090.22001.0、HEIF Image Extension 1.2.48.0、有料HEVC拡張なし。実機HEVC Media Foundationデコーダー/エンコーダーはMFT列挙0件。Microsoft純正HEIFの公開人工HEIC CopyPixelsは0xC00D5212だが、旧自作WICの同一人工HEIC全フレームはRGB24取得S_OK。WIC自動選択も旧自作WIC。これらの測定済み結果の再採取を要求しない。
+- 旧1.1.18と旧1.1.20の実機A-B-Aでは、旧1.1.18で**警告が消え、編集ボタンが有効になる**が、旧1.1.20で警告が再出現し、旧版に戻すと回復した。旧1.1.18のHEIC画像保存には変形・Exif欠落・保存エラーがあり、正常版扱いしない。このUI差分の原因は未同定。
+- 旧1.1.18と最新研究WICを同じWindows Server隔離環境に入れ替えた総合CI **#40095659394 SUCCESS**。研究版は同じ10,597バイトの公開人工HEICの自作フレームからWriteSource、両Commit S_OK、全バイト一致。旧版はWriteSourceで0x88982F04（WRONGSTATE）となる。つまり直接WICの無編集保存は研究版が改善したが、**Photos GUI有効化とは別条件**。
+- WIC QueryCapability旧0x15のSameEncoder(0x1)とCanDecodeThumbnail(0x10)は公開人工HEICに対して虚偽の申告。Microsoft WIC実装規約は「同じベンダーのエンコーダーで実際に符号化された場合」と「実際にデコードできるサムネイルがある場合」にのみ宣言可能とする。**虚偽申告を戻してUIを偽装しない。**（https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder）
+- Microsoft公式は、Windows10の標準フォトでHEIF画像のみ使う場合もHEIFとHEVCの両拡張を必要と案内する。標準Photos自身がHEVC拡張を検査する場合、WICだけの修正では解除できない可能性がある。（https://support.microsoft.com/ja-jp/windows/apps/photos/photos-app-video-editor-error-can-t-view-this-file-type）
+- 他社MFTをCOM/MFTRegisterで登録しても、Photosアプリがそれを使うか、HEVC拡張の権限検査を満たせるかは未立証。媒体コーデックのライセンス認証を偽装しない。2020年頃のFFmpegMFTを無検証で導入しない。Microsoft公式MFTRegister文書でも単なるCOM登録とMFT登録は別作業。（https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mftregister）
+
+## 今後の開発対象を厳格に制限する
+
+**実装可能で直接P0に影響し得る候補は次の2経路だけ**（どちらも今はUI未実証）。
+
+A. **旧v1.1.18がPhotos編集UIを有効化したWIC API契約を特定し、研究版の元データ保存・画素/Exif/ICC保護と両立させる。** 旧バイナリの呼出し記録と研究版との差異のうち、偽のSameEncoder/Thumbnail以外に根拠がある差分を特定する。単なる0x15復帰はしない。実写真では試さない。
+B. **PhotosがHEVC/MF権限をUIの前提条件とする経路の実証。** 公式拡張が必要であることを前提に、既存ライセンスまたは正規の無料経路があるかを調査する。外部MFTはPhotosでの実利用が説明できるまで開発の本流にしない。サードパーティの不明なHEVC Appxや偽装登録をしない。
+
+**中断する作業**：単にサムネイル速度・WIC原本パススルー・部分ストリームロールバック・QueryCapability微修正を重ねてCI成功数を稼ぐこと、52％の便宜的引上げ/据置き、新MSIの小出し。これらの基礎安全修正は既に達成済み。GUIに新しい根拠がない追加テストは優先しない。
+
+## 実機での意味のある1セッションの基準
+
+- まずWindows Server隔離CIで候補の安全性を満たす（本人写真なし、既存WIC/プレビュー非干渉、旧1.1.18の正確なバックアップ、登録の完全復元）。
+- 同じ人工HEICで**警告／ボタン／編集→保存／全バイトまたは画素差/Exif/ICC/サムネイル角度**の結果を**1セッションにまとめて**採取できる候補だけを提供する。ユーザー承認以前にWindows10のMSI導入・削除・レジストリ操作はしない。
+- Windows Server CIが何度SUCCESSでもPhotos GUI検証の代用にしない。Photos固有の条件がOSS/WICでは解決できないと確認された場合は、その制約を明示し、できないものを「残り余地あり」と称して開発し続けない。
+
+## 技術的な切り分け（意思決定）
+
+Aの検証可能なWIC仕様差分が残っている場合のみ研究版を実装修正する。Photos UIの旧版と新版の実際の呼出し差分を収集しないまま、WIC APIの周辺を次々変更しても**完成条件 0/3 は動かない**。Bのパスが必要ならMicrosoft公表のHEVC拡張条件に基づき、合法かつ検証可能な手段だけを候補にする。したがって当面のボトルネックは**Windows10 Photos固有の可否判定の実証**であり、CI試験数ではない。
