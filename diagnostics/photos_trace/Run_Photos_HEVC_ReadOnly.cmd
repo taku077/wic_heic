@@ -20,10 +20,10 @@ echo Nothing will be installed, removed or changed.
 echo Report: "%REPORT%"
 echo ---
 >"%REPORT%" echo Photos and HEVC read-only report
->>"%REPORT%" echo No user image was opened or modified
+>>"%REPORT%" echo No user image was opened or modified; WIC COM activation may load codec DLLs
 >>"%REPORT%" echo ---
 >>"%REPORT%" echo [Media Foundation codec inventory]
-"%NATIVE%" >>"%REPORT%" 2>&1
+"%NATIVE%" --wic-activate-no-image >>"%REPORT%" 2>&1
 set "NATIVE_RC=%ERRORLEVEL%"
 >>"%REPORT%" echo MF probe return code: %NATIVE_RC%
 >>"%REPORT%" echo.
