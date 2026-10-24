@@ -545,6 +545,47 @@ inline void Survey() {
     if(FAILED(hr))throw std::runtime_error("Survey container GUID failed");
     printf("WIC_PHOTOS_EDITOR_CONTAINER_MATCHES_PRIVATE=%u\n",
         !!IsEqualGUID(selectedContainer,GUID_ContainerFormatHEIC));
+    // Microsoft's WIC HEIF identity uses an OFFICIAL container GUID
+    // E1E62521-6787-405B-A339-500715B5763F, whereas this project
+    // historically registered a PRIVATE HEIC format GUID 98CE31DD-...
+    // WIC can decode by file signature, yet format-GUID-based Photos save
+    // discovery may not select our encoder. Observe native/custom encoder
+    // discovery separately. Do NOT change any registry or GUID in this A/B.
+    const GUID nativeHeifFormat={0xE1E62521,0x6787,0x405B,
+        {0xA3,0x39,0x50,0x07,0x15,0xB5,0x76,0x3F}};
+    const bool customDiffers=!IsEqualGUID(nativeHeifFormat,GUID_ContainerFormatHEIC);
+    printf("WIC_PHOTOS_EDITOR_NATIVE_HEIF_CONTAINER_VS_CUSTOM_DIFFER=%u\n",
+           unsigned(customDiffers));
+    printf("WIC_PHOTOS_EDITOR_DECODED_CONTAINER_IS_NATIVE_HEIF=%u\n",
+           unsigned(!!IsEqualGUID(selectedContainer,nativeHeifFormat)));
+    CComPtr<IWICBitmapEncoder> publicHeifEncoder;
+    const HRESULT nativeEncHr=factory->CreateEncoder(
+        nativeHeifFormat,nullptr,&publicHeifEncoder);
+    printf("WIC_PHOTOS_EDITOR_NATIVE_HEIF_CONTAINER_ENCODER_HRESULT=0x%08X\n",
+        unsigned(nativeEncHr));
+    if(SUCCEEDED(nativeEncHr)&&publicHeifEncoder) {
+        CComPtr<IWICBitmapEncoderInfo> selectedInfo;
+        CLSID nativeChosen{};
+        const HRESULT infoHr=publicHeifEncoder->GetEncoderInfo(&selectedInfo);
+        printf("WIC_PHOTOS_EDITOR_NATIVE_HEIF_ENCODER_INFO_HRESULT=0x%08X\n",
+               unsigned(infoHr));
+        if(SUCCEEDED(infoHr)&&selectedInfo&&
+           SUCCEEDED(selectedInfo->GetCLSID(&nativeChosen))) {
+            printf("WIC_PHOTOS_EDITOR_NATIVE_HEIF_ENCODER_IS_OURS=%u\n",
+                   unsigned(!!IsEqualGUID(nativeChosen,CLSID_HEICEncoder)));
+        }
+    }
+    CComPtr<IWICBitmapEncoder> vendorNativeFormat;
+    const HRESULT vendorNativeHr=factory->CreateEncoder(nativeHeifFormat,
+        &GUID_VendorPrsyahmi,&vendorNativeFormat);
+    printf("WIC_PHOTOS_EDITOR_NATIVE_HEIF_WITH_PRIVATE_VENDOR_HRESULT=0x%08X\n",
+        unsigned(vendorNativeHr));
+    CComPtr<IWICBitmapDecoder> vendorNativeDecoder;
+    const HRESULT decoderNativeHr=factory->CreateDecoder(nativeHeifFormat,
+        &GUID_VendorPrsyahmi,&vendorNativeDecoder);
+    printf("WIC_PHOTOS_EDITOR_NATIVE_HEIF_PRIVATE_DECODER_HRESULT=0x%08X\n",
+        unsigned(decoderNativeHr));
+
 
     CComPtr<IWICBitmapSource> preview;
     hr=automatic->GetPreview(&preview);
