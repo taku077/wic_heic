@@ -139,7 +139,8 @@ public:
 };
 
 CHeicMetadataBlockReader::CHeicMetadataBlockReader(heif::ImageHandle handle)
-	: m_Handle(handle)
+	: m_Count(1)
+	, m_Handle(handle)
 {
 	m_MetadataBlock = m_Handle.get_list_of_metadata_block_IDs();
 }
@@ -230,8 +231,18 @@ HRESULT STDMETHODCALLTYPE CHeicMetadataBlockReader::GetReaderByIndex(UINT nIndex
 		return E_INVALIDARG;
 	}
 
-	std::vector<uint8_t> buffer = m_Handle.get_metadata(m_MetadataBlock[nIndex]);
-	std::string type = m_Handle.get_metadata_type(m_MetadataBlock[nIndex]);
+	// HEIF metadata items are untrusted input. An empty payload or truncated
+	// four-byte Exif offset must not reach SHCreateMemStream as an underflow.
+	std::vector<uint8_t> buffer;
+	std::string type;
+	try {
+		buffer = m_Handle.get_metadata(m_MetadataBlock[nIndex]);
+		type = m_Handle.get_metadata_type(m_MetadataBlock[nIndex]);
+	} catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
+	  catch (...) { return WINCODEC_ERR_BADIMAGE; }
+	if (buffer.empty() || (type == "Exif" && buffer.size() < 12) ||
+		buffer.size() > UINT_MAX)
+		return WINCODEC_ERR_BADIMAGE;
 	size_t payloadOffset = 0;
 	GUID metadataType = GUID_MetadataFormatXMP;
 
