@@ -98,8 +98,11 @@ class ShortWriteStream final : public IStream {
     std::atomic<ULONG> refs{1};
     CComPtr<IStream> target;
     bool injected=false;
+    bool allowTruncate=true;
+    bool simulateShortWrite=true;
 public:
-    explicit ShortWriteStream(IStream* inner):target(inner){}
+    explicit ShortWriteStream(IStream* inner,bool mayTruncate=true,bool shortWrite=true)
+      :target(inner),allowTruncate(mayTruncate),simulateShortWrite(shortWrite){}
     STDMETHODIMP QueryInterface(REFIID id,void** out) override {
         if(!out)return E_POINTER;
         *out=nullptr;
@@ -118,7 +121,7 @@ public:
     }
     STDMETHODIMP Read(void* p,ULONG n,ULONG* got) override {return target->Read(p,n,got);}
     STDMETHODIMP Write(const void* p,ULONG n,ULONG* done) override {
-        if(!injected&&n>=2){
+        if(simulateShortWrite&&!injected&&n>=2){
             injected=true;
             return target->Write(p,n/2,done);
         }
@@ -127,7 +130,7 @@ public:
     STDMETHODIMP Seek(LARGE_INTEGER n,DWORD mode,ULARGE_INTEGER* to) override {
         return target->Seek(n,mode,to);
     }
-    STDMETHODIMP SetSize(ULARGE_INTEGER n) override {return target->SetSize(n);}
+    STDMETHODIMP SetSize(ULARGE_INTEGER n) override {return allowTruncate?target->SetSize(n):STG_E_ACCESSDENIED;}
     STDMETHODIMP CopyTo(IStream* dst,ULARGE_INTEGER n,ULARGE_INTEGER* r,ULARGE_INTEGER* w) override {
         return target->CopyTo(dst,n,r,w);
     }
@@ -189,6 +192,45 @@ inline void VerifyPartialLosslessStreamWriteRollback(IWICImagingFactory* fac) {
         throw std::runtime_error("Lossless Commit retry recreated a failed output");
     puts("WIC_ENCODER_FAILED_COMMIT_RETRY_LOSSLESS_BLOCKED_PASS");
     puts("WIC_LOSSLESS_PARTIAL_WRITE_ROLLBACK_PASS");
+}
+// An IStream that can accept writes but REFUSES SetSize cannot recover from
+// a short success or I/O failure. An initially empty stream is not sufficient
+// to guarantee that a failed HEIC save leaves no corrupt prefix. Use only
+// checked-in public synthetic HEIC and an in-memory fake IStream.
+inline void VerifyNonTruncatableOutputRejectedBeforeBytes(IWICImagingFactory* fac) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(fac->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"nontruncatable synthetic source");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"nontruncatable source primary");
+    CComPtr<IStream> underlying;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&underlying),
+          "nontruncatable HEIC memory target");
+    CComPtr<IStream> cannotRollback;
+    cannotRollback.Attach(new(std::nothrow)
+        ShortWriteStream(underlying,false,false));
+    if(!cannotRollback)throw std::bad_alloc();
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
+          &GUID_VendorPrsyahmi,&encoder),"nontruncatable custom encoder");
+    Check(encoder->Initialize(cannotRollback,WICBitmapEncoderNoCache),
+          "nontruncatable encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"nontruncatable frame create");
+    Check(frame->Initialize(nullptr),"nontruncatable frame init");
+    Check(frame->WriteSource(source,nullptr),
+          "nontruncatable lossless source snapshot");
+    Check(frame->Commit(),"nontruncatable frame commit");
+    const HRESULT status=encoder->Commit();
+    printf("WIC_LOSSLESS_NONTRUNCATABLE_OUTPUT_COMMIT=0x%08X\n",unsigned(status));
+    if(status!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("Accepted output stream cannot rollback failed HEIC save");
+    STATSTG stat{};
+    Check(underlying->Stat(&stat,STATFLAG_NONAME),"nontruncatable remaining bytes");
+    if(stat.cbSize.QuadPart!=0)
+        throw std::runtime_error("Nontruncatable target was written before refusal");
+    puts("WIC_HEIC_NONTRUNCATABLE_OUTPUT_REFUSED_WITH_ZERO_BYTES_PASS");
 }
 // Inject the same partial output fault while the HEVC encoder is producing
 // a NEW, explicitly generated RGB image (as opposed to copying original HEIF).
@@ -474,6 +516,7 @@ inline void Run() {
     printf("ENCODER_NONEMPTY_STREAM_AND_THUMBNAIL_FAIL_CLOSED_PASSED\n");
     VerifyRgbaEncoderCapability(fac);
     VerifyPartialLosslessStreamWriteRollback(fac);
+    VerifyNonTruncatableOutputRejectedBeforeBytes(fac);
     VerifyPartialRasterStreamWriteRollback(fac);
 }
 } // namespace EncoderGuardProbe
