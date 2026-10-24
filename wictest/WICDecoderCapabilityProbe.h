@@ -266,6 +266,56 @@ inline void SurveyWicRegisteredHeicCompetitors(IWICImagingFactory* factory) {
             throw std::runtime_error("Matched HEIC decoder missing CLSID");
         const bool isCustom=!!IsEqualGUID(clsid,CLSID_HEICDecoder);
         if(isCustom)++custom;else ++others;
+        // Microsoft documents this exact native HEIF decoder CLSID. A WIC
+        // registration is NOT proof of MF HEVC image decompression support.
+        // Ask Microsoft's decoder to actually open/read the SAME synthetic
+        // HEIC, without the competing third-party decoder influencing
+        // automatic selection. Neither status is taken as Photos UI proof.
+        const CLSID microsoftHeif={0xE9A4A80A,0x44FE,0x4DE4,
+           {0x89,0x71,0x71,0x50,0xB1,0x0A,0x51,0x99}};
+        if(IsEqualGUID(clsid,microsoftHeif)) {
+            CComPtr<IWICBitmapDecoder> native;
+            const HRESULT create=info->CreateInstance(&native);
+            printf("WIC_PHOTOS_MS_HEIF_NATIVE_CREATE_HRESULT=0x%08X\n",
+                unsigned(create));
+            if(SUCCEEDED(create)&&native) {
+                LARGE_INTEGER begin{};
+                if(FAILED(stream->Seek(begin,STREAM_SEEK_SET,nullptr)))
+                    throw std::runtime_error("Synthetic Microsoft decoder input reset failed");
+                const HRESULT open=native->Initialize(stream,
+                    WICDecodeMetadataCacheOnDemand);
+                printf("WIC_PHOTOS_MS_HEIF_NATIVE_INITIALIZE_HRESULT=0x%08X\n",
+                    unsigned(open));
+                if(SUCCEEDED(open)) {
+                    CComPtr<IWICBitmapFrameDecode> frame;
+                    const HRESULT frameHr=native->GetFrame(0,&frame);
+                    printf("WIC_PHOTOS_MS_HEIF_NATIVE_FRAME0_HRESULT=0x%08X\n",
+                        unsigned(frameHr));
+                    if(SUCCEEDED(frameHr)&&frame) {
+                        UINT fw=0,fh=0;
+                        const HRESULT sizeHr=frame->GetSize(&fw,&fh);
+                        printf("WIC_PHOTOS_MS_HEIF_NATIVE_FRAME_SIZE_HRESULT=0x%08X\n",
+                            unsigned(sizeHr));
+                        if(SUCCEEDED(sizeHr)&&fw>=16&&fh>=8) {
+                            CComPtr<IWICBitmapSource> pixels;
+                            const HRESULT convert=WICConvertBitmapSource(
+                                GUID_WICPixelFormat24bppRGB,frame,&pixels);
+                            printf("WIC_PHOTOS_MS_HEIF_NATIVE_RGB24_CONVERT_HRESULT=0x%08X\n",
+                                unsigned(convert));
+                            if(SUCCEEDED(convert)&&pixels) {
+                                WICRect r{0,0,16,8};
+                                BYTE buffer[16*8*3]{};
+                                const HRESULT copied=pixels->CopyPixels(
+                                    &r,16*3,UINT(sizeof(buffer)),buffer);
+                                printf("WIC_PHOTOS_MS_HEIF_NATIVE_RGB24_COPYPixels_HRESULT=0x%08X\n",
+                                    unsigned(copied));
+                            }
+                        }
+                    }
+                }
+            }
+            puts("WIC_PHOTOS_MS_HEIF_NATIVE_DISPATCH_SURVEY_PASS");
+        }
         wchar_t guid[64]{};
         if(!StringFromGUID2(clsid,guid,64))
             throw std::runtime_error("HEIC candidate CLSID formatting failed");
