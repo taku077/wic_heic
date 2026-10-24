@@ -692,3 +692,33 @@ Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder�
 実WIC A/B統合CIへ当該人工復号テストを増設した一時試験（`c1f497cb39ee25243a5525d99a411424eb2bbf05`）はジョブ生成前の失敗となり原因未確定。既存WIC製品の不具合と解釈せず、成功済みの従来ワークフローの全内容に復元（`e10a178f3f6252e70102b8e7c5ad35741a7c2f52`）。[**復旧後の統合CI #40072685441 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40072685441)。既存WICの保護機能、人工HEIC回転テスト、WIC旧研究A/Bおよび独立サムネイルMSI試験は変えていない。
 
 **判定限界と次**：この新コードの実機人工画像復号はユーザーがまだ実行していない。実行結果でMicrosoft純正HEIFが実際にHEICを復号できるかを把握できるが、それでもPhotosの編集ボタン判定や回転後保存までは実証できない。古い1.1.18の画像変形・保存エラーは依然あり、正常版扱いしない。既存写真・HEIC Managerに変更なし。完成率45%を据え置く。
+
+## 2026-10-24：実機で純正HEIFの画素展開失敗／自作WIC成功を実証
+
+**入力と出所**：ユーザーが追加提出した診断ZIP `Photos_HEVC_ReadOnly_Win10_x64(2).zip` に、Windows10 Pro 22H2で `Run_Photos_WIC_Synthetic_Only.cmd` を実行した `Photos_WIC_Synthetic_26335_12625.txt` が同梱。ユーザーの実写真・パス・レジストリ・DLLコピーはGitHubには保存しない。
+
+**人工ファイルの完全性**：`fixture-irot3-exif6-noaux.heic` は**10,597バイト**、Git blob SHA1 **`126b24780e8c36a0e1521df982067ab12f971470`** が既存の公開合成fixtureと一致。SHA256 **`d874948c2e6f218a45c740a270fe5e10f0344c8f3a525b59fd44fdce898dcc95`**。任意の実写真を使用していない。
+
+**明示的WICデコーダー選択の実測**：
+
+| WIC API段階 | Microsoft純正HEIF | 旧v1.1.18自作WIC |
+|---|---|---|
+| COM ComponentInfo | S_OK | S_OK |
+| COM CreateInstance | S_OK | S_OK |
+| Initialize（HEICストリーム） | S_OK | S_OK |
+| GetFrame(0) | S_OK | S_OK |
+| WIC RGB24コンバーター初期化 | S_OK | S_OK |
+| **16×8 CopyPixels** | **0xC00D5212 失敗** | **S_OK 成功** |
+| 合成RGB24 ROI FNV64 | 算出できない | **2C46D5C491E58AE4** |
+
+この`0xC00D5212`はMedia Foundationの `MF_E_TOPO_CODEC_NOT_FOUND`（コーデックが見つからない）として知られるHRESULT。報告済みのHEVC Media Foundationデコーダー列挙0件、ユーザー向けHEVC AppX表示なしと整合する。Microsoft公式はWindows10のフォト利用についてHEIF画像拡張とHEVCビデオ拡張の両方を、静止画だけの場合でも必要とする旨を案内：https://support.microsoft.com/ja-jp/windows/apps/photos/photos-app-video-editor-error-can-t-view-this-file-type 。Microsoft HEIF WIC文書もHEVCエンコーダーの存在確認に MFTEnumEx を挙げる：https://learn.microsoft.com/ja-jp/windows/win32/wic/heif-codec 。
+
+**ここまでで実証した因果・非因果の区別**：
+- 純正HEIFのコンテナー検出・COM生成・フレーム参照・RGB形式交渉は成功し、その**後段の復号段階**で失敗している。単純なDLL登録エラーや壊れた画像では説明しづらい。
+- **同一バイトの人工HEIC**が旧v1.1.18自作WICで正常にRGB展開できたため、OS純正HEIFの失敗はそのファイルのHEICコーデック非対応（特にHEVCデコーダー不在）と高い整合性を持つ。
+- **Photosの実際のデコーダー選択・HEVCライセンス判定・編集ボタン非活性の直接原因までは未証明**。この診断は純正／自作をそれぞれCLSIDで明示選択しているので、フォトが純正を選んだかは未確定。旧v1.1.18は回転で画像を変形・保存失敗する不具合を持ち、正常版扱い禁止。
+- HEVCの有料拡張をユーザーに買わせる／ライセンス検査を偽装する／WICの不正な`SameEncoder`・サムネイル機能申告を戻す手段は採用しない。Windows10純正フォトの独自の拡張機能チェックがある場合、WIC DLL改善だけでは解決できない可能性が高い。
+
+**この証拠を基にした追加実装**：固定人工HEICの`CreateDecoderFromStream`（ベンダー指定なし）による**Windows WICの自動選択と選択デコーダーCLSID・16×8 CopyPixels**を別途ログする処理を `diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp` に追加（コード `bc18229a6a736445cd870a208c956526d70d9c80`）。固定ファイルの厳格ハッシュ確認や任意ファイル拒否は変更しない。 [CI #40074946545 SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40074946545) で新ステージ実行、安全性試験、人工ファイル改変時の拒否に合格。**CIランナーでは純正WIC生成エラーで自動選択自体が失敗（0x88982F8B）**、Windows10でどちらが自動選択されるかは引き続き実機確認が必要。
+
+**次に必要な実証**：追加した自動選択測定をWindows10の同じ人工HEICに対して一度だけ行い、もし純正デコーダーが選ばれて`CopyPixels=0xC00D5212`となるならWICの通常経路の選択問題を優先。自作WICが選ばれて正常にCopyPixelsできるのにPhotos編集不可なら、標準フォト固有のHEVC拡張判定または別のエンコーダー／編集経路に重点を移す。製品機能の最終修正はなお未完成。実機で試していない研究版MSIの提供・インストール、ユーザー写真、HEIC Managerの変更は実施しない。
