@@ -117,7 +117,7 @@ if($uiChanged -and -not $packageChanged -and
 $results.Add('注意：画面の回答はユーザーの実操作結果。WIC診断は実際のPhotos COM呼び出しトレースではない。')
 $results.Add('注意：実写真・ファイルパス・EXIF値・原画像は収集していない。')
 $lines=$results.ToArray()
-$lines|ForEach-Object {Write-Host $_}
+$lines|ForEach-Object {Write-Output $_}
 if(-not $NoWrite){
   $output=Join-Path $folder 'Photos_AB_Comparison.txt'
   if(Test-Path -LiteralPath $output){throw 'Comparison already exists; refuse overwriting'}
