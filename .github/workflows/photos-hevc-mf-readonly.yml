@@ -100,6 +100,11 @@ jobs:
           if($LASTEXITCODE -ne 0 -or $gitHash -cne '126b24780e8c36a0e1521df982067ab12f971470'){
             throw 'Public HEIC synthetic fixture Git blob changed unexpectedly'
           }
+          $expectedSha256='D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95'
+          if((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -cne $expectedSha256){
+            throw 'Public synthetic HEIC content does not match SHA-256 pin'
+          }
+          Write-Host 'HEVC_WIC_SYNTHETIC_SHA256_SOURCE_PINNED_PASS'
           $target=Join-Path $env:RUNNER_TEMP 'photos_codec_check/fixture-irot3-exif6-noaux.heic'
           if(Test-Path -LiteralPath $target){throw 'Refuse synthetic fixture staging overwrite'}
           Copy-Item -LiteralPath $src -Destination $target
