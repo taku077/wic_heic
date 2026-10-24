@@ -923,3 +923,24 @@ Microsoft WICエンコーダー仕様: https://learn.microsoft.com/en-us/windows
 - **CI #40101550960 SUCCESS**: Windows 2022 x64上で診断EXEビルド、Windows PowerShell 5.1のBOM付き日本語スクリプトの構文検証、偽A/B入力で実GUI結果/EXE段階差分レポート生成、HEIC固定ハッシュ、最終パッケージ8ファイル検査。公開GitHub Actions artifact `Photos_GUI_Real_AB_Compare_v0_1_Win10` をリリース。2026-10-24時点で実Windows10標準フォトのA/B操作結果はまだ収集していない。今回のCIを「Photos GUI修正成功」と誤認しない。
 - 明確な限界：WIC診断EXEは固定人工HEICを通じてOSのWIC経路を直接実行するが、**Photos自身の内部COM API呼出しを観測するものではない**。A/BでフォトUIが変わるのにWIC直接APIが等しい場合、次にPhotosプロセス内の実際の呼出し分岐だけを対象に計測する。UIが動かないのに一般WICテストを増やす作業へ戻らない。
 - Aは現在導入済みの旧1.1.18を保持したまま採取可能。Bは復旧方法を備えた研究版の明示的な実機検証許可が出るまで実行しない。**このv0.1は診断アプリの先行公開であり、不具合修正MSIのリリースではない。**
+
+## 2026-10-25：旧1.1.18での実Photos人工HEIC保存 A結果（出力原本保全）
+
+ユーザーから **v0.2 Aステージの診断ZIP**を受領し、公開固定人工HEIC `fixture-irot3-exif6-noaux.heic` の**保存前と、標準フォトで保存操作後の人工HEIC**を独立`libheif/heif-info`と`ffprobe`でオフライン比較した（実写真は使用していない）。現物画像や個人PCパス、診断JSONをGitHubには掲載しない。
+
+**フォト実機の状態（旧1.1.18のみ）**:
+- Windows 10 build19045、Photos `2026.11090.22001.0`、HEIF Image Extension `1.2.48.0`。Photosプロセス2件、うち1件が`wic_heic.dll`を読込み、そのDLL SHA-256は実旧1.1.18の `9E9D2F17038C03A5BF8840A8BD43BC4FDA19C91E947C4CD5904A8209051F93D4` と一致。旧互換経路でのGUI有効化を独立して裏付ける。
+- GUI観測（操作時の本人記録）：HEVC警告 **なし**、編集ボタン **有効**、回転ボタン **有効**、保存結果 **成功**、目視の伸び・画像崩れ **なし**。
+- 固定人工HEICソースは **10,597B SHA-256 `D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95`**。変更後は **12,700B**・ハッシュ不一致。保護した参照用人工HEICのSHAは変化なし。
+- 独立解析：保存前はHEVC 10bit 4:2:0×2画像item、主画像Exif item **36Bあり**、`irot` **270° CCW**、ICCなし。保存後はHEVC **8bit** 4:2:0×2画像item、**Exif item消失**、`irot` property消失、ICCなし。主画像の表示寸法はどちらも1080×1920で、画素サンプル比較では視覚的にほぼ同一のため、**保存により期待された90°回転が起きたかは判定できない**。
+- 保存前後のlibheif PNG（8bit比較に正規化）では主画像RGBの平均絶対差がそれぞれ約 **1.12/0.89/1.23階調**（R/G/B）。2番目の画像では約 **0.52/0.43/0.38階調**。全画素バイト同一ではない。ここから再圧縮を強く示唆し、**10bit→8bit、Exif消失という確定的な劣化**が存在する。
+- A実機WIC直接固定人工HEICプローブ：WIC自動デコーダーは旧自作DLL `custom=1`、全画素CopyPixels S_OK。純正Microsoft HEIF encoder はCreateEncoder/WriteSource S_OKだが**Frame.Commit=0xC00D5212**。旧自作HEIC encoderはFrame.GetMetadataQueryWriter **E_NOTIMPL**、WriteSource **WINCODEC_ERR_WRONGSTATE 0x88982F04**（これは明示WIC別経路での測定。Photos本体の保存APIを直接トレースした証拠ではない）。
+- 旧ソース基準 `a18b9ab...` の `HeicBitmapFrameEncode.cpp` はWIC画素を24bitRGBへ変換可能、`GetMetadataQueryWriter`未実装。 `HeicBitmapEncoder.cpp::Commit` のラスターパスはHEVC `encode_image` とコンテナー新規書出しを実行する。観測した8bit再エンコード、Exif消失と整合する。ただしPhotosの保存経路そのものを捕捉したわけではないため、どの内部APIを通ったかは未断定。
+
+**原因別に明確な次の行動**:
+1. 「警告なし・編集UI有効」の旧版実機経路は、もはや研究不足とは扱わず **確定した比較基準**とする。旧1.1.18でのA再診断は不要。
+2. 具体的な画像破壊（10bit→8bit、Exif消失）は**実ファイルで確定したため、旧版の単純なHEVC再エンコード経路は品質面で不合格**。無再圧縮の研究版と接続するときも元Exif itemと全HEIF boxを保護する。
+3. 警告・UIの**新版B実機結果がない限り、旧版GUIを決める単一WIC APIは断定不能**。旧版UI復活と保存エラー改善の2課題に絞り、周辺の一般最適化を進めない。
+4. このA画像ではICCは元からなく、**ICC保全を試験できていない**。実写真の提示やテストは要求しない。
+
+**注意**：保存処理の「成功」というGUI申告は **画素・メタ情報・回転形状の完成**を保証しない。ユーザーの元写真の保存を促してはいけない。
