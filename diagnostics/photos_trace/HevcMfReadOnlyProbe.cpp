@@ -178,7 +178,23 @@ bool VerifySyntheticFixture(std::vector<BYTE>& out) {
     if(success) success=!!CryptGetHashParam(hash,HP_HASHVAL,
                                              result,&hashBytes,0);
     if(hash)CryptDestroyHash(hash);
+    // Git SHA-1 proves repository object provenance; an independent
+    // SHA-256 pins content against theoretical SHA-1 collisions.
+    HCRYPTHASH sha256=0;
+    if(success) success=!!CryptCreateHash(provider,CALG_SHA_256,0,0,&sha256);
+    if(success) success=!!CryptHashData(sha256,out.data(),DWORD(out.size()),0);
+    BYTE contentDigest[32]{};
+    DWORD digestBytes=DWORD(sizeof(contentDigest));
+    if(success) success=!!CryptGetHashParam(sha256,HP_HASHVAL,contentDigest,&digestBytes,0);
+    if(sha256)CryptDestroyHash(sha256);
     CryptReleaseContext(provider,0);
+    const BYTE expectedSha256[32]={
+        0xd8,0x74,0x94,0x8c,0x2e,0x6f,0x21,0x8a,
+        0x45,0xc7,0x40,0xa2,0x70,0xfe,0x5e,0x10,
+        0xf0,0x34,0x4c,0x8f,0x3a,0x52,0x5b,0x59,
+        0xfd,0x44,0xfd,0xce,0x89,0x8d,0xcc,0x95};
+    success=success&&digestBytes==32 &&
+        std::memcmp(expectedSha256,contentDigest,sizeof(expectedSha256))==0;
     const BYTE expected[20]={
         0x12,0x6b,0x24,0x78,0x0e,0x8c,0x36,0xa0,0xe1,0x52,
         0x1d,0xf9,0x82,0x06,0x7a,0xb1,0x2f,0x97,0x14,0x70};
