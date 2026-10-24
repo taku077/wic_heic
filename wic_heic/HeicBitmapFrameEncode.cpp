@@ -251,6 +251,50 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
 	WicHeicDiagnostic::Emit("WriteSourceEnter",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,prc?"cropped":"full");
+
+	// INCREMENTAL 1.1.18 FIX: ordinary WIC WriteSource receives an authentic
+	// decoder frame when simply saving an unchanged HEIC. The historical
+	// 1.1.18 path unnecessarily recompressed it into 8-bit RGB and stripped
+	// Exif, ICC and auxiliary image items. Preserve the exact HEIF container.
+	// This deliberately does NOT accept FlipRotator, FormatConverter, Scaler
+	// or arbitrary rasters: they cannot prove which original HEVC bytes they
+	// represent. Transform/edit handling remains unchanged in this branch.
+	if (pIBitmapSource && !prc && m_OptionsInitialized &&
+	    m_BitmapTransform == 0 && m_HeifCompressionMethod == 0 &&
+	    !m_LosslessReady && !m_HasPixels && !m_Created &&
+	    m_WrittenLines == 0) {
+		IHeicRawSource* raw = nullptr;
+		const HRESULT qi = pIBitmapSource->QueryInterface(
+			IID_IHeicRawSource,reinterpret_cast<void**>(&raw));
+		if (SUCCEEDED(qi) && raw) {
+			UINT srcW=0,srcH=0;
+			HRESULT hr = pIBitmapSource->GetSize(&srcW,&srcH);
+			if (FAILED(hr) || !srcW || !srcH ||
+			    (m_Width && m_Width != srcW) ||
+			    (m_Height && m_Height != srcH)) {
+				raw->Release();
+				return FAILED(hr) ? hr : E_INVALIDARG;
+			}
+			std::vector<uint8_t> completeSource;
+			hr = raw->ReadFullContent(&completeSource);
+			raw->Release();
+			if (FAILED(hr)) return hr;
+			// This came from our own verified HEIF reader. Never accept an
+			// empty or obviously invalid blob as a lossless source.
+			if (completeSource.size() < 12 ||
+			    completeSource[4]!='f' || completeSource[5]!='t' ||
+			    completeSource[6]!='y' || completeSource[7]!='p')
+				return WINCODEC_ERR_BADIMAGE;
+			m_LosslessBytes.swap(completeSource);
+			m_Width = srcW;
+			m_Height = srcH;
+			m_LosslessReady = true;
+			WicHeicDiagnostic::Emit("WriteSourceOriginalExact",
+				srcW,srcH,0,0,"unchanged-original-heif");
+			return S_OK;
+		}
+	}
+
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
 		// A decoded RGB bitmap or a WIC flip-rotator has no HEVC bitstream to
 		// preserve. Only source frames from OUR decoder may take this path.
