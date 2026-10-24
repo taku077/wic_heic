@@ -272,6 +272,33 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			}
 		}
 
+		// Validate that an initially empty output can be restored to empty
+		// BEFORE the first HEIC byte is published. Stat + Seek alone do not
+		// prove that IStream::SetSize is supported. Without SetSize(0), a
+		// short S_OK write or subsequent encode error leaves a corrupt HEIC
+		// prefix that cannot be rolled back. Refuse such destinations rather
+		// than risk an incomplete saved file.
+		//
+		// The Stat above proved the target is empty and the Seek above
+		// proved its position is zero; SetSize(0) therefore never truncates
+		// previously existing data. This guard applies to lossless and HEVC
+		// raster output equally. Its return is not a claim of atomic file
+		// replacement if a caller has already truncated the destination.
+		ULARGE_INTEGER emptyPreflight{};
+		hr=m_Stream->SetSize(emptyPreflight);
+		if(FAILED(hr)) {
+			WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,
+				"output-stream-cannot-rollback",WINCODEC_ERR_UNSUPPORTEDOPERATION);
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
+		ULARGE_INTEGER afterResize{};
+		hr=m_Stream->Seek(zero,STREAM_SEEK_CUR,&afterResize);
+		if(FAILED(hr) || afterResize.QuadPart!=0) {
+			WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,
+				"output-stream-position-after-preflight",
+				WINCODEC_ERR_UNSUPPORTEDOPERATION);
+			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		}
 		// A single-frame direct WIC rotation/copy can now retain the entire
 		// original HEIF file, including metadata, thumbnails and HDR assets.
 		// A pre-existing nonempty target stream is NEVER overwritten here.
