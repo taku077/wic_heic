@@ -2,7 +2,7 @@ name: Photos WIC arbitration regression - no MSI distribution
 on:
   push:
     branches: [investigate/photos-wic-arbitration-after-120-failure]
-    paths: ['.github/workflows/photos-wic-postfail-arbitration-ci.yml', 'wic_heic/**', 'wictest/**', 'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1']
+    paths: ['.github/workflows/photos-wic-postfail-arbitration-ci.yml', 'wic_heic/**', 'wictest/**', 'diagnostics/photos_trace/Uninstall_WIC_Trial_RestorePreview.ps1', 'diagnostics/photos_trace/Compare_WIC_Encoder_RAM.ps1']
   workflow_dispatch:
 
 concurrency:
