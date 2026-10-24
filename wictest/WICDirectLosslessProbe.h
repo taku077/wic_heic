@@ -5,6 +5,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <vector>
+#include <algorithm>
 
 namespace WICDirectLosslessProbe {
 inline void Check(HRESULT hr,const char* label) {
@@ -185,6 +186,53 @@ inline void UnmodifiedOriginalExact(IWICImagingFactory* factory,bool fullRect=fa
          actual.size());
 }
 
+// Explicit raster ICC is a bounded, meaningful part of Photos edit saving.
+// No claims about preserving source Exif when Photos only supplies raster data.
+inline void ExplicitRasterICCPreserved(IWICImagingFactory* factory) {
+    const auto icc=Read(L"samples\\Synthetic_sRGB_ICC_from_LittleCMS.icc");
+    if(icc.size()<132 || memcmp(icc.data()+36,"acsp",4)!=0)
+        throw std::runtime_error("Synthetic ICC invalid");
+    CComPtr<IWICColorContext> cc;
+    Check(factory->CreateColorContext(&cc),"create synthetic ICC context");
+    Check(cc->InitializeFromMemory(icc.data(),UINT(icc.size())),
+        "initialize ICC");
+    const UINT W=48,H=32;
+    std::vector<BYTE> pixels(size_t(W)*H*3);
+    for(UINT y=0;y<H;++y)for(UINT x=0;x<W;++x){
+        const size_t pos=(size_t(y)*W+x)*3;
+        pixels[pos]=BYTE(x*3);
+        pixels[pos+1]=BYTE(y*6);
+        pixels[pos+2]=BYTE((x+y)*2);
+    }
+    CComPtr<IWICBitmap> bitmap;
+    Check(factory->CreateBitmapFromMemory(W,H,GUID_WICPixelFormat24bppRGB,
+        W*3,UINT(pixels.size()),pixels.data(),&bitmap),"make edited raster");
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,
+        &encoder),"ICC HEIC encoder");
+    CComPtr<IWICStream> stream;
+    Check(factory->CreateStream(&stream),"ICC stream");
+    const wchar_t* output=L"samples\\synthetic-wic-icc-raster.heic";
+    Check(stream->InitializeFromFilename(output,GENERIC_WRITE),"ICC output");
+    Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),"ICC encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"create ICC frame");
+    Check(frame->Initialize(nullptr),"ICC frame initialize");
+    Check(frame->SetSize(W,H),"ICC set size");
+    WICPixelFormatGUID format=GUID_WICPixelFormat24bppRGB;
+    Check(frame->SetPixelFormat(&format),"ICC pixel format");
+    IWICColorContext* pointer=cc;
+    Check(frame->SetColorContexts(1,&pointer),"ICC SetColorContexts");
+    Check(frame->WriteSource(bitmap,nullptr),"ICC edited bitmap");
+    Check(frame->Commit(),"ICC frame commit");
+    Check(encoder->Commit(),"ICC image commit");
+    frame.Release();encoder.Release();stream.Release();
+    const auto result=Read(output);
+    if(std::search(result.begin(),result.end(),icc.begin(),icc.end())==result.end())
+       throw std::runtime_error("HEIF encoded pixels but dropped supplied ICC profile");
+    printf("WIC118_RASTER_WIC_ICC_PRESERVED_IN_HEIF_PASS bytes=%zu\n",icc.size());
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -201,6 +249,7 @@ inline void Run() {
         throw std::runtime_error("Original synthetic HEIC was modified");
     UnmodifiedOriginalExact(factory);
     UnmodifiedOriginalExact(factory,true);
+    ExplicitRasterICCPreserved(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
