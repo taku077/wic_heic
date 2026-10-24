@@ -41,6 +41,7 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 	, m_PixelFormat(GUID_WICPixelFormat24bppRGB)
 	, m_PixelFormatExplicitlySet(false)
 	, m_BitDepthPerChannel(8)
+	, m_MetadataState(std::make_shared<HeicGuardedMetadataState>())
 {
 	// The encoder owns each frame; never AddRef the parent here.
 }
@@ -48,7 +49,10 @@ CHeicBitmapFrameEncode::CHeicBitmapFrameEncode()
 
 CHeicBitmapFrameEncode::~CHeicBitmapFrameEncode()
 {
-	// No parent reference to release (prevents a COM reference cycle).
+	if(m_MetadataState){
+		std::lock_guard<std::mutex> lock(m_MetadataState->mutex);
+		m_MetadataState->closed=true;
+	}
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::QueryInterface(REFIID riid, void **ppvObject)
@@ -277,6 +281,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WritePixels(UINT lineCount, UI
 		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 	}
 	if (!pbPixels) return E_POINTER;
+    // A caller that supplied frame-level metadata may not transition to
+    // bare-pixel encoding: doing so drops the metadata on HEIC Commit.
+    if(m_MetadataState){
+        std::lock_guard<std::mutex> lock(m_MetadataState->mutex);
+        if(!m_MetadataState->entries.empty())
+            return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+    }
 	if (!m_Width || !m_Height || !lineCount || m_HasPixels || m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	if (lineCount > m_Height - m_WrittenLines) return E_INVALIDARG;
 
@@ -411,6 +422,22 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// never be accepted and then silently ignored by EncoderCommit.
 	if (m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	if (!pIBitmapSource) return E_POINTER;
+    // Lock pending metadata against writes before inspecting this exact
+    // frame. Do not claim that rasterized Photos edits can carry EXIF/ICC.
+    if(m_MetadataState){
+        {
+            std::lock_guard<std::mutex> lock(m_MetadataState->mutex);
+            m_MetadataState->closed=true;
+        }
+        const HRESULT meta=HeicVerifyUnchangedMetadata(
+            m_MetadataState,pIBitmapSource);
+        if(FAILED(meta)) {
+            WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+                m_BitmapTransform,m_HeifCompressionMethod,
+                "metadata-request-differs-from-source",meta);
+            return meta;
+        }
+    }
 	// WIC callers may supply an explicit rectangle covering ALL pixels.
 	// Such a rectangle is semantically identical to a null source ROI.
 	// Only an actual full-frame rectangle is eligible for metadata-preserving
@@ -689,10 +716,20 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::GetMetadataQueryWriter(__RPC__deref_out_opt IWICMetadataQueryWriter **ppIMetadataQueryWriter)
 {
-	if (!ppIMetadataQueryWriter) return E_POINTER;
-	*ppIMetadataQueryWriter = nullptr;
-	WicHeicDiagnostic::Emit("MetadataWriterUnavailable",0,0,m_BitmapTransform,m_HeifCompressionMethod,"metadata-rejected",E_NOTIMPL);
-	return E_NOTIMPL;
+    if(!ppIMetadataQueryWriter)return E_POINTER;
+    *ppIMetadataQueryWriter=nullptr;
+    if(!m_OptionsInitialized)return WINCODEC_ERR_WRONGSTATE;
+    if(m_HasPixels||m_Created||m_LosslessReady||m_Committed)
+        return WINCODEC_ERR_WRONGSTATE;
+    try{
+        auto* query=new(std::nothrow) CHeicGuardedMetadataQueryWriter(m_MetadataState);
+        if(!query)return E_OUTOFMEMORY;
+        *ppIMetadataQueryWriter=query;
+        WicHeicDiagnostic::Emit("MetadataWriterStaged",0,0,
+            m_BitmapTransform,m_HeifCompressionMethod,
+            "only-unchanged-source-metadata-accepted");
+        return S_OK;
+    }catch(const std::bad_alloc&){return E_OUTOFMEMORY;}
 }
 
 void CHeicBitmapFrameEncode::CreateFrame()
