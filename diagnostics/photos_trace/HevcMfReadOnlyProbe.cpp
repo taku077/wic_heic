@@ -227,6 +227,9 @@ void DigestPinnedSyntheticFullFrame(IWICBitmapSource* rgb,UINT w,UINT h,
             prefix,role,fingerprint);
     }
 }
+void ProbePinnedSyntheticEncoderMemoryOnly(
+    IWICImagingFactory* factory,const GUID& container,const char* role,
+    IWICBitmapFrameDecode* source,const std::vector<BYTE>& original);
 void DecodePinnedSynthetic(IWICImagingFactory* factory,
     const CLSID& decoderClsid,const char* role,std::vector<BYTE>& source) {
     using Microsoft::WRL::ComPtr;
@@ -262,6 +265,15 @@ void DecodePinnedSynthetic(IWICImagingFactory* factory,
     std::printf("HEVC_SYNTHETIC_WIC role=%s stage=frame_size hr=0x%08lX width=%u height=%u\n",
         role,static_cast<unsigned long>(hr),width,height);
     if(FAILED(hr)||width<16||height<8)return;
+    // Isolate native-vs-custom ENCODER selection from arbitration of the
+    // decoder: verify the same original public HEIC decoder frame by CLSID.
+    // Automatic selection remains a separate measurement below.
+    if(IsEqualGUID(decoderClsid,kCustomDecoder)) {
+        ProbePinnedSyntheticEncoderMemoryOnly(factory,kNativeHeif,
+            "microsoft_heif_explicit",frame.Get(),source);
+        ProbePinnedSyntheticEncoderMemoryOnly(factory,kPrivateHeic,
+            "custom_heic_explicit",frame.Get(),source);
+    }
     ComPtr<IWICBitmapSource> rgb;
     hr=WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
         frame.Get(),rgb.GetAddressOf());
