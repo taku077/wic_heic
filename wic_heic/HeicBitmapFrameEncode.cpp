@@ -340,6 +340,47 @@ static bool RequestedICCMatchesSource(IWICBitmapSource* bitmap,
     return SUCCEEDED(hr) && raw==requested;
 }
 
+// IWICBitmapFrameEncode::WriteSource infers size/pixel format only when the
+// caller leaves them unspecified. Those are staged values, NOT committed frame
+// configuration until a verified source has been accepted. In particular,
+// rejecting a Photos-produced opaque raster must not contaminate a retry
+// with the correct, provenance-preserving original HEIC source.
+//
+// Store only scalar layout settings: source HEIF data is never duplicated,
+// modified, deleted or transferred to a global cache by this rollback.
+struct ScopedWicSourceSetterRollback {
+    UINT& width;
+    UINT& height;
+    heif_chroma& chroma;
+    WICPixelFormatGUID& pixelFormat;
+    bool& explicitPixelFormat;
+    int& bitDepth;
+    const UINT originalWidth;
+    const UINT originalHeight;
+    const heif_chroma originalChroma;
+    const WICPixelFormatGUID originalPixelFormat;
+    const bool originalExplicitPixelFormat;
+    const int originalBitDepth;
+    bool accepted=false;
+    ScopedWicSourceSetterRollback(UINT& w,UINT& h,heif_chroma& c,
+        WICPixelFormatGUID& f,bool& explicitFormat,int& b) noexcept
+        :width(w),height(h),chroma(c),pixelFormat(f),
+         explicitPixelFormat(explicitFormat),bitDepth(b),
+         originalWidth(w),originalHeight(h),originalChroma(c),
+         originalPixelFormat(f),originalExplicitPixelFormat(explicitFormat),
+         originalBitDepth(b) {}
+    ~ScopedWicSourceSetterRollback() noexcept {
+        if(accepted)return;
+        width=originalWidth;height=originalHeight;chroma=originalChroma;
+        pixelFormat=originalPixelFormat;
+        explicitPixelFormat=originalExplicitPixelFormat;
+        bitDepth=originalBitDepth;
+    }
+    void Accept() noexcept {accepted=true;}
+    ScopedWicSourceSetterRollback(const ScopedWicSourceSetterRollback&)=delete;
+    ScopedWicSourceSetterRollback& operator=(const ScopedWicSourceSetterRollback&)=delete;
+};
+
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWICBitmapSource *pIBitmapSource, __RPC__in_opt WICRect *prc)
 {
 	WicHeicDiagnostic::Emit("WriteSourceEnter",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,prc?"cropped":"full");
@@ -348,6 +389,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// never be accepted and then silently ignored by EncoderCommit.
 	if (m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	if (!pIBitmapSource) return E_POINTER;
+	ScopedWicSourceSetterRollback stagedSettings(m_Width,m_Height,m_Chroma,
+		m_PixelFormat,m_PixelFormatExplicitlySet,m_BitDepthPerChannel);
 	// IWICBitmapFrameEncode::WriteSource explicitly allows callers to omit
 	// SetSize and SetPixelFormat. Windows' canonical HEIF no-recompression
 	// example does exactly that. Infer absent settings only from this source,
@@ -414,6 +457,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 				if (originalBytes.empty()) return WINCODEC_ERR_BADIMAGE;
 				m_LosslessBytes = std::move(originalBytes);
 				m_LosslessReady = true;
+				stagedSettings.Accept();
 				WicHeicDiagnostic::Emit("WriteSourceLossless",
 					m_Width,m_Height,0,m_HeifCompressionMethod,"exact-source-container");
 				return S_OK;
@@ -477,6 +521,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 				original,m_BitmapTransform);
 			m_Width=expectedW;m_Height=expectedH;
 			m_LosslessReady=true;
+			stagedSettings.Accept();
 			WicHeicDiagnostic::Emit("WriteSourceLossless",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,"raw-heif");
 			DbgLog("HEIC_WIC_LOSSLESS_READY transform=%u dimensions=%ux%u bytecount=%zu",
 				unsigned(m_BitmapTransform),expectedW,expectedH,m_LosslessBytes.size());
