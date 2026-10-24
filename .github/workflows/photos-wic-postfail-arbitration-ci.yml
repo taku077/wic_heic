@@ -726,6 +726,9 @@ jobs:
             'diagnostics/photos_trace/B_Field_Restore_Admin.cmd'='B_Field_Restore_Admin.cmd'
             'diagnostics/photos_trace/B_Field_Restore_Latest.ps1'='B_Field_Restore_Latest.ps1'
             'diagnostics/photos_trace/B_FieldTrial_GUI_Readme_JA.txt'='README_まずお読みください.txt'
+            'diagnostics/photos_trace/B_GUI_Capture_and_Pack.cmd'='B_GUI_Capture_and_Pack.cmd'
+            'diagnostics/photos_trace/B_Result_Collect.ps1'='B_Result_Collect.ps1'
+            'diagnostics/photos_trace/Photos_AB_Capture.ps1'='Photos_AB_Capture.ps1'
           }
           foreach($item in $files.GetEnumerator()){
             Copy-Item -LiteralPath $item.Key -Destination (Join-Path $stage $item.Value) -ErrorAction Stop
@@ -741,6 +744,8 @@ jobs:
              (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -cne
              'D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95'){throw 'Invalid synthetic comparison HEIC'}
           Copy-Item -LiteralPath $fixture -Destination (Join-Path $stage 'SYNTHETIC_REFERENCE_DO_NOT_EDIT.heic')
+          Copy-Item -LiteralPath $fixture -Destination (Join-Path $stage 'fixture-irot3-exif6-noaux.heic')
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'PhotosMfWicAB/HevcMfReadOnlyProbe.exe') -Destination (Join-Path $stage 'HevcMfReadOnlyProbe.exe')
           $msiObject=New-Object -ComObject WindowsInstaller.Installer
           function Props([string]$path){
             $database=$msiObject.OpenDatabase($path,0)
@@ -759,14 +764,27 @@ jobs:
               $a.ProductCode -ceq $b.ProductCode){
             throw 'MSI major-upgrade identity mismatch'
           }
-          if(@(Get-ChildItem -LiteralPath $stage -File).Count -ne 12){throw 'B trial staging incomplete'}
+          $control=$b = $null
+          # No explorer.exe shutdown even when the MSI is launched directly.
+          $control=Props (Join-Path $stage 'WicHeic-Repair-1.1.20-TRIAL-x64.msi')
+          # Property is queried below using the MSI database, not inferred from source.
+          $view=$msiObject.OpenDatabase((Join-Path $stage 'WicHeic-Repair-1.1.20-TRIAL-x64.msi'),0).OpenView(
+            "SELECT Value FROM Property WHERE Property = 'MSIRESTARTMANAGERCONTROL'")
+          try{$null=$view.Execute();$row=$view.Fetch()
+            if(!$row -or $row.StringData(1) -cne 'Disable'){
+              throw 'Research MSI lacks embedded Restart Manager shutdown prevention'
+            }
+          }finally{$view.Close()}
+          if(@(Get-ChildItem -LiteralPath $stage -File).Count -ne 17){throw 'B trial staging incomplete'}
+          Write-Host 'PHOTOS_RESEARCH_MSI_DISABLES_RESTART_MANAGER_EXPLORER_SHUTDOWN_PASS'
           Write-Host 'PHOTOS_REAL_GUI_AB_B_MSI_AND_EXACT118_RESTORE_STAGED_PASS'
       - name: Prove old118 researchB old118 restoration with kit scripts
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $stage=Join-Path $env:RUNNER_TEMP 'Photos_RealGUI_B_Trial'
-          foreach($script in @('WIC120_OneTimeTrial.ps1','B_Field_Restore_Latest.ps1')){
+          foreach($script in @('WIC120_OneTimeTrial.ps1','B_Field_Restore_Latest.ps1',
+              'Photos_AB_Capture.ps1','B_Result_Collect.ps1')){
             $tok=$null;$errors=$null
             [Management.Automation.Language.Parser]::ParseFile((Join-Path $stage $script),[ref]$tok,[ref]$errors)|Out-Null
             if(@($errors).Count){throw ('PS5.1 trial script invalid: '+$script)}
@@ -782,8 +800,33 @@ jobs:
           if(@(Get-ChildItem -LiteralPath $stage -Filter 'WIC120_Session_*.json' -File).Count -ne 1){
             throw 'B trial session file missing'
           }
-          & (Join-Path $stage 'B_Field_Restore_Latest.ps1')
-          if(-not $?){throw 'B trial restoration failed on isolated runner'}
+          # Test self-contained B capture, preserving old sessions.
+          & (Join-Path $stage 'Photos_AB_Capture.ps1') -Phase B -CiDryRun
+          if(-not $?){throw 'B capture after trial install failed'}
+          & (Join-Path $stage 'B_Result_Collect.ps1')
+          if(-not $?){throw 'B evidence packaging failed'}
+          $packed=@(Get-ChildItem -LiteralPath (Join-Path $stage 'Photos_AB_Results') -Filter 'Photos_B_Result_*.zip' -File)
+          if($packed.Count -ne 1){throw 'B result ZIP missing'}
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive=[IO.Compression.ZipFile]::OpenRead($packed[0].FullName)
+          try {
+            $names=@($archive.Entries | ForEach-Object {$_.Name})
+            if($names.Count -ne 2 -or
+                @($names|Where-Object {$_ -match '^Photos_AB_B_.*\.json$'}).Count -ne 1 -or
+                -not ($names -contains 'synthetic-working.heic')){
+              throw 'B evidence ZIP leaked unexpected files or missing B record'
+            }
+          }finally{$archive.Dispose()}
+          Write-Host 'PHOTOS_B_ONE_CLICK_SYNTHETIC_EVIDENCE_ZIP_PASS'
+          # The restore script can be executed from a *new* kit even when
+          # the session was created by a previous kit, e.g. user incident.
+          $newKit=Join-Path $env:RUNNER_TEMP 'B_RestoreProxy_NoSession'
+          New-Item -ItemType Directory -Path $newKit -ErrorAction Stop | Out-Null
+          Copy-Item -LiteralPath (Join-Path $stage 'B_Field_Restore_Latest.ps1') -Destination $newKit
+          Copy-Item -LiteralPath (Join-Path $stage 'WIC120_OneTimeTrial.ps1') -Destination $newKit
+          & (Join-Path $newKit 'B_Field_Restore_Latest.ps1') -PreviousKitDirectory $stage
+          if(-not $?){throw 'Previous-kit session restoration failed'}
+          Write-Host 'PHOTOS_RESTORE_USING_PREVIOUS_KIT_SESSION_AND_NEW_SAFE_RUNNER_PASS'
           & $trial -CheckOnly
           if(-not $?){throw 'Original 118 was not restored'}
           Write-Host 'PHOTOS_REAL_GUI_AB_B_INSTALL_AND_ORIGINAL118_FULL_RESTORE_CI_PASS'
@@ -802,12 +845,14 @@ jobs:
             'WIC120_OneTimeTrial.ps1','WIC_Preflight_ReadOnly.ps1',
             'WIC_Preflight_Compare.ps1','B_Field_Install_Admin.cmd',
             'B_Field_Restore_Admin.cmd','B_Field_Restore_Latest.ps1',
-            'README_まずお読みください.txt','SYNTHETIC_REFERENCE_DO_NOT_EDIT.heic'
+            'README_まずお読みください.txt','SYNTHETIC_REFERENCE_DO_NOT_EDIT.heic',
+            'B_GUI_Capture_and_Pack.cmd','B_Result_Collect.ps1','Photos_AB_Capture.ps1',
+            'HevcMfReadOnlyProbe.exe','fixture-irot3-exif6-noaux.heic'
           )
           foreach($name in $releaseFiles){
             Copy-Item -LiteralPath (Join-Path $src $name) -Destination (Join-Path $dest $name) -ErrorAction Stop
           }
-          if(@(Get-ChildItem -LiteralPath $dest -File).Count -ne 12){throw 'Missing B field release files'}
+          if(@(Get-ChildItem -LiteralPath $dest -File).Count -ne 17){throw 'Missing B field release files'}
           if(@(Get-ChildItem -LiteralPath $dest -Filter '*.json' -File).Count -ne 0){
             throw 'CI private logs must not enter field kit'
           }
@@ -815,7 +860,7 @@ jobs:
       - name: Upload opt-in B/old118 comparative diagnostic (not working Photos claim)
         uses: actions/upload-artifact@v4
         with:
-          name: Photos_Win10_Research_B_Compare_and_118_Restore_v0_1
+          name: Photos_Win10_Research_B_ExplorerSafe_v0_2
           path: dist/Photos_RealGUI_B_Release/
           if-no-files-found: error
           retention-days: 14
