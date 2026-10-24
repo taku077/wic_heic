@@ -2,7 +2,7 @@
 #include "HeicSourceAccess.h"
 #include <mutex>
 
-class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IWICMetadataBlockReader, public IHeicRawSource
+class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IWICBitmapSourceTransform, public IWICMetadataBlockReader, public IHeicRawSource
 {
 private:
 	std::atomic<uint32_t> m_Count;
@@ -32,6 +32,16 @@ public:
 	virtual HRESULT STDMETHODCALLTYPE GetResolution(__RPC__out double *pDpiX, __RPC__out double *pDpiY);
 	virtual HRESULT STDMETHODCALLTYPE CopyPalette(__RPC__in_opt IWICPalette *pIPalette);
 	virtual HRESULT STDMETHODCALLTYPE CopyPixels(__RPC__in_opt const WICRect *prc, UINT cbStride, UINT cbBufferSize, __RPC__out_ecount_full(cbBufferSize) BYTE *pbBuffer);
+	// Native HEIF frames support WIC's frame-level decode transform API.
+	// Only lossless pixel rotations at native resolution are advertised;
+	// resizing, flips, colorspace edits and HEIC saving remain separate.
+	HRESULT STDMETHODCALLTYPE DoesSupportTransform(WICBitmapTransformOptions transform,
+		BOOL* supported) override;
+	HRESULT STDMETHODCALLTYPE GetClosestSize(UINT* width,UINT* height) override;
+	HRESULT STDMETHODCALLTYPE GetClosestPixelFormat(WICPixelFormatGUID* format) override;
+	HRESULT STDMETHODCALLTYPE CopyPixels(const WICRect* region,UINT width,UINT height,
+		WICPixelFormatGUID* format,WICBitmapTransformOptions transform,
+		UINT stride,UINT bufferSize,BYTE* buffer) override;
 	virtual HRESULT STDMETHODCALLTYPE GetMetadataQueryReader(__RPC__deref_out_opt IWICMetadataQueryReader **ppIMetadataQueryReader);
 	virtual HRESULT STDMETHODCALLTYPE GetColorContexts(UINT cCount, __RPC__inout_ecount_full_opt(cCount) IWICColorContext **ppIColorContexts, __RPC__out UINT *pcActualCount);
 	virtual HRESULT STDMETHODCALLTYPE GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail);
