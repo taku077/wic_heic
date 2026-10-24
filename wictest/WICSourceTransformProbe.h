@@ -58,8 +58,13 @@ inline void Run() {
         UINT outputWidth=0,outputHeight=0;
         Require(rotator->GetSize(&outputWidth,&outputHeight),
             "expected rotated dimensions");
-        const UINT bpp=24/8,stride=outputWidth*bpp;
-        std::vector<BYTE> reference(size_t(stride)*outputHeight);
+        const UINT bpp=24/8;
+        // WIC rotator may insist on DWORD-aligned destination scanlines
+        // even when the custom frame's plain CopyPixels accepts a tight
+        // pixel stride. Compare only active RGB bytes, never padding.
+        const UINT activeRow=outputWidth*bpp;
+        const UINT stride=(activeRow+3u)&~3u;
+        std::vector<BYTE> reference(size_t(stride)*outputHeight,0xAF);
         std::vector<BYTE> direct(reference.size(),0xAF);
         Require(rotator->CopyPixels(nullptr,stride,UINT(reference.size()),reference.data()),
             "expected rotator pixels");
@@ -67,8 +72,14 @@ inline void Run() {
         Require(transformed->CopyPixels(&roi,naturalWidth,naturalHeight,&requested,
                 rotation,stride,UINT(direct.size()),direct.data()),
             "native HEIC transform pixels");
-        if(reference!=direct)
-            throw std::runtime_error("Native HEIC transform pixels differ from WIC rotator");
+        for(UINT y=0;y<outputHeight;++y) {
+            for(UINT x=0;x<activeRow;++x)
+                if(reference[size_t(y)*stride+x]!=direct[size_t(y)*stride+x])
+                    throw std::runtime_error("Native HEIC transformed RGB differs from WIC rotator");
+            for(UINT x=activeRow;x<stride;++x)
+                if(direct[size_t(y)*stride+x]!=0xAF)
+                    throw std::runtime_error("Native HEIC transform wrote past active RGB row");
+        }
         printf("WIC_HEIC_SOURCE_TRANSFORM_ROTATION_%u_CROP_PIXEL_EQUAL_PASS\n",
             unsigned(rotation));
     }
