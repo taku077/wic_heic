@@ -1,0 +1,114 @@
+name: Photos Win10 GUI real A-B comparison tool v0.1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - investigate/photos-wic-arbitration-after-120-failure
+    paths:
+      - .github/workflows/photos-ab-real-gui-tool.yml
+      - diagnostics/photos_trace/Photos_AB_*.ps1
+      - diagnostics/photos_trace/Photos_AB_GUI_README_JA.txt
+      - diagnostics/photos_trace/0?_*.cmd
+      - diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp
+      - diagnostics/photos_trace/HevcMfReadOnlyProbe.vcxproj
+
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build existing synthetic WIC and HEVC detector (not installer)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Path dist/tool_build -Force | Out-Null
+          msbuild 'diagnostics/photos_trace/HevcMfReadOnlyProbe.vcxproj' /nologo /m:1 /p:Configuration=Release /p:Platform=x64 /p:OutDir="$env:GITHUB_WORKSPACE\dist\tool_build\" /v:minimal
+          if($LASTEXITCODE -ne 0){throw 'WIC probe compilation failed'}
+          if(!(Test-Path 'dist/tool_build/HevcMfReadOnlyProbe.exe')){throw 'Probe EXE missing'}
+      - name: Verify PowerShell 5.1 parsing and offline A-B comparison
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($p in @('Photos_AB_Capture.ps1','Photos_AB_Compare.ps1')){
+            $full=(Resolve-Path (Join-Path 'diagnostics/photos_trace' $p)).Path
+            $tokens=$null
+            $errors=$null
+            [System.Management.Automation.Language.Parser]::ParseFile($full,[ref]$tokens,[ref]$errors) | Out-Null
+            if(@($errors).Count){throw ('PowerShell 5.1 syntax error in '+$p+': '+$errors[0].Message)}
+          }
+          $sandbox=Join-Path $env:RUNNER_TEMP 'PhotosABSmoke'
+          $folder=Join-Path $sandbox 'Photos_AB_Results'
+          New-Item -ItemType Directory -Path $folder -Force | Out-Null
+          $fixed='D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95'
+          $data=[ordered]@{
+            Schema=1;Phase='A';CollectedUtc='2026-10-24T00:00:00Z';WindowsBuild='19045'
+            Packages=[ordered]@{'Microsoft.Windows.Photos'=@('2026.11090.22001.0');
+              'Microsoft.HEIFImageExtension'=@('1.2.48.0');
+              'Microsoft.HEVCVideoExtension'=@();'Microsoft.HEVCVideoExtensions'=@()}
+            PhotosProcessCount=1
+            PhotosModules=@([ordered]@{WicHeicLoaded=$true;WindowsCodecsLoaded=$true;
+              WicHeicDllSha256=@('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');ModulesReadable=$true})
+            GuiObservation=[ordered]@{HevcWarning='n';EditUsable='y';RotateUsable='y';
+              SaveResult='f';VisibleDistortion='y'}
+            SyntheticReferenceSha256=$fixed
+            WorkingCopy=[ordered]@{Exists=$true;Bytes=10597;Sha256=$fixed}
+            CodecProbeStatus='PASS'
+            CodecProbeEvents=@('HEVC_SYNTHETIC_AUTO stage=copy_pixels hr=0x00000000')
+            UserFilesAccessed=$false;RegistryOrAppxModified=$false
+          }
+          ($data|ConvertTo-Json -Depth 9)|Set-Content -LiteralPath (Join-Path $folder 'Photos_AB_A.json') -Encoding UTF8
+          $data.Phase='B'
+          $data.GuiObservation.HevcWarning='y'
+          $data.GuiObservation.EditUsable='n'
+          $data.GuiObservation.RotateUsable='n'
+          $data.GuiObservation.SaveResult='x'
+          $data.PhotosModules[0].WicHeicDllSha256=@('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
+          ($data|ConvertTo-Json -Depth 9)|Set-Content -LiteralPath (Join-Path $folder 'Photos_AB_B.json') -Encoding UTF8
+          $report=@(& 'diagnostics/photos_trace/Photos_AB_Compare.ps1' -Root $sandbox -NoWrite)
+          if(-not ($report -match 'HEVC警告') -or -not ($report -match 'DLL') -or
+             -not ($report -match 'Photos')){
+             throw 'A/B comparator did not cover Photos GUI and codec difference'
+          }
+          $fixture='wictest/samples/fixture-irot3-exif6-noaux.heic'
+          if((Get-Item -LiteralPath $fixture).Length -ne 10597 -or
+             (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -cne $fixed){
+             throw 'Repository synthetic HEIC changed'
+          }
+          foreach($script in @('Photos_AB_Capture.ps1','Photos_AB_Compare.ps1')){
+            $body=[IO.File]::ReadAllText((Resolve-Path (Join-Path 'diagnostics/photos_trace' $script)).Path)
+            foreach($bad in @('msiexec','Remove-AppxPackage','Add-AppxPackage',
+              'Set-ItemProperty','New-ItemProperty','Remove-ItemProperty')){
+                if($body -match [regex]::Escape($bad)){throw 'Probe has forbidden mutation command: '+$bad}
+            }
+          }
+          Write-Host 'WINDOWS10_PHOTOS_GUI_AB_POWERSHELL51_AND_OFFLINE_COMPARISON_PASS'
+      - name: Package early diagnostic tool, sample image and detector
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dest='dist/Photos_AB_GUI_Win10_x64'
+          if(Test-Path -LiteralPath $dest){throw 'Refuse overwriting staging'}
+          New-Item -ItemType Directory -Path $dest | Out-Null
+          foreach($name in @('Photos_AB_Capture.ps1','Photos_AB_Compare.ps1',
+              'Photos_AB_GUI_README_JA.txt','01_Capture_OLD_118.cmd',
+              '02_Capture_RESEARCH.cmd','03_Compare_AB.cmd')){
+            Copy-Item -LiteralPath (Join-Path 'diagnostics/photos_trace' $name) -Destination $dest
+          }
+          Copy-Item -LiteralPath 'dist/tool_build/HevcMfReadOnlyProbe.exe' -Destination $dest
+          Copy-Item -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic' -Destination $dest
+          if(@(Get-ChildItem -LiteralPath $dest -File).Count -ne 8){
+            throw 'Missing A/B GUI diagnostic components'
+          }
+          Write-Host 'PHOTOS_GUI_AB_EARLY_DIAGNOSTIC_BUNDLE_PASS'
+      - name: Publish one downloadable A/B comparison kit (NO MSI)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Photos_GUI_Real_AB_Compare_v0_1_Win10
+          path: dist/Photos_AB_GUI_Win10_x64/
+          if-no-files-found: error
+          retention-days: 14
