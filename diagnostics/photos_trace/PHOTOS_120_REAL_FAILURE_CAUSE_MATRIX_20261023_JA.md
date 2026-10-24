@@ -850,3 +850,18 @@ GitHub現行ブランチで過去のNative SourceTransform対応実験はWindows
 **限界と次のP0**：この試験はWindows Server 2022のWIC APIと人工HEICであり、Windows10 Photos 2026.11090.22001.0 が現実に `WriteSource` へ全範囲 `WICRect` を渡すかは**未観測**。HEVC拡張警告・編集ボタン無効・Photos GUI保存成功は依然として未達。Microsoft公式はWindows10 PhotosのHEIF画像でHEVC拡張を要求する場合があると説明しているため、WIC DLLのみで確実に解決可能とはしない。ユーザー写真・HEIC Manager・既存WIC登録・Windows10実機には変更なし。新MSI配布・細切れ実機テストはしない。**暫定進捗52％維持**。
 
 WIC仕様: https://learn.microsoft.com/ja-jp/windows/win32/api/wincodec/nf-wincodec-iwicbitmapframeencode-writesource
+
+## 2026-10-24：WIC エンコーダーのプロパティ別読取失敗で回転指定が消える不具合
+
+**P0保存品質に直結する赤→緑修正。ただしWindows10標準PhotosのGUI操作・HEVC拡張警告は未合格。**
+
+`CHeicBitmapFrameEncode::Initialize` は `IPropertyBag2::Read` の全体HRESULTが `S_OK` であれば、`BitmapTransform` と `HeifCompressionMethod` の各要素 `HRESULT errors[2]` が失敗していても、値を既定値（回転0／圧縮DontCare）として採用し、フレーム初期化を成功させていた。Photos等のWICクライアントから渡された回転要求が読取に失敗した場合に、失敗を通知せず未回転画像として保存するリスクがある。今回このエラー経路を公開人工COMのみで再現した。**Photos自身がこの異常なPropertyBagを返したという証拠ではない。**
+
+- [赤テストcommit `20c81f12eadfa2a4f91ae3aba87287860a351191`](https://github.com/taku077/wic_heic/commit/20c81f12eadfa2a4f91ae3aba87287860a351191)：`wictest/EncoderGuardProbe.h` に `FailingWicOptionReadBag` と `VerifyPerOptionReadFailureCannotSilentlyLoseRotation` を追加。正式なWICオプションバッグに90度回転を設定した後、`IPropertyBag2::Read` は全体 `S_OK` だが `BitmapTransform` の個別結果だけ `E_ACCESSDENIED` とする。実行はメモリ内のエンコーダー／ストリームだけで行い、ユーザー画像・レジストリ・実機には触れない。
+- [赤CI #40092291739（意図どおりFAIL）](https://github.com/taku077/wic_heic/actions/runs/40092291739)：`WIC_FRAME_PARTIAL_OPTIONS_READ_FAILED_HRESULT=0x00000000`、`Failed WIC BitmapTransform read silently used Rotate0`。この時点で既定値への黙示的フォールバックを証明。
+- [製品修正commit `36fa2a754740ea3c4f3fe79f4298e76a66a0a590`](https://github.com/taku077/wic_heic/commit/36fa2a754740ea3c4f3fe79f4298e76a66a0a590)：`HeicBitmapFrameEncode.cpp::Initialize` が各要素のHRESULTを検査し、アクセス拒否等の明確な失敗を呼出元へ返す。非指定として許される `E_INVALIDARG` / `DISP_E_MEMBERNOTFOUND` かつ `VT_EMPTY` の場合に限り既定値を維持。失敗時に `VARIANT` を解放し、不完全な初期化状態へ遷移しない。
+- [緑CI #40092481457 SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40092481457)：`WIC_FRAME_PARTIAL_OPTIONS_READ_FAILED_HRESULT=0x80070005`、`WIC_FRAME_PROPERTY_READ_ERROR_CANNOT_SILENTLY_DROP_ROTATION_PASS` を確認。正しいバッグによる同じフレームの再初期化も成功し、失敗前後の出力ストリームは空を保持。既存 `WIC_FULL_FRAME_ROI_LOSSLESS_COPY_CONTAINER_BYTE_EXACT_PASS`、`WIC_FULL_FRAME_ROI_LOSSLESS_ROTATE90_CONTAINER_BYTE_EXACT_PASS`、`WIC_EXPLICIT_HEVC_VERIFIED_SOURCE_CONTAINER_BYTE_EXACT_PASS`、`WIC_RASTER_PARTIAL_WRITE_TRANSACTION_REVERT_PASS`、90/180/270度回転、独立サムネイル共存、MF非干渉を再確認した。
+
+**P0残課題**：正常な標準Photosが実際にこの読取エラーを出すとは限らず、UIのHEVC警告・編集/回転ボタン無効化の原因は依然未特定。実機Photosからの回転保存、Exif/ICC/HDRの網羅保持は未合格。ユーザー環境でのインストールや実写真へのアクセスはしない。研究版MSIの提示は保留し、暫定進捗は52％を維持する。
+
+Microsoft WICエンコーダー仕様: https://learn.microsoft.com/en-us/windows/desktop/wic/-wic-imp-iwicbitmapframeencode
