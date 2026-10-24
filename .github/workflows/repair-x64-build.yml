@@ -463,15 +463,6 @@ jobs:
             }
           }
 
-      - name: Upload MSI only after isolated installation verification
-        if: github.ref != 'refs/heads/fix/photos-118-selfwic-incremental'
-        uses: actions/upload-artifact@v4
-        with:
-          name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
-          path: WicHeic-HEIC-x64.msi
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Verify isolated MSI uninstall restores WIC registration baseline
         shell: pwsh
         run: |
@@ -479,3 +470,33 @@ jobs:
           $after=& ./diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1 | Select-Object -Last 1
           & ./diagnostics/photos_trace/WIC_Preflight_Compare.ps1 -Before $env:WIC_BASELINE -After $after
           if(-not $?) { throw 'Read-only WIC restoration comparison failed' }
+
+      # Never upload an MSI after every incremental push. A deliberate
+      # release(candidate): commit triggers ONE candidate only AFTER all
+      # WIC, MSI install/uninstall and COM restoration checks passed.
+      - name: Prepare MSI candidate checksum and provenance
+        if: ${{ github.ref == 'refs/heads/fix/photos-118-selfwic-incremental' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $msi=(Resolve-Path -LiteralPath 'WicHeic-HEIC-x64.msi').Path
+          $sha=(Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash
+          @(
+            "File: WicHeic-HEIC-x64.msi"
+            "SHA256: $sha"
+            "Commit: $env:GITHUB_SHA"
+            "Actions run: $env:GITHUB_RUN_ID"
+            "Status: Win10 Photos UI UNVERIFIED; do not install on user PC until rollback and approval"
+          ) | Set-Content -LiteralPath 'MSI_SHA256_AND_PROVENANCE.txt' -Encoding UTF8
+          Get-Content -LiteralPath 'MSI_SHA256_AND_PROVENANCE.txt'
+
+      - name: Upload one MSI candidate (Win10 Photos UNVERIFIED)
+        if: ${{ github.ref == 'refs/heads/fix/photos-118-selfwic-incremental' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: WicHeic-118-x64-Win10-Photos-UNVERIFIED-RC
+          path: |
+            WicHeic-HEIC-x64.msi
+            MSI_SHA256_AND_PROVENANCE.txt
+          if-no-files-found: error
+          retention-days: 14
