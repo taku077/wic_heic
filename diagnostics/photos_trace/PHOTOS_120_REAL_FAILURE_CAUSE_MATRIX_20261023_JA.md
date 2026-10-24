@@ -722,3 +722,16 @@ Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder�
 **この証拠を基にした追加実装**：固定人工HEICの`CreateDecoderFromStream`（ベンダー指定なし）による**Windows WICの自動選択と選択デコーダーCLSID・16×8 CopyPixels**を別途ログする処理を `diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp` に追加（コード `bc18229a6a736445cd870a208c956526d70d9c80`）。固定ファイルの厳格ハッシュ確認や任意ファイル拒否は変更しない。 [CI #40074946545 SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40074946545) で新ステージ実行、安全性試験、人工ファイル改変時の拒否に合格。**CIランナーでは純正WIC生成エラーで自動選択自体が失敗（0x88982F8B）**、Windows10でどちらが自動選択されるかは引き続き実機確認が必要。
 
 **次に必要な実証**：追加した自動選択測定をWindows10の同じ人工HEICに対して一度だけ行い、もし純正デコーダーが選ばれて`CopyPixels=0xC00D5212`となるならWICの通常経路の選択問題を優先。自作WICが選ばれて正常にCopyPixelsできるのにPhotos編集不可なら、標準フォト固有のHEVC拡張判定または別のエンコーダー／編集経路に重点を移す。製品機能の最終修正はなお未完成。実機で試していない研究版MSIの提供・インストール、ユーザー写真、HEIC Managerの変更は実施しない。
+
+## 2026-10-24：自動WIC経路・全画素測定と二重ハッシュ検証をCI合格
+
+**位置付け**：Windows10ユーザーの人工10,597B HEICで、Microsoft純正HEIF `CopyPixels=0xC00D5212`、旧自作WIC `CopyPixels=S_OK` まで確認済み。この結果はPhotosの自動選択を示さないため、単なるCOM登録比較を打ち切り、WIC自動選択と画素全体の再現性を人工画像のみで調査する。
+
+1. `HevcMfReadOnlyProbe.cpp` へ任意モード `--synthetic-wic-test` 内の `IWICImagingFactory::CreateDecoderFromStream`（ベンダー指定なし）を追加。選ばれたCLSIDがMicrosoft純正か自作か、`GetFrame`／RGB24変換／`CopyPixels`を直接記録。通常の画像なし診断には影響なし。コミット `bc18229a6a736445cd870a208c956526d70d9c80`。
+2. 同じ合成人工HEICのフレーム寸法、および**全画素RGB24のFNV64指紋**を追加。最大64MiBに制限し、合成画素や画像ファイルは保存しない。16×8の成功だけでは検出できない、画像後半のコピー失敗・幾何異常や旧研究の全画素差を後から調べられる。コミット `f065c976c58e4a72ef105c1c3364d8f54c5f6cf1`、`b0003348949a95963ff555d33097f5382b666a7f`。
+3. SHA-1 Git blob ハッシュ（`126b...`）に加えて、人工HEICコンテンツの**独立SHA-256 `D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95`**をWindows CryptoAPIで検証するようにした。不一致なら復号拒否。コミット `0d9f0c7afa475ddcc5ade7014fe2bd8bed17dcc1`、ワークフロー `190d94fc5556a028622dc1f11d41c6d48e597a9d`。
+4. [**CI #40075430836 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40075430836) でWindowsビルド、SHA-256照合、WIC自動選択実行、安全な改ざん拒否、通常の画像なし診断、診断パッケージ6点の梱包すべて合格。人工画像のハッシュを変えるとS_OKで先へ進まない。生成物 `Photos_HEVC_ReadOnly_Win10_x64`、artifact ID `12552782202`、保持期限2026-11-07 UTC。既存のユーザー写真やOSに変更はない。
+5. **CIランナーの解釈に限界**：自作MSIがないWindows Server 2022では純正HEIFのCOMが0x88982F8Bで生成不能となり、自動選択も0x88982F8B。Windows10実機は純正HEIFも自作WICもCOM生成できるため、CIの結果を実機へ外挿しない。実機で人工HEICの自動選択CLSIDとCopyPixelsを採取すれば、通常のWIC経路が自作を選んでいるかを検証可能。
+6. Windows10の純正HEIF側 `0xC00D5212` とHEVC MFT列挙0件は公式MicrosoftのHEIF/HEVC拡張依存と整合し、**WIC decoder単独の修正で標準フォト固有の拡張確認が無効化されるとは主張できない**。Photos GUI編集ボタンと保存品質の実機成功はまだ未確認。1.1.18を「正常版」と扱わず、未検証MSIを配布しない。
+
+**進捗メトリクスの改定方針**：従来の45％は、Windows10で純正と自作のどちらが画素展開に失敗するかが不明だった暫定値。今回、**ユーザー実機で明示デコーダーの正否が再現可能**になり、自動選択と全画素比較の実機検証プログラムまでCI成功したため、調査とエンジニアリングの進捗に限って暫定50％へ評価し直すことはできる。ただし**完成機能が50％利用可能という意味ではない**。本来のP0基準（Photos警告除去、編集・回転のGUI、元写真保護と全メタ保存）は未達。主観的数値より、実機動作確認で次の大きな進捗を判定する。
