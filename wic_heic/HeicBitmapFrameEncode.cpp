@@ -389,6 +389,21 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// never be accepted and then silently ignored by EncoderCommit.
 	if (m_LosslessReady || m_Committed) return WINCODEC_ERR_WRONGSTATE;
 	if (!pIBitmapSource) return E_POINTER;
+	// WIC callers may supply an explicit rectangle covering ALL pixels.
+	// Such a rectangle is semantically identical to a null source ROI.
+	// Only an actual full-frame rectangle is eligible for metadata-preserving
+	// lossless copying/rotation; an offset, partial crop or invalid rectangle
+	// must never be treated as the untouched original HEIC.
+	bool sourceRectangleIsWholeImage=(prc==nullptr);
+	if(prc) {
+		UINT sourceWidth=0,sourceHeight=0;
+		const HRESULT hr=pIBitmapSource->GetSize(&sourceWidth,&sourceHeight);
+		if(FAILED(hr)) return hr;
+		sourceRectangleIsWholeImage=prc->X==0 && prc->Y==0 &&
+			prc->Width>0 && prc->Height>0 &&
+			static_cast<UINT>(prc->Width)==sourceWidth &&
+			static_cast<UINT>(prc->Height)==sourceHeight;
+	}
 	ScopedWicSourceSetterRollback stagedSettings(m_Width,m_Height,m_Chroma,
 		m_PixelFormat,m_PixelFormatExplicitlySet,m_BitDepthPerChannel);
 	// IWICBitmapFrameEncode::WriteSource explicitly allows callers to omit
@@ -435,7 +450,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// ICC changes, cropping, or geometry changes prohibit this fast path.
 	// Explicit HEVC (2) permits a byte-exact copy ONLY after verifying all
 	// compressed image items are HEVC; it does not force a lossy recompression.
-	if (pIBitmapSource && !prc && m_BitmapTransform == 0 &&
+	if (sourceRectangleIsWholeImage && m_BitmapTransform == 0 &&
 	    !m_LosslessReady && !m_HasPixels && !m_WrittenLines && !m_Created) {
 		IHeicRawSource* originalSource = nullptr;
 		if (SUCCEEDED(pIBitmapSource->QueryInterface(
@@ -487,7 +502,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
 		// A decoded RGB bitmap or a WIC flip-rotator has no HEVC bitstream to
 		// preserve. Only source frames from OUR decoder may take this path.
-		if(!pIBitmapSource || prc || m_LosslessReady || m_HasPixels)
+		if(!sourceRectangleIsWholeImage || m_LosslessReady || m_HasPixels)
 			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 		IHeicRawSource* raw=nullptr;
 		HRESULT hr=pIBitmapSource->QueryInterface(
