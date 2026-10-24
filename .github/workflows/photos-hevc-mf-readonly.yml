@@ -136,7 +136,7 @@ jobs:
           Copy-Item -LiteralPath $src -Destination $target -Force
           $global:LASTEXITCODE=0
           Write-Host 'HEVC_WIC_SYNTHETIC_TAMPER_REFUSAL_CI_PASS'
-      - name: Verify portable one-click script and assemble read-only diagnostic ZIP
+      - name: Verify standalone diagnostics and assemble ONE batch entry point
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -152,10 +152,8 @@ jobs:
           if(Test-Path -LiteralPath $target){throw 'Refuse to overwrite prepared release staging'}
           New-Item -ItemType Directory -Path $target | Out-Null
           Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'photos_codec_check\HevcMfReadOnlyProbe.exe') -Destination $target
-          Copy-Item -LiteralPath $cmd -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/HEVC_MF_READONLY_DIAG_JA.md' -Destination $target
-          Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.ps1' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.cmd' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/WIC_PHOTOS_ONE_BATCH_POLICY_20261024_JA.md' -Destination $target
@@ -167,7 +165,7 @@ jobs:
           foreach($forbidden in @('msiexec','reg add','reg delete','Remove-AppxPackage','powershell.exe -Command')) {
             if($syntheticCmd -match [regex]::Escape($forbidden)){throw ('Unsafe synthetic runner command: '+$forbidden)}
           }
-          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 9){throw 'Full-batch test bundle and user instructions incomplete'}
+          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 7){throw 'One-click batch and user instructions incomplete'}
           Write-Host 'HEVC_MF_SINGLE_READONLY_DIAG_BUNDLE_PASS'
       - name: Execute ONE batch and verify a sanitized single ZIP on an isolated Windows runner
         shell: pwsh
@@ -178,6 +176,10 @@ jobs:
           if(Test-Path -LiteralPath $smoke){throw 'Refuse existing smoke destination'}
           New-Item -ItemType Directory -Path $smoke | Out-Null
           Get-ChildItem -LiteralPath $source -File | Copy-Item -Destination $smoke
+          $cmdList=@(Get-ChildItem -LiteralPath $smoke -Filter '*.cmd' -File)
+          if($cmdList.Count -ne 1 -or $cmdList[0].Name -cne 'Run_Photos_Batch_ReadOnly.cmd'){
+            throw 'Only one one-click CMD may be packaged for field use'
+          }
           $cmd=[IO.File]::ReadAllText((Join-Path $smoke 'Run_Photos_Batch_ReadOnly.cmd'))
           $ps=[IO.File]::ReadAllText((Join-Path $smoke 'Run_Photos_Batch_ReadOnly.ps1'))
           foreach($needed in @('Run_Photos_Batch_ReadOnly.ps1','-NoProfile','-ExecutionPolicy Bypass')) {
@@ -225,7 +227,7 @@ jobs:
       - name: Save optional single diagnostic ZIP for later approved real-machine checks
         uses: actions/upload-artifact@v4
         with:
-          name: Photos_HEVC_ReadOnly_Win10_x64
+          name: Photos_WIC_OneBatch_Win10_x64
           path: ${{ runner.temp }}/Photos_HEVC_ReadOnly_Win10_x64/
           if-no-files-found: error
           retention-days: 14
