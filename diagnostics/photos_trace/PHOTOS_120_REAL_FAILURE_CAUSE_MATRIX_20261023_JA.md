@@ -944,3 +944,11 @@ Microsoft WICエンコーダー仕様: https://learn.microsoft.com/en-us/windows
 4. このA画像ではICCは元からなく、**ICC保全を試験できていない**。実写真の提示やテストは要求しない。
 
 **注意**：保存処理の「成功」というGUI申告は **画素・メタ情報・回転形状の完成**を保証しない。ユーザーの元写真の保存を促してはいけない。
+
+## 2026-10-25：旧A実機確定後、復元可能な研究Bの実機比較用MSIを公開
+
+原因調査の対象を警告・編集・回転保存の実機A/B差分のみに限定する。既に旧1.1.18で標準Photos GUI警告なし・編集回転ボタン有効・人工HEIC保存成功のA結果を取得済み。保存されたHEICでは10bit→8bit降格とExif消失が確認されたため旧版の保存品質は不合格。
+
+[GitHub Actions #40106381404](https://github.com/taku077/wic_heic/actions/runs/40106381404) **SUCCESS**で、現行研究B（1.1.20）MSIとハッシュ固定の旧1.1.18 MSIを同梱した診断キットをビルド。隔離Windowsの実MSIで **旧1.1.18→研究B 1.1.20→旧1.1.18** の完全復元を実行し、`WIC120_USER_BASELINE_118_FULL_RESTORE_PASS` を取得。旧MSI SHA256 `4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6`、研究B SHA256 `F7A9C9B20118946ADA4060B8DFC67E2DDD7D8DAD1A7EBB296F876DC81F7EB2B9`、人工HEIC `D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95` を再検証。
+
+実機比較ZIP：`Photos_Win10_Research_B_Compare_and_118_Restore_v0_1a.zip`。本人が管理者権限で明示的にMSI試験導入し、既存のv0.2 A/B診断フォルダから **Bのみ**記録。比較後は旧版復元用CMDを管理者実行して復元マーカー確認。CMDの誤った `net session` 管理者判定を除去し、既存のWindowsPrincipal・MSIハッシュ・COM登録・元状態照合チェックを維持。**Windows10 Photos本体のGUIが研究Bで動作することは未検証**であり、試験用キットを完成版とは呼ばない。実写真には一切触れない。
