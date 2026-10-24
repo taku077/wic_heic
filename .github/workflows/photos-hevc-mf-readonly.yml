@@ -5,6 +5,7 @@ on:
     paths:
       - 'diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp'
       - 'diagnostics/photos_trace/HevcMfReadOnlyProbe.vcxproj'
+      - 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd'
       - '.github/workflows/photos-hevc-mf-readonly.yml'
   workflow_dispatch:
 permissions:
@@ -90,6 +91,42 @@ jobs:
           # The prior invalid-argument check intentionally returned 2 and
           # was already asserted above; clear that intentional negative-case native exit code.
           $global:LASTEXITCODE=0
+      - name: Prove opt-in WIC decode accepts only SHA-pinned public synthetic HEIC
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $src='wictest/samples/fixture-irot3-exif6-noaux.heic'
+          $gitHash=(& git hash-object -- $src).Trim()
+          if($LASTEXITCODE -ne 0 -or $gitHash -cne '126b24780e8c36a0e1521df982067ab12f971470'){
+            throw 'Public HEIC synthetic fixture Git blob changed unexpectedly'
+          }
+          $target=Join-Path $env:RUNNER_TEMP 'photos_codec_check/fixture-irot3-exif6-noaux.heic'
+          if(Test-Path -LiteralPath $target){throw 'Refuse synthetic fixture staging overwrite'}
+          Copy-Item -LiteralPath $src -Destination $target
+          $exe=Join-Path $env:RUNNER_TEMP 'photos_codec_check/HevcMfReadOnlyProbe.exe'
+          $valid=@(& $exe '--synthetic-wic-test' 2>&1)
+          $exit=$LASTEXITCODE
+          $valid|ForEach-Object{Write-Host $_}
+          if($exit -ne 0 -or
+             -not ($valid -match '^HEVC_SYNTHETIC_GIT_BLOB_VERIFIED_PASS bytes=10597') -or
+             -not ($valid -match '^HEVC_SYNTHETIC_WIC_COMPARISON_COMPLETE photos_not_tested=1 source_unchanged=1 no_photo_path_input=1')) {
+             throw 'Pinned public synthetic WIC experiment failed'
+          }
+          Write-Host 'HEVC_WIC_PINNED_SYNTHETIC_IN_MEMORY_CI_PASS'
+          # Mutate only the disposable CI staging copy, not the checked-in
+          # public fixture. A SHA1 blob mismatch MUST refuse to decode.
+          $mutated=[IO.File]::ReadAllBytes($target)
+          $mutated[0]=[byte]($mutated[0] -bxor 1)
+          [IO.File]::WriteAllBytes($target,$mutated)
+          $bad=@(& $exe '--synthetic-wic-test' 2>&1)
+          $badCode=$LASTEXITCODE
+          if($badCode -ne 8 -or
+             -not ($bad -match '^HEVC_SYNTHETIC_REFUSED public_fixture_missing_or_hash_mismatch=1')){
+            throw 'WIC synthetic experiment accepted manipulated fixture'
+          }
+          Copy-Item -LiteralPath $src -Destination $target -Force
+          $global:LASTEXITCODE=0
+          Write-Host 'HEVC_WIC_SYNTHETIC_TAMPER_REFUSAL_CI_PASS'
       - name: Verify portable one-click script and assemble read-only diagnostic ZIP
         shell: pwsh
         run: |
@@ -109,7 +146,16 @@ jobs:
           Copy-Item -LiteralPath $cmd -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/HEVC_MF_READONLY_DIAG_JA.md' -Destination $target
-          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 4){throw 'Read-only test bundle incomplete'}
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd' -Destination $target
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'photos_codec_check/fixture-irot3-exif6-noaux.heic') -Destination $target
+          $syntheticCmd=[IO.File]::ReadAllText((Resolve-Path 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd').Path)
+          foreach($required in @('--synthetic-wic-test','fixture-irot3-exif6-noaux.heic','No personal images')) {
+            if(-not $syntheticCmd.Contains($required)){throw ('Opt-in synthetic runner requirement missing: '+$required)}
+          }
+          foreach($forbidden in @('msiexec','reg add','reg delete','Remove-AppxPackage','powershell.exe -Command')) {
+            if($syntheticCmd -match [regex]::Escape($forbidden)){throw ('Unsafe synthetic runner command: '+$forbidden)}
+          }
+          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 6){throw 'Read-only and optional public synthetic test bundle incomplete'}
           Write-Host 'HEVC_MF_SINGLE_READONLY_DIAG_BUNDLE_PASS'
       - name: Save optional single diagnostic ZIP for later approved real-machine checks
         uses: actions/upload-artifact@v4
