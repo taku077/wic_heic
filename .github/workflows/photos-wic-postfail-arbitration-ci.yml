@@ -312,27 +312,34 @@ jobs:
             throw 'Historical 1.1.18 MSI source provenance changed unexpectedly'
           }
           Write-Host 'WIC_118_SOURCE_COMMIT_PROVENANCE_PINNED_PASS'
-          # Reuse the EXISTING read-only MF diagnostic source instead of
-          # duplicating its codec enumeration logic. Windows Photos can
-          # gate HEIF editing on a HEVC MFT independently of the WIC codec.
-          # Inventory only; no MF activation, package installation, or
-          # machine registry probing besides the isolated WIC MSI A/B.
+          # Reuse the existing read-only MF diagnostic source; no codec
+          # activation, Photos UI, license acquisition or user files.
           $mfDir=Join-Path $env:RUNNER_TEMP 'PhotosMfWicAB'
-          if(Test-Path -LiteralPath $mfDir){throw 'Refuse MF diagnostic staging overwrite'}
+          if(Test-Path -LiteralPath $mfDir){throw 'MF probe staging collision'}
           New-Item -ItemType Directory -Path $mfDir | Out-Null
           msbuild 'diagnostics/photos_trace/HevcMfReadOnlyProbe.vcxproj' /nologo /m:1 /p:Configuration=Release /p:Platform=x64 "/p:OutDir=$mfDir\" /v:minimal
-          if($LASTEXITCODE -ne 0){throw 'Existing read-only MF probe failed to build'}
+          if($LASTEXITCODE -ne 0){throw 'Read-only Media Foundation probe build failed'}
           $mfExe=Join-Path $mfDir 'HevcMfReadOnlyProbe.exe'
-          if(!(Test-Path -LiteralPath $mfExe -PathType Leaf)){throw 'MF diagnostic executable missing'}
+          if(!(Test-Path -LiteralPath $mfExe -PathType Leaf)){throw 'MF inventory executable missing'}
           function MFInventory([string]$label) {
             $lines=@(& $mfExe 2>&1)
             if($LASTEXITCODE -ne 0 -or -not ($lines -match '^HEVC_MF_PROBE_COMPLETE')) {
-              throw ('Read-only MF inventory failed: '+$label)
+              throw ('Read-only MF enumeration failed '+$label)
             }
             $rows=@($lines | Where-Object {$_ -match '^HEVC_MF_INVENTORY codec='})
-            if($rows.Count -ne 4){throw 'HEVC MF A/B must report four inventory rows'}
+            if($rows.Count -ne 4){throw 'Expected exactly four MF inventory rows'}
             foreach($line in $rows) {
-              if($line -notmatch '^HEVC_MF_INVENTORY codec=(HEVC|H264) route=\S+ hr=0x00000000 count=\d+ scope=process_enumeration_only license_not_verified=1 photos_not_verified=1          $old=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'historical118') -Recurse -Filter '*.msi' -File)
+              if($line -notmatch '^HEVC_MF_INVENTORY codec=(HEVC|H264) route=\S+ hr=0x00000000 count=\d+ scope=process_enumeration_only license_not_verified=1 photos_not_verified=1$') {
+                throw ('MF inventory output invalid: '+$label)
+              }
+            }
+            $normalized=($rows | ForEach-Object {($_ -replace ' scope=process_enumeration_only.*$','').Trim()} | Sort-Object) -join '|'
+            Write-Host ('WIC_PHOTOS_HEVC_MF_MSI_AB_'+$label+'='+$normalized)
+            return $normalized
+          }
+          $baselineMf=MFInventory 'BASELINE_NO_WIC'
+          Write-Host 'WIC_PHOTOS_HEVC_MF_MSI_AB_BASELINE_PASS'
+          $old=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'historical118') -Recurse -Filter '*.msi' -File)
           if($old.Count -ne 1){throw 'Historical 1.1.18 MSI missing or ambiguous'}
           if((Get-FileHash -LiteralPath $old[0].FullName -Algorithm SHA256).Hash -ne '4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'){throw 'Historical MSI hash mismatch'}
           $new=(Resolve-Path -LiteralPath (Join-Path $env:RUNNER_TEMP 'wic_coexist/global.msi')).Path
@@ -406,7 +413,7 @@ jobs:
             $newMask=Survey 'RESEARCH'
             $newMf=MFInventory 'RESEARCH_INSTALLED'
             if($baselineMf -cne $oldMf -or $baselineMf -cne $newMf){
-              throw 'Unexpected MF transform inventory mutation by HEIC WIC MSI installation'
+              throw 'Unexpected Media Foundation inventory mutation by WIC MSI'
             }
             Write-Host 'WIC_PHOTOS_HEVC_MFT_INVENTORY_UNCHANGED_ACROSS_BOTH_WIC_MSIS_PASS'
             Msi x $new
@@ -490,589 +497,38 @@ jobs:
               Write-Host ("WIC_PHOTOS_AB_8BIT_${kind}_WIC_RGB24_BOTH_PASS")
             }
             Write-Host 'WIC_PHOTOS_AB_EIGHT_BIT_PLAIN_AND_ICC_READBACK_COMPLETE_PASS'
-            # No Photoshop/Photos GUI inference: record the codec flags,
-            # real absence of embedded thumbnails, and ICC API HRESULTs
-            # on the SAME two 8-bit images for each version. The old
-            # decoder claims SameEncoder + Thumbnail unconditionally.
+            # Matched 8-bit HEIC image capability and metadata behavior.
+            # The historical decoder advertises SameEncoder and Thumbnail
+            # unconditionally. Preserve the API facts, not a Photos UI claim.
             foreach($kind in @('PLAIN','ICC')) {
               $prefix='WIC_PHOTOS_8BIT_'+$kind+'_'
               foreach($key in @('QUERYCAP_HRESULT','QUERYCAP_MASK',
-                                 'CONTAINER_THUMBNAIL_HRESULT',
-                                 'FRAME_THUMBNAIL_HRESULT',
+                                 'CONTAINER_THUMBNAIL_HRESULT','FRAME_THUMBNAIL_HRESULT',
                                  'CONTAINER_ICC_HRESULT','CONTAINER_ICC_COUNT',
                                  'FRAME_ICC_HRESULT','FRAME_ICC_COUNT')) {
                 $pair=@()
                 foreach($label in @('ORIGINAL118','RESEARCH')) {
                   $pattern='(?m)^'+[regex]::Escape($prefix+$key)+'=([^\r\n]+)'
-                  $m=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                  if(-not $m.Success){throw ('Missing 8bit editor preflight observation: '+$label+' '+$kind+' '+$key)}
-                  $pair+= $m.Groups[1].Value.Trim()
+                  $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
+                  if(-not $match.Success){throw ('Missing 8bit WIC capability survey '+$kind+' '+$label+' '+$key)}
+                  $pair+=$match.Groups[1].Value.Trim()
                 }
-                if($key -eq 'QUERYCAP_HRESULT') {
-                  if($pair[0] -cne '0x00000000' -or $pair[1] -cne '0x00000000'){
-                    throw ('8bit QueryCapability failed: '+$kind)
-                  }
+                if($key -eq 'QUERYCAP_HRESULT' -and
+                   ($pair[0] -cne '0x00000000' -or $pair[1] -cne '0x00000000')) {
+                  throw ('Unexpected WIC QueryCapability error '+$kind)
                 }
                 if($key -eq 'QUERYCAP_MASK') {
-                  $historical=[Convert]::ToUInt32($pair[0].Substring(2),16)
-                  $research=[Convert]::ToUInt32($pair[1].Substring(2),16)
-                  if($historical -ne 0x15 -or ($research -band 0x4) -eq 0 -or
-                     ($research -band 0x1) -ne 0) {
-                    throw ('Invalid 8bit WIC capability arbitration: '+$kind)
+                  $oldCap=[Convert]::ToUInt32($pair[0].Substring(2),16)
+                  $newCap=[Convert]::ToUInt32($pair[1].Substring(2),16)
+                  if($oldCap -ne 0x15 -or ($newCap -band 0x4) -eq 0 -or
+                     ($newCap -band 0x1) -ne 0) {
+                    throw ('Unexpected synthetic 8bit WIC capability '+$kind)
                   }
-                  Write-Host ('WIC_PHOTOS_AB_8BIT_'+$kind+'_CAP_MASKS old='+$pair[0]+' research='+$pair[1])
-                } elseif($key -match '(THUMBNAIL|ICC)') {
-                  Write-Host ('WIC_PHOTOS_AB_8BIT_'+$kind+'_'+$key+' old='+$pair[0]+' research='+$pair[1])
                 }
+                Write-Host ('WIC_PHOTOS_8BIT_'+$kind+'_'+$key+'_AB old='+$pair[0]+' research='+$pair[1])
               }
             }
             Write-Host 'WIC_PHOTOS_8BIT_CAPABILITY_THUMBNAIL_ICC_OBSERVATION_PASS'
-            # Historical 1.1.18 (MSI run 39433397223 at a18b9ab)
-            # FORCES RGB24 after its dormant 10/12-bit branches. Research
-            # decodes the same 10-bit public HEIC using WIC RGB48. Compare
-            # actual API formats rather than assuming the old 48bpp branch
-            # ran; both paths must write all the bytes they advertise.
-            foreach($label in @('ORIGINAL118','RESEARCH')) {
-              $source=[string]$script:abSurveys[$label]
-              $expectedBits=if($label -eq 'ORIGINAL118'){'24'}else{'48'}
-              $checks=@{
-                'WIC_PHOTOS_NATIVE_HEIC_WIC_BPP'=$expectedBits
-                'WIC_PHOTOS_NATIVE_HEIC_ROI_HRESULT'='0x00000000'
-                'WIC_PHOTOS_NATIVE_HEIC_ROI_LAST_QUARTER_CHANGED_ROWS'='8'
-              }
-              foreach($key in $checks.Keys) {
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $match=[regex]::Match($source,$pattern)
-                if(-not $match.Success){throw ('Missing historical pixel-format evidence: '+$label+' '+$key)}
-                $value=$match.Groups[1].Value.Trim()
-                if($value -cne $checks[$key]){
-                  throw ('Legacy vs research native pixel format differs from verified expectation: '+$label+' '+$key+'='+$value)
-                }
-              }
-            }
-            Write-Host 'WIC_ACTUAL_118_FORCES_RGB24_WHILE_RESEARCH_PRESERVES_RGB48_PASS'
-            Write-Host 'WIC_PHOTOS_EDITOR_13_API_STABLE_ACROSS_118_AND_RESEARCH_PASS'
-            # New A/B: both codecs may win arbitration, but only a real
-            # full-resolution CopyPixels proves that the WIC pixel path works.
-            # The old codec's rotation/display is known broken; fingerprint
-            # mismatches are reported, NOT treated as an old-version baseline
-            # that the research codec must reproduce.
-            $fullresKeys=@(
-              'WIC_PHOTOS_PIXEL_FRAMECOUNT',
-              'WIC_PHOTOS_PIXEL_SIZE',
-              'WIC_PHOTOS_PIXEL_FULLRES_BYTES',
-              'WIC_PHOTOS_PIXEL_READBACK_FNV64'
-            )
-            $observed=@{}
-            foreach($key in $fullresKeys){
-              $values=@()
-              foreach($label in @('ORIGINAL118','RESEARCH')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                if(-not $match.Success){throw ('Missing full-resolution result: '+$label+' '+$key)}
-                $values+= $match.Groups[1].Value.Trim()
-              }
-              $observed[$key]=$values
-            }
-            foreach($label in @('ORIGINAL118','RESEARCH')){
-              foreach($key in @('WIC_PHOTOS_PIXEL_GETFRAME_HRESULT',
-                                 'WIC_PHOTOS_PIXEL_GETSIZE_HRESULT',
-                                 'WIC_PHOTOS_PIXEL_RGB24_CONVERT_HRESULT',
-                                 'WIC_PHOTOS_PIXEL_FULLRES_COPY_HRESULT')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                if(-not $match.Success -or $match.Groups[1].Value.Trim() -cne '0x00000000'){
-                  throw ('Full-resolution HEIC readback failed: '+$label+' '+$key)
-                }
-              }
-            }
-            Write-Host ('WIC_PHOTOS_AB_FULLRES_GEOMETRY_MATCH='+[int](
-              $observed['WIC_PHOTOS_PIXEL_SIZE'][0] -ceq $observed['WIC_PHOTOS_PIXEL_SIZE'][1]))
-            Write-Host ('WIC_PHOTOS_AB_FULLRES_RGB_FINGERPRINT_MATCH='+[int](
-              $observed['WIC_PHOTOS_PIXEL_READBACK_FNV64'][0] -ceq
-              $observed['WIC_PHOTOS_PIXEL_READBACK_FNV64'][1]))
-            Write-Host 'WIC_PHOTOS_118_VS_RESEARCH_FULLRES_PIXEL_API_AB_PASS'
-
-            foreach($kind in @('CONTAINER','FRAME')){
-              $key='WIC_PHOTOS_EDITOR_'+$kind+'_COLORCONTEXTS_HRESULT'
-              $oldMatch=[regex]::Match([string]$script:abSurveys['ORIGINAL118'],
-                  '(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)')
-              $newMatch=[regex]::Match([string]$script:abSurveys['RESEARCH'],
-                  '(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)')
-              if(-not $oldMatch.Success -or -not $newMatch.Success -or
-                 $oldMatch.Groups[1].Value -cne '0x88982F81' -or
-                 $newMatch.Groups[1].Value -cne '0x00000000'){
-                throw ('Unexpected color-context A/B diff: '+$key)
-              }
-            }
-            Write-Host 'WIC_PHOTOS_COLORCONTEXT_ONLY_REPORTED_HRESULT_CHANGE_PASS'
-            # The legacy GUI buttons were enabled, but the raster rotation
-            # Save path could silently re-encode HEIC and strip metadata.
-            # Preserve this precise historical-vs-guarded behavior evidence.
-            foreach($method in @(0,2)) {
-              $key='WIC_PHOTOS_EDITOR_MEMONLY_ROTATOR_WRITESOURCE_METHOD_'+$method
-              foreach($label in @('ORIGINAL118','RESEARCH')) {
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $m=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                if(-not $m.Success){throw ('Missing rotator probe '+$label+' '+$key)}
-                $expect=if($label -eq 'ORIGINAL118'){'0x00000000'}else{'0x88982F81'}
-                if($m.Groups[1].Value.Trim() -cne $expect) {
-                  throw ('Unexpected WIC rotated-raster result '+$label+' '+$key+': '+$m.Groups[1].Value)
-                }
-              }
-            }
-            Write-Host 'WIC_LEGACY_118_UNSAFE_RASTER_ROTATION_ACCEPTED_AND_RESEARCH_REJECTS_AB_PASS'
-            Write-Host 'PHOTOS_WIC_SYNTHETIC_118_VS_RESEARCH_ARBITRATION_AB_PASS'
-            Write-Host 'WINDOWS10_PHOTOS_GUI_NOT_TESTED_MSI_RELEASE_WITHHELD'
-          } finally {
-            if($installed -eq 'new'){Msi x $new}
-            elseif($installed -eq 'old'){Msi x $old[0].FullName}
-          }
-      # The Windows 10 Photos 2026.11090.22001.0 field report explicitly
-      # showed HEVC extension warning + edit/rotate disabled AFTER the trial
-      # global WIC MSI was installed. Native WIC CI success is not Photos UI
-      # compatibility. Do not issue or reissue an unverified MSI artifact.
-      - name: P0 release gate - WITHHELD until actual Windows 10 Photos editor works
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $built=Join-Path $env:RUNNER_TEMP 'WIC_Photos_P0_Win10_Trial_Candidate'
-          if(-not (Test-Path -LiteralPath (Join-Path $built 'README_JA.md'))){
-            throw 'Synthetic kit staging verification failed'
-          }
-          Write-Host 'PHOTOS_2026_EDITOR_HEVC_WARNING_PERSISTS_AFTER_GLOBAL_WIC_INSTALL'
-          Write-Host 'WINDOWS10_PHOTOS_ACTUAL_ROTATE_EDIT_PASS=0'
-          Write-Host 'EXPERIMENTAL_MSI_ARTIFACT_RELEASE_BLOCKED_NO_FURTHER_FIELD_TESTS'
-) {
-                throw ('Unexpected unsafe MF inventory: '+$label)
-              }
-            }
-            $normalized=($rows | ForEach-Object {($_ -replace ' scope=process_enumeration_only.*          $old=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'historical118') -Recurse -Filter '*.msi' -File)
-          if($old.Count -ne 1){throw 'Historical 1.1.18 MSI missing or ambiguous'}
-          if((Get-FileHash -LiteralPath $old[0].FullName -Algorithm SHA256).Hash -ne '4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'){throw 'Historical MSI hash mismatch'}
-          $new=(Resolve-Path -LiteralPath (Join-Path $env:RUNNER_TEMP 'wic_coexist/global.msi')).Path
-          $exe=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
-          function Msi([string]$op,[string]$file){
-            $arg='/'+$op+' "'+$file+'" /qn /norestart'
-            $p=Start-Process msiexec.exe -ArgumentList $arg -Wait -PassThru
-            if($p.ExitCode -ne 0){throw ('MSI '+$op+' exit='+$p.ExitCode)}
-          }
-          function Survey([string]$label){
-            Push-Location 'wictest'
-            $env:WIC_HEIC_CAPABILITY_SURVEY_ONLY='1'
-            try {
-              $lines=@(& $exe 2>&1)
-              if($LASTEXITCODE -ne 0){
-                # These are fixed public synthetic HEIC probe metrics only.
-                # Do not print user paths, image pixels or metadata.
-                Write-Host ('WIC_HISTORICAL_SYNTHETIC_SURVEY_FAILURE label='+$label+
-                   ' lines='+($lines -join ';'))
-                throw ('Survey failed: '+$label)
-              }
-              $output=$lines -join [Environment]::NewLine
-              if($output -notmatch 'WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS'){throw 'Survey incomplete'}
-              $m=[regex]::Match($output,'WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x([a-fA-F0-9]+)')
-              if(!$m.Success){throw 'Survey failed to return capability mask'}
-              # Repeat in a FRESH process with the SAME installed codec.
-              # The old and research RGB fingerprints unexpectedly differed,
-              # despite equal geometry and pinned native dependency refs.
-              # Distinguish a stable codec-version difference from unstable
-              # decoding or per-process memory state before attributing cause.
-              $repeatLines=@(& $exe 2>&1)
-              if($LASTEXITCODE -ne 0){throw ('Repeated WIC survey failed: '+$label)}
-              $repeatOutput=$repeatLines -join [Environment]::NewLine
-              foreach($repeatKey in @('WIC_PHOTOS_PIXEL_SIZE',
-                                      'WIC_PHOTOS_PIXEL_FULLRES_BYTES',
-                                      'WIC_PHOTOS_PIXEL_READBACK_FNV64',
-                                      'WIC_PHOTOS_8BIT_PLAIN_RGB_FNV64',
-                                      'WIC_PHOTOS_8BIT_ICC_RGB_FNV64')){
-                $regex='(?m)^'+[regex]::Escape($repeatKey)+'=([^\r\n]+)'
-                $v1=[regex]::Match($output,$regex)
-                $v2=[regex]::Match($repeatOutput,$regex)
-                if(-not $v1.Success -or -not $v2.Success){
-                  throw ('Missing repeated WIC readback: '+$label+' '+$repeatKey)
-                }
-                $stable=$v1.Groups[1].Value.Trim() -ceq $v2.Groups[1].Value.Trim()
-                Write-Host ('WIC_PHOTOS_PIXEL_SAME_CODEC_REPEAT_STABLE label='+$label+
-                  ' metric='+$repeatKey+' equal='+[int]$stable)
-                if(-not $stable -and $label -eq 'RESEARCH'){
-                  throw ('Research WIC non-deterministic full-resolution decoding: '+$repeatKey)
-                }
-              }
-              $script:abSurveys[$label]=$output
-              Write-Host ('WIC_PHOTOS_AB_'+$label+'='+$output.Replace([Environment]::NewLine,';'))
-              return [Convert]::ToUInt32($m.Groups[1].Value,16)
-            } finally {
-              Remove-Item Env:\WIC_HEIC_CAPABILITY_SURVEY_ONLY -ErrorAction SilentlyContinue
-              Pop-Location
-            }
-          }
-          $script:abSurveys=@{}
-          $installed=''
-          try {
-            Msi i $old[0].FullName
-            $installed='old'
-            $oldMask=Survey 'ORIGINAL118'
-            Msi x $old[0].FullName
-            $installed=''
-            Msi i $new
-            $installed='new'
-            $newMask=Survey 'RESEARCH'
-            Msi x $new
-            $installed=''
-            if($oldMask -ne 0x15){throw ('Unexpected legacy mask '+$oldMask)}
-            if(($newMask -band 0x4) -eq 0 -or ($newMask -band 0x1) -ne 0){throw ('Invalid new capability mask '+$newMask)}
-            Write-Host ('WIC_PHOTOS_AB_HISTORIC_MASK=0x{0:X}' -f $oldMask)
-            Write-Host ('WIC_PHOTOS_AB_RESEARCH_MASK=0x{0:X}' -f $newMask)
-            # Narrow the actual observed WIC differences without presuming
-            # that any single flag controls Microsoft Photos GUI behavior.
-            $stableMetrics=@(
-              'WIC_PHOTOS_CAPABILITY_SURVEY_DEFAULT_IS_CUSTOM',
-              'WIC_PHOTOS_EDITOR_CONTAINER_MATCHES_PRIVATE',
-              'WIC_PHOTOS_EDITOR_DECODER_PREVIEW_HRESULT',
-              'WIC_PHOTOS_EDITOR_CONTAINER_METADATA_HRESULT',
-              'WIC_PHOTOS_EDITOR_CONTAINER_COLORCONTEXTS_COUNT',
-              'WIC_PHOTOS_EDITOR_FRAME_COLORCONTEXTS_COUNT',
-              'WIC_PHOTOS_EDITOR_FRAME_METADATA_HRESULT',
-              'WIC_PHOTOS_EDITOR_DEFAULT_ENCODER_HRESULT',
-              'WIC_PHOTOS_EDITOR_DEFAULT_ENCODER_METADATA_WRITER_HRESULT',
-              'WIC_PHOTOS_EDITOR_VENDOR_ENCODER_HRESULT',
-              'WIC_PHOTOS_EDITOR_VENDOR_ENCODER_METADATA_WRITER_HRESULT',
-              'WIC_PHOTOS_EDITOR_CREATE_FRAME_HRESULT',
-              'WIC_PHOTOS_EDITOR_FRAME_METADATA_WRITER_HRESULT'
-            )
-            foreach($key in $stableMetrics) {
-              $values=@()
-              foreach($label in @('ORIGINAL118','RESEARCH')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                if(-not $match.Success){throw ('Missing editor observation: '+$label+' '+$key)}
-                $values+= $match.Groups[1].Value.Trim()
-              }
-              if($values[0] -cne $values[1]){
-                throw ('Previously stable editor API differs unexpectedly: '+$key+' '+($values -join ' vs '))
-              }
-            }
-            # Compare TWO already-generated 8-bit HEICs with the same exact
-            # file bytes in both codecs. PLAIN is a disposable PNG->HEIC RGB
-            # encode; ICC is a 64x64 synthetic sRGB ICC roundtrip. Unlike the
-            # previous 10-bit comparison, BOTH should advertise RGB24. This
-            # controls for the historical 10-bit forced-RGB24 difference.
-            foreach($kind in @('PLAIN','ICC')) {
-              $keys=@(
-                "WIC_PHOTOS_8BIT_${kind}_WIC_BPP",
-                "WIC_PHOTOS_8BIT_${kind}_GEOMETRY",
-                "WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT",
-                "WIC_PHOTOS_8BIT_${kind}_RGB_BYTES",
-                "WIC_PHOTOS_8BIT_${kind}_RGB_FNV64",
-                "WIC_PHOTOS_8BIT_${kind}_RGB_CHANNEL_TOTALS",
-                "WIC_PHOTOS_8BIT_${kind}_ADJACENT_CHANGES"
-              )
-              $metrics=@{}
-              foreach($key in $keys) {
-                $pair=@()
-                foreach($label in @('ORIGINAL118','RESEARCH')){
-                  $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                  $m=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                  if(-not $m.Success){throw ('Missing 8bit comparison: '+$label+' '+$key)}
-                  $pair+= $m.Groups[1].Value.Trim()
-                }
-                $metrics[$key]=$pair
-              }
-              if($metrics["WIC_PHOTOS_8BIT_${kind}_WIC_BPP"][0] -cne '24' -or
-                 $metrics["WIC_PHOTOS_8BIT_${kind}_WIC_BPP"][1] -cne '24' -or
-                 $metrics["WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT"][0] -cne '0x00000000' -or
-                 $metrics["WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT"][1] -cne '0x00000000') {
-                throw ('8bit fixture did not read as native WIC RGB24 in both versions: '+$kind)
-              }
-              foreach($stable in @("WIC_PHOTOS_8BIT_${kind}_GEOMETRY",
-                                  "WIC_PHOTOS_8BIT_${kind}_RGB_BYTES")) {
-                if($metrics[$stable][0] -cne $metrics[$stable][1]){
-                  throw ('8bit A/B compared different image geometries: '+$kind)
-                }
-              }
-              foreach($metric in @('RGB_FNV64','RGB_CHANNEL_TOTALS','ADJACENT_CHANGES')) {
-                $key="WIC_PHOTOS_8BIT_${kind}_$metric"
-                $matching=[int]($metrics[$key][0] -ceq $metrics[$key][1])
-                Write-Host ("WIC_PHOTOS_AB_8BIT_${kind}_${metric}_MATCH=$matching")
-              }
-              Write-Host ("WIC_PHOTOS_AB_8BIT_${kind}_WIC_RGB24_BOTH_PASS")
-            }
-            Write-Host 'WIC_PHOTOS_AB_EIGHT_BIT_PLAIN_AND_ICC_READBACK_COMPLETE_PASS'
-            # Historical 1.1.18 (MSI run 39433397223 at a18b9ab)
-            # FORCES RGB24 after its dormant 10/12-bit branches. Research
-            # decodes the same 10-bit public HEIC using WIC RGB48. Compare
-            # actual API formats rather than assuming the old 48bpp branch
-            # ran; both paths must write all the bytes they advertise.
-            foreach($label in @('ORIGINAL118','RESEARCH')) {
-              $source=[string]$script:abSurveys[$label]
-              $expectedBits=if($label -eq 'ORIGINAL118'){'24'}else{'48'}
-              $checks=@{
-                'WIC_PHOTOS_NATIVE_HEIC_WIC_BPP'=$expectedBits
-                'WIC_PHOTOS_NATIVE_HEIC_ROI_HRESULT'='0x00000000'
-                'WIC_PHOTOS_NATIVE_HEIC_ROI_LAST_QUARTER_CHANGED_ROWS'='8'
-              }
-              foreach($key in $checks.Keys) {
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $match=[regex]::Match($source,$pattern)
-                if(-not $match.Success){throw ('Missing historical pixel-format evidence: '+$label+' '+$key)}
-                $value=$match.Groups[1].Value.Trim()
-                if($value -cne $checks[$key]){
-                  throw ('Legacy vs research native pixel format differs from verified expectation: '+$label+' '+$key+'='+$value)
-                }
-              }
-            }
-            Write-Host 'WIC_ACTUAL_118_FORCES_RGB24_WHILE_RESEARCH_PRESERVES_RGB48_PASS'
-            Write-Host 'WIC_PHOTOS_EDITOR_13_API_STABLE_ACROSS_118_AND_RESEARCH_PASS'
-            # New A/B: both codecs may win arbitration, but only a real
-            # full-resolution CopyPixels proves that the WIC pixel path works.
-            # The old codec's rotation/display is known broken; fingerprint
-            # mismatches are reported, NOT treated as an old-version baseline
-            # that the research codec must reproduce.
-            $fullresKeys=@(
-              'WIC_PHOTOS_PIXEL_FRAMECOUNT',
-              'WIC_PHOTOS_PIXEL_SIZE',
-              'WIC_PHOTOS_PIXEL_FULLRES_BYTES',
-              'WIC_PHOTOS_PIXEL_READBACK_FNV64'
-            )
-            $observed=@{}
-            foreach($key in $fullresKeys){
-              $values=@()
-              foreach($label in @('ORIGINAL118','RESEARCH')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                if(-not $match.Success){throw ('Missing full-resolution result: '+$label+' '+$key)}
-                $values+= $match.Groups[1].Value.Trim()
-              }
-              $observed[$key]=$values
-            }
-            foreach($label in @('ORIGINAL118','RESEARCH')){
-              foreach($key in @('WIC_PHOTOS_PIXEL_GETFRAME_HRESULT',
-                                 'WIC_PHOTOS_PIXEL_GETSIZE_HRESULT',
-                                 'WIC_PHOTOS_PIXEL_RGB24_CONVERT_HRESULT',
-                                 'WIC_PHOTOS_PIXEL_FULLRES_COPY_HRESULT')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                if(-not $match.Success -or $match.Groups[1].Value.Trim() -cne '0x00000000'){
-                  throw ('Full-resolution HEIC readback failed: '+$label+' '+$key)
-                }
-              }
-            }
-            Write-Host ('WIC_PHOTOS_AB_FULLRES_GEOMETRY_MATCH='+[int](
-              $observed['WIC_PHOTOS_PIXEL_SIZE'][0] -ceq $observed['WIC_PHOTOS_PIXEL_SIZE'][1]))
-            Write-Host ('WIC_PHOTOS_AB_FULLRES_RGB_FINGERPRINT_MATCH='+[int](
-              $observed['WIC_PHOTOS_PIXEL_READBACK_FNV64'][0] -ceq
-              $observed['WIC_PHOTOS_PIXEL_READBACK_FNV64'][1]))
-            Write-Host 'WIC_PHOTOS_118_VS_RESEARCH_FULLRES_PIXEL_API_AB_PASS'
-
-            foreach($kind in @('CONTAINER','FRAME')){
-              $key='WIC_PHOTOS_EDITOR_'+$kind+'_COLORCONTEXTS_HRESULT'
-              $oldMatch=[regex]::Match([string]$script:abSurveys['ORIGINAL118'],
-                  '(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)')
-              $newMatch=[regex]::Match([string]$script:abSurveys['RESEARCH'],
-                  '(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)')
-              if(-not $oldMatch.Success -or -not $newMatch.Success -or
-                 $oldMatch.Groups[1].Value -cne '0x88982F81' -or
-                 $newMatch.Groups[1].Value -cne '0x00000000'){
-                throw ('Unexpected color-context A/B diff: '+$key)
-              }
-            }
-            Write-Host 'WIC_PHOTOS_COLORCONTEXT_ONLY_REPORTED_HRESULT_CHANGE_PASS'
-            # The legacy GUI buttons were enabled, but the raster rotation
-            # Save path could silently re-encode HEIC and strip metadata.
-            # Preserve this precise historical-vs-guarded behavior evidence.
-            foreach($method in @(0,2)) {
-              $key='WIC_PHOTOS_EDITOR_MEMONLY_ROTATOR_WRITESOURCE_METHOD_'+$method
-              foreach($label in @('ORIGINAL118','RESEARCH')) {
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $m=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                if(-not $m.Success){throw ('Missing rotator probe '+$label+' '+$key)}
-                $expect=if($label -eq 'ORIGINAL118'){'0x00000000'}else{'0x88982F81'}
-                if($m.Groups[1].Value.Trim() -cne $expect) {
-                  throw ('Unexpected WIC rotated-raster result '+$label+' '+$key+': '+$m.Groups[1].Value)
-                }
-              }
-            }
-            Write-Host 'WIC_LEGACY_118_UNSAFE_RASTER_ROTATION_ACCEPTED_AND_RESEARCH_REJECTS_AB_PASS'
-            Write-Host 'PHOTOS_WIC_SYNTHETIC_118_VS_RESEARCH_ARBITRATION_AB_PASS'
-            Write-Host 'WINDOWS10_PHOTOS_GUI_NOT_TESTED_MSI_RELEASE_WITHHELD'
-          } finally {
-            if($installed -eq 'new'){Msi x $new}
-            elseif($installed -eq 'old'){Msi x $old[0].FullName}
-          }
-      # The Windows 10 Photos 2026.11090.22001.0 field report explicitly
-      # showed HEVC extension warning + edit/rotate disabled AFTER the trial
-      # global WIC MSI was installed. Native WIC CI success is not Photos UI
-      # compatibility. Do not issue or reissue an unverified MSI artifact.
-      - name: P0 release gate - WITHHELD until actual Windows 10 Photos editor works
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $built=Join-Path $env:RUNNER_TEMP 'WIC_Photos_P0_Win10_Trial_Candidate'
-          if(-not (Test-Path -LiteralPath (Join-Path $built 'README_JA.md'))){
-            throw 'Synthetic kit staging verification failed'
-          }
-          Write-Host 'PHOTOS_2026_EDITOR_HEVC_WARNING_PERSISTS_AFTER_GLOBAL_WIC_INSTALL'
-          Write-Host 'WINDOWS10_PHOTOS_ACTUAL_ROTATE_EDIT_PASS=0'
-          Write-Host 'EXPERIMENTAL_MSI_ARTIFACT_RELEASE_BLOCKED_NO_FURTHER_FIELD_TESTS'
-,'').Trim()} | Sort-Object) -join '|'
-            Write-Host ('WIC_PHOTOS_HEVC_MF_MSI_AB_'+$label+'='+$normalized)
-            return $normalized
-          }
-          $baselineMf=MFInventory 'BASELINE_NO_WIC'
-          Write-Host 'WIC_PHOTOS_HEVC_MF_MSI_AB_BASELINE_PASS'
-          $old=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'historical118') -Recurse -Filter '*.msi' -File)
-          if($old.Count -ne 1){throw 'Historical 1.1.18 MSI missing or ambiguous'}
-          if((Get-FileHash -LiteralPath $old[0].FullName -Algorithm SHA256).Hash -ne '4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'){throw 'Historical MSI hash mismatch'}
-          $new=(Resolve-Path -LiteralPath (Join-Path $env:RUNNER_TEMP 'wic_coexist/global.msi')).Path
-          $exe=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
-          function Msi([string]$op,[string]$file){
-            $arg='/'+$op+' "'+$file+'" /qn /norestart'
-            $p=Start-Process msiexec.exe -ArgumentList $arg -Wait -PassThru
-            if($p.ExitCode -ne 0){throw ('MSI '+$op+' exit='+$p.ExitCode)}
-          }
-          function Survey([string]$label){
-            Push-Location 'wictest'
-            $env:WIC_HEIC_CAPABILITY_SURVEY_ONLY='1'
-            try {
-              $lines=@(& $exe 2>&1)
-              if($LASTEXITCODE -ne 0){
-                # These are fixed public synthetic HEIC probe metrics only.
-                # Do not print user paths, image pixels or metadata.
-                Write-Host ('WIC_HISTORICAL_SYNTHETIC_SURVEY_FAILURE label='+$label+
-                   ' lines='+($lines -join ';'))
-                throw ('Survey failed: '+$label)
-              }
-              $output=$lines -join [Environment]::NewLine
-              if($output -notmatch 'WIC_PHOTOS_CAPABILITY_SURVEY_COMPLETE_PASS'){throw 'Survey incomplete'}
-              $m=[regex]::Match($output,'WIC_PHOTOS_CAPABILITY_SURVEY_MASK=0x([a-fA-F0-9]+)')
-              if(!$m.Success){throw 'Survey failed to return capability mask'}
-              # Repeat in a FRESH process with the SAME installed codec.
-              # The old and research RGB fingerprints unexpectedly differed,
-              # despite equal geometry and pinned native dependency refs.
-              # Distinguish a stable codec-version difference from unstable
-              # decoding or per-process memory state before attributing cause.
-              $repeatLines=@(& $exe 2>&1)
-              if($LASTEXITCODE -ne 0){throw ('Repeated WIC survey failed: '+$label)}
-              $repeatOutput=$repeatLines -join [Environment]::NewLine
-              foreach($repeatKey in @('WIC_PHOTOS_PIXEL_SIZE',
-                                      'WIC_PHOTOS_PIXEL_FULLRES_BYTES',
-                                      'WIC_PHOTOS_PIXEL_READBACK_FNV64',
-                                      'WIC_PHOTOS_8BIT_PLAIN_RGB_FNV64',
-                                      'WIC_PHOTOS_8BIT_ICC_RGB_FNV64')){
-                $regex='(?m)^'+[regex]::Escape($repeatKey)+'=([^\r\n]+)'
-                $v1=[regex]::Match($output,$regex)
-                $v2=[regex]::Match($repeatOutput,$regex)
-                if(-not $v1.Success -or -not $v2.Success){
-                  throw ('Missing repeated WIC readback: '+$label+' '+$repeatKey)
-                }
-                $stable=$v1.Groups[1].Value.Trim() -ceq $v2.Groups[1].Value.Trim()
-                Write-Host ('WIC_PHOTOS_PIXEL_SAME_CODEC_REPEAT_STABLE label='+$label+
-                  ' metric='+$repeatKey+' equal='+[int]$stable)
-                if(-not $stable -and $label -eq 'RESEARCH'){
-                  throw ('Research WIC non-deterministic full-resolution decoding: '+$repeatKey)
-                }
-              }
-              $script:abSurveys[$label]=$output
-              Write-Host ('WIC_PHOTOS_AB_'+$label+'='+$output.Replace([Environment]::NewLine,';'))
-              return [Convert]::ToUInt32($m.Groups[1].Value,16)
-            } finally {
-              Remove-Item Env:\WIC_HEIC_CAPABILITY_SURVEY_ONLY -ErrorAction SilentlyContinue
-              Pop-Location
-            }
-          }
-          $script:abSurveys=@{}
-          $installed=''
-          try {
-            Msi i $old[0].FullName
-            $installed='old'
-            $oldMask=Survey 'ORIGINAL118'
-            Msi x $old[0].FullName
-            $installed=''
-            Msi i $new
-            $installed='new'
-            $newMask=Survey 'RESEARCH'
-            Msi x $new
-            $installed=''
-            if($oldMask -ne 0x15){throw ('Unexpected legacy mask '+$oldMask)}
-            if(($newMask -band 0x4) -eq 0 -or ($newMask -band 0x1) -ne 0){throw ('Invalid new capability mask '+$newMask)}
-            Write-Host ('WIC_PHOTOS_AB_HISTORIC_MASK=0x{0:X}' -f $oldMask)
-            Write-Host ('WIC_PHOTOS_AB_RESEARCH_MASK=0x{0:X}' -f $newMask)
-            # Narrow the actual observed WIC differences without presuming
-            # that any single flag controls Microsoft Photos GUI behavior.
-            $stableMetrics=@(
-              'WIC_PHOTOS_CAPABILITY_SURVEY_DEFAULT_IS_CUSTOM',
-              'WIC_PHOTOS_EDITOR_CONTAINER_MATCHES_PRIVATE',
-              'WIC_PHOTOS_EDITOR_DECODER_PREVIEW_HRESULT',
-              'WIC_PHOTOS_EDITOR_CONTAINER_METADATA_HRESULT',
-              'WIC_PHOTOS_EDITOR_CONTAINER_COLORCONTEXTS_COUNT',
-              'WIC_PHOTOS_EDITOR_FRAME_COLORCONTEXTS_COUNT',
-              'WIC_PHOTOS_EDITOR_FRAME_METADATA_HRESULT',
-              'WIC_PHOTOS_EDITOR_DEFAULT_ENCODER_HRESULT',
-              'WIC_PHOTOS_EDITOR_DEFAULT_ENCODER_METADATA_WRITER_HRESULT',
-              'WIC_PHOTOS_EDITOR_VENDOR_ENCODER_HRESULT',
-              'WIC_PHOTOS_EDITOR_VENDOR_ENCODER_METADATA_WRITER_HRESULT',
-              'WIC_PHOTOS_EDITOR_CREATE_FRAME_HRESULT',
-              'WIC_PHOTOS_EDITOR_FRAME_METADATA_WRITER_HRESULT'
-            )
-            foreach($key in $stableMetrics) {
-              $values=@()
-              foreach($label in @('ORIGINAL118','RESEARCH')){
-                $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                $match=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                if(-not $match.Success){throw ('Missing editor observation: '+$label+' '+$key)}
-                $values+= $match.Groups[1].Value.Trim()
-              }
-              if($values[0] -cne $values[1]){
-                throw ('Previously stable editor API differs unexpectedly: '+$key+' '+($values -join ' vs '))
-              }
-            }
-            # Compare TWO already-generated 8-bit HEICs with the same exact
-            # file bytes in both codecs. PLAIN is a disposable PNG->HEIC RGB
-            # encode; ICC is a 64x64 synthetic sRGB ICC roundtrip. Unlike the
-            # previous 10-bit comparison, BOTH should advertise RGB24. This
-            # controls for the historical 10-bit forced-RGB24 difference.
-            foreach($kind in @('PLAIN','ICC')) {
-              $keys=@(
-                "WIC_PHOTOS_8BIT_${kind}_WIC_BPP",
-                "WIC_PHOTOS_8BIT_${kind}_GEOMETRY",
-                "WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT",
-                "WIC_PHOTOS_8BIT_${kind}_RGB_BYTES",
-                "WIC_PHOTOS_8BIT_${kind}_RGB_FNV64",
-                "WIC_PHOTOS_8BIT_${kind}_RGB_CHANNEL_TOTALS",
-                "WIC_PHOTOS_8BIT_${kind}_ADJACENT_CHANGES"
-              )
-              $metrics=@{}
-              foreach($key in $keys) {
-                $pair=@()
-                foreach($label in @('ORIGINAL118','RESEARCH')){
-                  $pattern='(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)'
-                  $m=[regex]::Match([string]$script:abSurveys[$label],$pattern)
-                  if(-not $m.Success){throw ('Missing 8bit comparison: '+$label+' '+$key)}
-                  $pair+= $m.Groups[1].Value.Trim()
-                }
-                $metrics[$key]=$pair
-              }
-              if($metrics["WIC_PHOTOS_8BIT_${kind}_WIC_BPP"][0] -cne '24' -or
-                 $metrics["WIC_PHOTOS_8BIT_${kind}_WIC_BPP"][1] -cne '24' -or
-                 $metrics["WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT"][0] -cne '0x00000000' -or
-                 $metrics["WIC_PHOTOS_8BIT_${kind}_COPY_HRESULT"][1] -cne '0x00000000') {
-                throw ('8bit fixture did not read as native WIC RGB24 in both versions: '+$kind)
-              }
-              foreach($stable in @("WIC_PHOTOS_8BIT_${kind}_GEOMETRY",
-                                  "WIC_PHOTOS_8BIT_${kind}_RGB_BYTES")) {
-                if($metrics[$stable][0] -cne $metrics[$stable][1]){
-                  throw ('8bit A/B compared different image geometries: '+$kind)
-                }
-              }
-              foreach($metric in @('RGB_FNV64','RGB_CHANNEL_TOTALS','ADJACENT_CHANGES')) {
-                $key="WIC_PHOTOS_8BIT_${kind}_$metric"
-                $matching=[int]($metrics[$key][0] -ceq $metrics[$key][1])
-                Write-Host ("WIC_PHOTOS_AB_8BIT_${kind}_${metric}_MATCH=$matching")
-              }
-              Write-Host ("WIC_PHOTOS_AB_8BIT_${kind}_WIC_RGB24_BOTH_PASS")
-            }
-            Write-Host 'WIC_PHOTOS_AB_EIGHT_BIT_PLAIN_AND_ICC_READBACK_COMPLETE_PASS'
             # Historical 1.1.18 (MSI run 39433397223 at a18b9ab)
             # FORCES RGB24 after its dormant 10/12-bit branches. Research
             # decodes the same 10-bit public HEIC using WIC RGB48. Compare
