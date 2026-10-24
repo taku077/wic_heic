@@ -117,7 +117,9 @@ $summary.Add('AutoSelectedCopyPixels='+$autoHr)
 # These fields NEVER claim an app UI save or user-picture metadata retention.
 foreach($pair in @(
   @('microsoft_heif','NativeHeifEncoder'),
-  @('custom_heic','CustomHeicEncoder')
+  @('custom_heic','CustomHeicEncoder'),
+  @('microsoft_heif_explicit','NativeHeifExplicitEncoder'),
+  @('custom_heic_explicit','CustomHeicExplicitEncoder')
 )) {
   $role=$pair[0];$label=$pair[1]
   $sourceHr=FindHr $synthetic.Lines ('^HEVC_SYNTHETIC_ENCODER role='+$role+' stage=write_source hr=(0x[0-9A-F]{8})')
