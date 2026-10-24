@@ -100,9 +100,12 @@ class ShortWriteStream final : public IStream {
     bool injected=false;
     bool allowTruncate=true;
     bool simulateShortWrite=true;
+    bool transactionalRevert=false;
 public:
-    explicit ShortWriteStream(IStream* inner,bool mayTruncate=true,bool shortWrite=true)
-      :target(inner),allowTruncate(mayTruncate),simulateShortWrite(shortWrite){}
+    explicit ShortWriteStream(IStream* inner,bool mayTruncate=true,bool shortWrite=true,
+                              bool canRevert=false)
+      :target(inner),allowTruncate(mayTruncate),simulateShortWrite(shortWrite),
+       transactionalRevert(canRevert){}
     STDMETHODIMP QueryInterface(REFIID id,void** out) override {
         if(!out)return E_POINTER;
         *out=nullptr;
@@ -135,7 +138,14 @@ public:
         return target->CopyTo(dst,n,r,w);
     }
     STDMETHODIMP Commit(DWORD flags) override {return target->Commit(flags);}
-    STDMETHODIMP Revert() override {return target->Revert();}
+    STDMETHODIMP Revert() override {
+        if(!transactionalRevert)return target->Revert();
+        ULARGE_INTEGER empty{};
+        HRESULT hr=target->SetSize(empty);
+        if(FAILED(hr))return hr;
+        LARGE_INTEGER start{};
+        return target->Seek(start,STREAM_SEEK_SET,nullptr);
+    }
     STDMETHODIMP LockRegion(ULARGE_INTEGER at,ULARGE_INTEGER n,DWORD t) override {
         return target->LockRegion(at,n,t);
     }
@@ -244,6 +254,46 @@ inline void VerifyNoSetSizeStreamCanStillSaveCompleteHEIC(IWICImagingFactory* fa
     if(got!=actual.size()||actual!=expected)
         throw std::runtime_error("no-SetSize output lost synthetic EXIF/ICC bytes");
     puts("WIC_HEIC_NO_SETSIZE_COMPLETE_OUTPUT_EXACT_BYTES_PASS");
+}
+// A transacted stream can recover even if SetSize is deliberately unavailable.
+// Simulate a short S_OK write followed by IStream::Revert, which discards the
+// partial in-memory output. The encoder must still report STG_E_WRITEFAULT.
+inline void VerifyTransactionalRevertAfterShortHeicWrite(IWICImagingFactory* fac) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(fac->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"Revert synthetic source");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"Revert synthetic primary");
+    CComPtr<IStream> backing;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&backing),"Revert memory backing");
+    CComPtr<IStream> simulatedTransaction;
+    simulatedTransaction.Attach(new(std::nothrow)
+        ShortWriteStream(backing,false,true,true));
+    if(!simulatedTransaction)throw std::bad_alloc();
+    CComPtr<IWICBitmapEncoder> enc;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&enc),"Revert HEIC encoder");
+    Check(enc->Initialize(simulatedTransaction,WICBitmapEncoderNoCache),
+        "Revert encoder initialize");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(enc->CreateNewFrame(&frame,nullptr),"Revert HEIC new frame");
+    Check(frame->Initialize(nullptr),"Revert HEIC frame initialize");
+    Check(frame->WriteSource(source,nullptr),"Revert HEIC raw source");
+    Check(frame->Commit(),"Revert HEIC frame commit");
+    const HRESULT hr=enc->Commit();
+    printf("WIC_HEIC_TRANSACTION_REVERT_COMMIT_HRESULT=0x%08X\n",
+        unsigned(hr));
+    if(hr!=STG_E_WRITEFAULT)
+        throw std::runtime_error("Short HEIC write on transaction reported success");
+    STATSTG stat{};
+    Check(backing->Stat(&stat,STATFLAG_NONAME),
+          "Revert HEIC output backing size");
+    if(stat.cbSize.QuadPart!=0)
+        throw std::runtime_error("Transactional Revert was not attempted after partial HEIC write");
+    if(enc->Commit()!=WINCODEC_ERR_WRONGSTATE)
+        throw std::runtime_error("Dirty HEIC encoder reused after transactional rollback");
+    puts("WIC_HEIC_PARTIAL_WRITE_TRANSACTION_REVERT_FALLBACK_PASS");
 }
 // Inject the same partial output fault while the HEVC encoder is producing
 // a NEW, explicitly generated RGB image (as opposed to copying original HEIF).
@@ -530,6 +580,7 @@ inline void Run() {
     VerifyRgbaEncoderCapability(fac);
     VerifyPartialLosslessStreamWriteRollback(fac);
     VerifyNoSetSizeStreamCanStillSaveCompleteHEIC(fac);
+    VerifyTransactionalRevertAfterShortHeicWrite(fac);
     VerifyPartialRasterStreamWriteRollback(fac);
 }
 } // namespace EncoderGuardProbe
