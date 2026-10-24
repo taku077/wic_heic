@@ -108,7 +108,7 @@ jobs:
           $src=Join-Path $env:RUNNER_TEMP 'Rescue118'
           $dst='dist/Sessionless118'
           New-Item -Path $dst -ItemType Directory -ErrorAction Stop|Out-Null
-          Copy-Item -LiteralPath "$src/*" -Destination $dst
+          Copy-Item -Path (Join-Path $src '*') -Destination $dst -ErrorAction Stop
           if(@(Get-ChildItem $dst -File).Count -ne 6){throw 'Incorrect rescue ZIP contents'}
           if(@(Get-ChildItem $dst -File -Filter '*TRIAL*').Count){throw 'No B installer allowed in rescue kit'}
           Write-Host 'SESSIONLESS_118_RESCUE_ONLY_RELEASE_PASS'
