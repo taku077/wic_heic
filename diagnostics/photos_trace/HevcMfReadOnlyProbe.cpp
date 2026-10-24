@@ -1,5 +1,6 @@
 // Windows 10 HEIC/Photos triage: read-only Media Foundation HEVC inventory.
-// No image input, filesystem enumeration, registry mutation or codec activation.
+// No image inputs or deliberate filesystem/registry writes. Default mode only
+// enumerates registrations; the explicit WIC option can load codec DLLs.
 // A listed MFT does NOT establish Photos support, decoder entitlement or license.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
