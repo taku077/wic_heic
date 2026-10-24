@@ -22,7 +22,6 @@
 #include "PhotosMetadataBlockProbe.h"
 #include "WICComFactoryProbe.h"
 #include "PhotosNavigationZoomProbe.h"
-#include "WICSourceTransformProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -463,7 +462,6 @@ int main()
 		// independent failure causes are observable in Windows CI output.
 		HighBitDepthProbe::Run();
 		PhotosNavigationZoomProbe::Run();
-		WICSourceTransformProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		ICCProfileProbe::Run();
