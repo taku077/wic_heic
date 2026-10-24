@@ -1,7 +1,7 @@
 name: Windows Photos HEVC Media Foundation read-only diagnostic CI
 on:
   push:
-    branches: [experiment/heic-gpu-inprocess-avcodec]
+    branches: [experiment/heic-gpu-inprocess-avcodec, investigate/photos-wic-arbitration-after-120-failure]
     paths:
       - 'diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp'
       - 'diagnostics/photos_trace/HevcMfReadOnlyProbe.vcxproj'
@@ -57,13 +57,42 @@ jobs:
             throw 'Read-only MF completion guard absent'
           }
           Write-Host 'HEVC_MF_INVENTORY_ISOLATED_WINDOWS_CI_PASS'
+          # No user file paths, no Photos automation and no MFT activation.
+          # Passive WIC metadata query must work, including when the Store
+          # HEIF codec is registered but cannot be instantiated on this VM.
+          $info=@($out | Where-Object {$_ -match '^HEVC_WIC_CODEC_INFO role='})
+          if($info.Count -ne 3) {throw 'Expected three WIC HEIF/HEIC metadata rows'}
+          if(-not ($out -match '^HEVC_WIC_PROBE_COMPLETE activation=0 no_image=1 no_registry_write=1 no_codec_install=1 photos_not_verified=1')) {
+            throw 'Passive WIC scan did not complete without activation'
+          }
+          Write-Host 'HEVC_WIC_PASSIVE_METADATA_CI_PASS'
+          # The one-click command explicitly opts in to COM activation.
+          # This loads only the WIC codec DLLs, never processes image data.
+          $active=@(& $exe '--wic-activate-no-image' 2>&1)
+          if($LASTEXITCODE -ne 0){throw 'WIC COM activation inventory failed'}
+          $creation=@($active | Where-Object {$_ -match '^HEVC_WIC_CODEC_CREATE role='})
+          if($creation.Count -ne 3){throw 'Expected three WIC COM creation reports'}
+          if(-not ($active -match '^HEVC_WIC_NATIVE_HEIF_ENCODER_CREATE hr=0x[0-9A-F]{8} no_image=1 license_not_verified=1 photos_not_verified=1')) {
+            throw 'No native HEIF encoder activation result'
+          }
+          if(-not ($active -match '^HEVC_WIC_PROBE_COMPLETE activation=1 no_image=1 no_registry_write=1 no_codec_install=1 photos_not_verified=1')){
+            throw 'Activated image-free WIC scan did not finish'
+          }
+          $active | ForEach-Object {Write-Host $_}
+          Write-Host 'HEVC_WIC_ACTIVE_NO_IMAGE_CI_PASS'
+          # Only the exact intentional activation argument is accepted.
+          $invalid=@(& $exe '--load-user-image' 2>&1)
+          if($LASTEXITCODE -ne 2 -or -not ($invalid -match 'HEVC_MF_INVENTORY_REFUSED arguments_not_allowed=1')){
+            throw 'WIC probe accepted an unknown source-selection argument'
+          }
+          Write-Host 'HEVC_WIC_UNKNOWN_ARGUMENT_REJECTED_PASS'
       - name: Verify portable one-click script and assemble read-only diagnostic ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $cmd=Join-Path $env:GITHUB_WORKSPACE 'diagnostics/photos_trace/Run_Photos_HEVC_ReadOnly.cmd'
           $body=[IO.File]::ReadAllText($cmd)
-          foreach($required in @('WIC_Preflight_ReadOnly.ps1','HevcMfReadOnlyProbe.exe','NoProfile','ReadOnly')){
+          foreach($required in @('WIC_Preflight_ReadOnly.ps1','HevcMfReadOnlyProbe.exe','NoProfile','ReadOnly','--wic-activate-no-image')){
             if(-not $body.Contains($required)){throw "Expected one-click diagnostic token absent: $required"}
           }
           foreach($forbidden in @('reg add','reg delete','Remove-AppxPackage','Add-AppxPackage','msiexec','del /','format ')){
