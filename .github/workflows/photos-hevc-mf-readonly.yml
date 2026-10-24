@@ -109,6 +109,7 @@ jobs:
           $valid|ForEach-Object{Write-Host $_}
           if($exit -ne 0 -or
              -not ($valid -match '^HEVC_SYNTHETIC_GIT_BLOB_VERIFIED_PASS bytes=10597') -or
+             -not ($valid -match '^HEVC_SYNTHETIC_AUTO stage=create_decoder hr=0x[0-9A-F]{8}') -or
              -not ($valid -match '^HEVC_SYNTHETIC_WIC_COMPARISON_COMPLETE photos_not_tested=1 source_unchanged=1 no_photo_path_input=1')) {
              throw 'Pinned public synthetic WIC experiment failed'
           }
