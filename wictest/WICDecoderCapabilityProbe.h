@@ -218,6 +218,72 @@ inline void SurveyExistingEightBitGeneratedFixture(IWICImagingFactory* factory,
         label,static_cast<unsigned long long>(entropyLike));
     printf("WIC_PHOTOS_8BIT_%s_SURVEY_PASS\n",label);
 }
+// The disposable Server CI does not necessarily have the Microsoft Store
+// HEIF Image Extension that is present on the user's Windows 10 machine.
+// A/B tests with our decoder alone cannot establish which vendor wins WIC
+// arbitration when TWO decoders match HEIC. Enumerate every registered WIC
+// decoder and ask its published pattern to match this public synthetic HEIC.
+// This does not instantiate codecs, change registration or inspect user data.
+inline void SurveyWicRegisteredHeicCompetitors(IWICImagingFactory* factory) {
+    CComPtr<IEnumUnknown> all;
+    HRESULT hr=factory->CreateComponentEnumerator(
+        WICDecoder,WICComponentEnumerateDefault,&all);
+    if(FAILED(hr)||!all)
+        throw std::runtime_error("WIC registered decoder enumeration failed");
+    CComPtr<IWICStream> stream;
+    if(FAILED(factory->CreateStream(&stream))||
+       FAILED(stream->InitializeFromFilename(
+          L"samples\\fixture-irot3-exif6-noaux.heic",GENERIC_READ)))
+        throw std::runtime_error("Synthetic HEIC decoder pattern input missing");
+    unsigned tested=0,matching=0,custom=0,others=0,failed=0;
+    for(unsigned i=0;i<128;++i) {
+        CComPtr<IUnknown> unknown;
+        ULONG fetched=0;
+        const HRESULT next=all->Next(1,&unknown,&fetched);
+        if(next==S_FALSE) break;
+        if(FAILED(next)||fetched!=1||!unknown)
+            throw std::runtime_error("WIC decoder COM enumerator failed");
+        ++tested;
+        CComPtr<IWICBitmapDecoderInfo> info;
+        if(FAILED(unknown->QueryInterface(IID_IWICBitmapDecoderInfo,
+               reinterpret_cast<void**>(&info)))||!info) {
+            ++failed;
+            continue;
+        }
+        LARGE_INTEGER zero{};
+        if(FAILED(stream->Seek(zero,STREAM_SEEK_SET,nullptr)))
+            throw std::runtime_error("Synthetic decoder pattern stream seek failed");
+        BOOL matches=FALSE;
+        const HRESULT probe=info->MatchesPattern(stream,&matches);
+        if(FAILED(probe)) {
+            ++failed;
+            continue;
+        }
+        if(!matches) continue;
+        ++matching;
+        CLSID clsid{};
+        if(FAILED(info->GetCLSID(&clsid)))
+            throw std::runtime_error("Matched HEIC decoder missing CLSID");
+        const bool isCustom=!!IsEqualGUID(clsid,CLSID_HEICDecoder);
+        if(isCustom)++custom;else ++others;
+        wchar_t guid[64]{};
+        if(!StringFromGUID2(clsid,guid,64))
+            throw std::runtime_error("HEIC candidate CLSID formatting failed");
+        // GUID only; no images, paths or user registry values.
+        printf("WIC_PHOTOS_REGISTERED_HEIC_PATTERN_MATCH custom=%u clsid=%ls\n",
+               unsigned(isCustom),guid);
+    }
+    if(tested==128)
+        throw std::runtime_error("WIC component census exceeded safety cap");
+    printf("WIC_PHOTOS_WIC_DECODER_CENSUS_TESTED=%u\n",tested);
+    printf("WIC_PHOTOS_HEIC_PATTERN_MATCHING_DECODERS=%u\n",matching);
+    printf("WIC_PHOTOS_HEIC_PATTERN_CUSTOM_DECODERS=%u\n",custom);
+    printf("WIC_PHOTOS_HEIC_PATTERN_COMPETITOR_DECODERS=%u\n",others);
+    printf("WIC_PHOTOS_WIC_DECODER_CENSUS_QUERY_ERRORS=%u\n",failed);
+    if(custom!=1)
+        throw std::runtime_error("Registered private HEIC WIC decoder not uniquely discoverable");
+    puts("WIC_PHOTOS_HEIC_REGISTERED_CODEC_COMPETITOR_CENSUS_PASS");
+}
 // Read-only capability survey. It is deliberately compatible with the
 // historical v1.1.18 DLL, which violates current arbitration invariants;
 // no correctness assertions are made inside this observer. Used ONLY on
@@ -227,6 +293,7 @@ inline void Survey() {
     if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,
         (void**)&factory)))throw std::runtime_error("Survey WIC factory failed");
+    SurveyWicRegisteredHeicCompetitors(factory);
     CComPtr<IWICStream> source;
     if(FAILED(factory->CreateStream(&source)) ||
        FAILED(source->InitializeFromFilename(
