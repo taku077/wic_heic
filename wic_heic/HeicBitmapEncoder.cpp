@@ -241,6 +241,14 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			// SetSize is unavailable. Only try this after an actual failed
 			// encode, never during a successful write.
 			reverted=m_Stream->Revert();
+			// IStream::Revert may return S_OK yet do NOTHING in direct mode.
+			// Claim restoration only if the formerly nonempty output is empty.
+			if(SUCCEEDED(reverted)) {
+				STATSTG restored{};
+				if(FAILED(m_Stream->Stat(&restored,STATFLAG_NONAME)) ||
+				   restored.cbSize.QuadPart!=0)
+					reverted=STG_E_CANTSAVE;
+			}
 		}
 		WicHeicDiagnostic::Emit("EncoderRasterPartialWriteRollback",0,0,0,0,
 			SUCCEEDED(reset)?"empty-stream-restored":
@@ -304,6 +312,14 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 					// Fallback for transactional IStreams: Revert can restore
 					// the previous committed state without supporting resize.
 					reverted=m_Stream->Revert();
+			// IStream::Revert may return S_OK yet do NOTHING in direct mode.
+			// Claim restoration only if the formerly nonempty output is empty.
+			if(SUCCEEDED(reverted)) {
+				STATSTG restored{};
+				if(FAILED(m_Stream->Stat(&restored,STATFLAG_NONAME)) ||
+				   restored.cbSize.QuadPart!=0)
+					reverted=STG_E_CANTSAVE;
+			}
 				}
 				WicHeicDiagnostic::Emit("EncoderCommitPartialWriteRollback",
 					m_Frames[0]->m_Width,m_Frames[0]->m_Height,0,0,
