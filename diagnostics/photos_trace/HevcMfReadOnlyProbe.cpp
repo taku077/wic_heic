@@ -294,51 +294,51 @@ void ProbePinnedSyntheticEncoderMemoryOnly(
     if(!factory || !source || original.empty())return;
     ComPtr<IWICBitmapEncoder> encoder;
     HRESULT hr=factory->CreateEncoder(container,nullptr,encoder.GetAddressOf());
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=create hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=create hr=0x%08lX\n",
         role,static_cast<unsigned long>(hr));
     if(FAILED(hr)||!encoder)return;
     ComPtr<IStream> output;
     hr=CreateStreamOnHGlobal(nullptr,TRUE,output.GetAddressOf());
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=memory_stream hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=memory_stream hr=0x%08lX\n",
         role,static_cast<unsigned long>(hr));
     if(FAILED(hr)||!output)return;
     hr=encoder->Initialize(output.Get(),WICBitmapEncoderNoCache);
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=initialize hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=initialize hr=0x%08lX\n",
         role,static_cast<unsigned long>(hr));
     if(FAILED(hr))return;
     ComPtr<IWICBitmapFrameEncode> frame;
     ComPtr<IPropertyBag2> properties;
     hr=encoder->CreateNewFrame(frame.GetAddressOf(),properties.GetAddressOf());
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=create_frame hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=create_frame hr=0x%08lX\n",
         role,static_cast<unsigned long>(hr));
     if(FAILED(hr)||!frame)return;
     hr=frame->Initialize(properties.Get());
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=frame_initialize hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=frame_initialize hr=0x%08lX\n",
         role,static_cast<unsigned long>(hr));
     if(FAILED(hr))return;
     ComPtr<IWICMetadataQueryWriter> metadata;
     const HRESULT writer=frame->GetMetadataQueryWriter(metadata.GetAddressOf());
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=metadata_writer hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=metadata_writer hr=0x%08lX\n",
         role,static_cast<unsigned long>(writer));
     // No raster flattening or caller-specified resize. The input is the
     // unchanged, hash-pinned public WIC frame, not Photos' edited pixels.
     hr=frame->WriteSource(source,nullptr);
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=write_source hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=write_source hr=0x%08lX\n",
         role,static_cast<unsigned long>(hr));
     if(FAILED(hr))return;
     hr=frame->Commit();
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=frame_commit hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=frame_commit hr=0x%08lX\n",
         role,static_cast<unsigned long>(hr));
     if(FAILED(hr))return;
     hr=encoder->Commit();
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=encoder_commit hr=0x%08lX\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=encoder_commit hr=0x%08lX\n",
         role,static_cast<unsigned long>(hr));
     if(FAILED(hr))return;
     STATSTG stat{};
     hr=output->Stat(&stat,STATFLAG_NONAME);
     if(FAILED(hr)||stat.cbSize.QuadPart==0 ||
        stat.cbSize.QuadPart>32ull*1024ull*1024ull) {
-        std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=output_bounds hr=0x%08lX within_limit=0\\n",
+        std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=output_bounds hr=0x%08lX within_limit=0\n",
             role,static_cast<unsigned long>(hr));
         return;
     }
@@ -351,7 +351,7 @@ void ProbePinnedSyntheticEncoderMemoryOnly(
     hr=output->Read(bytes.data(),static_cast<ULONG>(bytes.size()),&received);
     const bool exact=SUCCEEDED(hr) && received==bytes.size() &&
                      bytes==original;
-    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=readback hr=0x%08lX bytes=%llu exact_original_bytes=%u photos_not_tested=1\\n",
+    std::printf("HEVC_SYNTHETIC_ENCODER role=%s stage=readback hr=0x%08lX bytes=%llu exact_original_bytes=%u photos_not_tested=1\n",
         role,static_cast<unsigned long>(hr),
         static_cast<unsigned long long>(count),static_cast<unsigned>(exact));
 }
