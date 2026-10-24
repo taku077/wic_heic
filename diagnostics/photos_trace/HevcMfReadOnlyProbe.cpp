@@ -238,6 +238,62 @@ void DecodePinnedSynthetic(IWICImagingFactory* factory,
             role,fp);
     }
 }
+// This is the pathway WIC callers commonly use without an explicit vendor.
+// Both Microsoft and custom HEIF decoders may be registered; COM activation
+// does not guarantee CopyPixels, as observed on the user's Windows 10.
+// Report the selected CLSID and exact image-read error without changing any
+// registry priority, writing to files, or querying user images.
+void DecodePinnedSyntheticAutomatic(IWICImagingFactory* factory,
+                                    std::vector<BYTE>& source) {
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICStream> stream;
+    HRESULT hr=factory->CreateStream(stream.GetAddressOf());
+    if(SUCCEEDED(hr))
+        hr=stream->InitializeFromMemory(source.data(),UINT(source.size()));
+    if(FAILED(hr)) {
+        std::printf("HEVC_SYNTHETIC_AUTO stage=memory_stream hr=0x%08lX\n",
+            static_cast<unsigned long>(hr));
+        return;
+    }
+    ComPtr<IWICBitmapDecoder> decoder;
+    hr=factory->CreateDecoderFromStream(stream.Get(),nullptr,
+        WICDecodeMetadataCacheOnDemand,decoder.GetAddressOf());
+    std::printf("HEVC_SYNTHETIC_AUTO stage=create_decoder hr=0x%08lX\n",
+        static_cast<unsigned long>(hr));
+    if(FAILED(hr)||!decoder)return;
+    ComPtr<IWICBitmapDecoderInfo> info;
+    hr=decoder->GetDecoderInfo(info.GetAddressOf());
+    CLSID selected{};
+    HRESULT clsidHr=FAILED(hr)?hr:info->GetCLSID(&selected);
+    std::printf("HEVC_SYNTHETIC_AUTO stage=decoder_clsid hr=0x%08lX custom=%u microsoft=%u\n",
+        static_cast<unsigned long>(clsidHr),
+        static_cast<unsigned>(SUCCEEDED(clsidHr)&&IsEqualGUID(selected,kCustomDecoder)),
+        static_cast<unsigned>(SUCCEEDED(clsidHr)&&IsEqualGUID(selected,kMicrosoftDecoder)));
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr=decoder->GetFrame(0,frame.GetAddressOf());
+    std::printf("HEVC_SYNTHETIC_AUTO stage=frame0 hr=0x%08lX\n",
+        static_cast<unsigned long>(hr));
+    if(FAILED(hr)||!frame)return;
+    UINT w=0,h=0;
+    hr=frame->GetSize(&w,&h);
+    if(FAILED(hr)||w<16||h<8)return;
+    ComPtr<IWICBitmapSource> rgb;
+    hr=WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
+        frame.Get(),rgb.GetAddressOf());
+    std::printf("HEVC_SYNTHETIC_AUTO stage=rgb24 hr=0x%08lX\n",
+        static_cast<unsigned long>(hr));
+    if(FAILED(hr)||!rgb)return;
+    BYTE sample[16*8*3]{};
+    WICRect roi{0,0,16,8};
+    hr=rgb->CopyPixels(&roi,16*3,UINT(sizeof(sample)),sample);
+    std::printf("HEVC_SYNTHETIC_AUTO stage=copy_pixels hr=0x%08lX\n",
+        static_cast<unsigned long>(hr));
+    if(SUCCEEDED(hr)) {
+        unsigned long long fp=14695981039346656037ull;
+        for(BYTE c:sample){fp^=c;fp*=1099511628211ull;}
+        std::printf("HEVC_SYNTHETIC_AUTO stage=rgb24_roi fnv64=%016llX\n",fp);
+    }
+}
 int RunPinnedSynthetic() {
     std::vector<BYTE> publicFixture;
     if(!VerifySyntheticFixture(publicFixture)) {
@@ -255,6 +311,7 @@ int RunPinnedSynthetic() {
         "microsoft_heif",publicFixture);
     DecodePinnedSynthetic(factory.Get(),kCustomDecoder,
         "custom_heic",publicFixture);
+    DecodePinnedSyntheticAutomatic(factory.Get(),publicFixture);
     std::puts("HEVC_SYNTHETIC_WIC_COMPARISON_COMPLETE photos_not_tested=1 source_unchanged=1 no_photo_path_input=1");
     return 0;
 }
