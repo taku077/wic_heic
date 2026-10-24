@@ -119,7 +119,10 @@ function AdminRequired {
 function Msi([string]$op,[string]$file,[string]$tag){
  $log=Join-Path $root ('WIC120_'+$tag+'_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'.log')
  $ui=if($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_TEMP){'/qn'}else{'/passive'}
- $argsText='/'+$op+' "'+$file+'" '+$ui+' /norestart /l*v "'+$log+'"'
+ # CRITICAL: this global WIC DLL is loaded by Windows Explorer.
+ # Do not let MSI Restart Manager terminate explorer.exe or the desktop.
+ # If the DLL is in use, the installer may require a controlled restart.
+ $argsText='/'+$op+' "'+$file+'" '+$ui+' MSIRESTARTMANAGERCONTROL=Disable /norestart /l*v "'+$log+'"'
  $proc=Start-Process -FilePath 'msiexec.exe' -ArgumentList $argsText -Wait -PassThru
  if($proc.ExitCode -notin @(0,3010)){throw "MSI $op failed ($($proc.ExitCode)); inspect $log"}
  Write-Host "MSI_$tag EXIT=$($proc.ExitCode) LOG=$log"
