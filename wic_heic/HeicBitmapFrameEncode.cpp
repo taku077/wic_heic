@@ -186,8 +186,34 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPixelFormat(__RPC__inout WI
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetColorContexts(UINT cCount, __RPC__in_ecount_full(cCount) IWICColorContext **ppIColorContext)
 {
-	WicHeicDiagnostic::Emit("SetColorContexts",cCount,0,m_BitmapTransform,m_HeifCompressionMethod,"metadata-rejected",E_NOTIMPL);
-	return E_NOTIMPL;
+	// Only an explicit, verifiable ICC profile is supported for raster edits.
+	// Color contexts must NEVER be silently acknowledged and then discarded.
+	if (!m_OptionsInitialized || m_Created || m_HasPixels || m_LosslessReady ||
+	    !m_RasterICC.empty()) return WINCODEC_ERR_WRONGSTATE;
+	if (cCount != 1 || !ppIColorContext || !ppIColorContext[0])
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	WICColorContextType type = WICColorContextUninitialized;
+	HRESULT hr = ppIColorContext[0]->GetType(&type);
+	if (FAILED(hr)) return hr;
+	if (type != WICColorContextProfile)
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	UINT size=0;
+	hr=ppIColorContext[0]->GetProfileBytes(0,nullptr,&size);
+	if (FAILED(hr)) return hr;
+	if (size < 132 || size > (4u << 20))
+		return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	try {
+		std::vector<uint8_t> icc(size);
+		UINT read=0;
+		hr=ppIColorContext[0]->GetProfileBytes(size,icc.data(),&read);
+		if (FAILED(hr)) return hr;
+		if (read!=size || memcmp(icc.data()+36,"acsp",4)!=0)
+			return WINCODEC_ERR_BADIMAGE;
+		m_RasterICC.swap(icc);
+		WicHeicDiagnostic::Emit("FrameICCStaged",0,0,0,0,"icc-for-raster");
+		return S_OK;
+	} catch(const std::bad_alloc&) { return E_OUTOFMEMORY; }
+	  catch(...) { return WINCODEC_ERR_UNSUPPORTEDOPERATION; }
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::SetPalette(__RPC__in_opt IWICPalette *pIPalette)
@@ -285,6 +311,26 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 			    completeSource[4]!='f' || completeSource[5]!='t' ||
 			    completeSource[6]!='y' || completeSource[7]!='p')
 				return WINCODEC_ERR_BADIMAGE;
+			// If Photos provides an ICC profile while copying an original,
+			// only accept it if it is already in the original HEIF.
+			// Otherwise silently claiming to replace the profile would lie.
+			if (!m_RasterICC.empty()) {
+				try {
+					heif::Context originalContext;
+					originalContext.read_from_memory(
+						completeSource.data(),completeSource.size());
+					auto primary=originalContext.get_primary_image_handle();
+					const size_t n=heif_image_handle_get_raw_color_profile_size(
+						primary.get_raw_image_handle());
+					if (n!=m_RasterICC.size())
+						return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+					std::vector<uint8_t> existing(n);
+					auto err=heif_image_handle_get_raw_color_profile(
+						primary.get_raw_image_handle(),existing.data());
+					if (err.code!=heif_error_Ok || existing!=m_RasterICC)
+						return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+				} catch(...) { return WINCODEC_ERR_UNSUPPORTEDOPERATION; }
+			}
 			m_LosslessBytes.swap(completeSource);
 			m_Width = srcW;
 			m_Height = srcH;
