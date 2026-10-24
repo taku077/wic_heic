@@ -86,8 +86,8 @@ inline void Run() {
             WICBitmapTransformFlipHorizontal,13*3,13*9*3,empty)!=
             WINCODEC_ERR_UNSUPPORTEDOPERATION)
         throw std::runtime_error("Unsupported flip unexpectedly accepted");
-    const WICRect small{0,0,2,2};
-    if(transformed->CopyPixels(&small,naturalWidth,naturalHeight,&originalFormat,
+    const WICRect smallRegion{0,0,2,2};
+    if(transformed->CopyPixels(&smallRegion,naturalWidth,naturalHeight,&originalFormat,
             WICBitmapTransformRotate0,5,12,empty)!=E_INVALIDARG)
         throw std::runtime_error("Undersized transform stride incorrectly accepted");
     printf("WIC_HEIC_SOURCE_TRANSFORM_COM_AND_SAFE_PIXEL_API_PASS\n");
