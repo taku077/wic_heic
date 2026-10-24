@@ -104,6 +104,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::QueryInterface(REFIID riid, vo
 		*ppvObject = static_cast<IWICBitmapSource*>(this);
 	} else if (IsEqualGUID(riid, IID_IWICBitmapFrameDecode)) {
 		*ppvObject = static_cast<IWICBitmapFrameDecode*>(this);
+	} else if (IsEqualGUID(riid, IID_IWICBitmapSourceTransform)) {
+		*ppvObject = static_cast<IWICBitmapSourceTransform*>(this);
 	} else if (IsEqualGUID(riid, IID_IWICMetadataBlockReader)) {
 		*ppvObject = static_cast<IWICMetadataBlockReader*>(this);
 	} else {
@@ -252,6 +254,118 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const
 	}
 
 	return S_OK;
+}
+
+// WIC often requests IWICBitmapSourceTransform for Photos-style orientation
+// and region reads. We support a native-resolution, no-loss pixel transform,
+// not an editable HEIC container or a replacement for HEVC encoder licensing.
+// Unknown flips, combined transforms, scaling and format conversions are
+// intentionally NOT advertised: WIC can apply its own wrappers if needed.
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::DoesSupportTransform(
+    WICBitmapTransformOptions transform,BOOL* supported) {
+    if(!supported)return E_POINTER;
+    *supported=(transform==WICBitmapTransformRotate0 ||
+                transform==WICBitmapTransformRotate90 ||
+                transform==WICBitmapTransformRotate180 ||
+                transform==WICBitmapTransformRotate270)?TRUE:FALSE;
+    return S_OK;
+}
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetClosestSize(
+    UINT* width,UINT* height) {
+    if(!width||!height)return E_POINTER;
+    if(!*width||!*height)return E_INVALIDARG;
+    const int naturalWidth=m_Handle.get_width();
+    const int naturalHeight=m_Handle.get_height();
+    if(naturalWidth<=0||naturalHeight<=0)return WINCODEC_ERR_BADIMAGE;
+    // HEVC frame decoding here does not implement scaling. WIC will
+    // insert a scaler if an application asks for non-native dimensions.
+    *width=UINT(naturalWidth);
+    *height=UINT(naturalHeight);
+    return S_OK;
+}
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetClosestPixelFormat(
+    WICPixelFormatGUID* format) {
+    if(!format)return E_POINTER;
+    // Do not down-convert original 10/12/16-bit RGB to 8-bit implicitly.
+    // A WIC format converter can perform explicit conversion if required.
+    *format=m_PixelFormat;
+    return S_OK;
+}
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(
+    const WICRect* region,UINT width,UINT height,
+    WICPixelFormatGUID* format,WICBitmapTransformOptions transform,
+    UINT stride,UINT bufferSize,BYTE* buffer) {
+    if(!format||!buffer)return E_POINTER;
+    if(!IsEqualGUID(*format,m_PixelFormat))
+        return WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT;
+    if(transform!=WICBitmapTransformRotate0 &&
+       transform!=WICBitmapTransformRotate90 &&
+       transform!=WICBitmapTransformRotate180 &&
+       transform!=WICBitmapTransformRotate270)
+        return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+    const int naturalWidth=m_Handle.get_width();
+    const int naturalHeight=m_Handle.get_height();
+    if(naturalWidth<=0||naturalHeight<=0||
+       width!=UINT(naturalWidth)||height!=UINT(naturalHeight))
+        return E_INVALIDARG;
+    WICRect crop{0,0,naturalWidth,naturalHeight};
+    if(region)crop=*region;
+    if(crop.X<0||crop.Y<0||crop.Width<=0||crop.Height<=0||
+       uint64_t(crop.X)+UINT(crop.Width)>UINT(naturalWidth)||
+       uint64_t(crop.Y)+UINT(crop.Height)>UINT(naturalHeight))
+        return E_INVALIDARG;
+    const UINT bpp=UINT(m_Bpp/8);
+    const bool quarterTurn=(transform==WICBitmapTransformRotate90||
+                            transform==WICBitmapTransformRotate270);
+    const UINT outWidth=quarterTurn?UINT(crop.Height):UINT(crop.Width);
+    const UINT outHeight=quarterTurn?UINT(crop.Width):UINT(crop.Height);
+    const uint64_t rowBytes=uint64_t(outWidth)*bpp;
+    const uint64_t lastByte=(uint64_t(outHeight)-1)*stride+rowBytes;
+    if(!bpp||rowBytes>stride||lastByte>bufferSize)
+        return E_INVALIDARG;
+    try {DecodeImage();}
+    catch (...) {return WINCODEC_ERR_BADIMAGE;}
+    const uint64_t rawRowBytes=uint64_t(UINT(naturalWidth))*bpp;
+    if(!m_PlaneInterleaved||m_Stride<rawRowBytes)
+        return WINCODEC_ERR_BADIMAGE;
+    const uint32_t maxSample=(1u<<m_SourceBits)-1u;
+    // Map each destination pixel to the exact pre-rotated primary frame.
+    // Only the WIC-visible pixels change: original compressed HEIC, Exif,
+    // ICC, auxiliary gain/depth and thumbnail data are never modified.
+    for(UINT y=0;y<outHeight;++y) {
+        BYTE* dstRow=buffer+size_t(y)*stride;
+        for(UINT x=0;x<outWidth;++x) {
+            UINT sx=0,sy=0;
+            switch(transform) {
+            case WICBitmapTransformRotate90:
+                sx=y;sy=UINT(crop.Height)-1-x;break;
+            case WICBitmapTransformRotate180:
+                sx=UINT(crop.Width)-1-x;
+                sy=UINT(crop.Height)-1-y;break;
+            case WICBitmapTransformRotate270:
+                sx=UINT(crop.Width)-1-y;sy=x;break;
+            default:sx=x;sy=y;break;
+            }
+            const BYTE* pixel=m_PlaneInterleaved+
+                size_t(UINT(crop.Y)+sy)*m_Stride+
+                size_t(UINT(crop.X)+sx)*bpp;
+            BYTE* out=dstRow+size_t(x)*bpp;
+            if(m_SourceBits<=8) {
+                memcpy(out,pixel,bpp);
+            } else {
+                // Same 16-bit normalization as the ordinary frame CopyPixels.
+                for(UINT c=0;c<bpp;c+=2) {
+                    uint32_t value=uint32_t(pixel[c])|(uint32_t(pixel[c+1])<<8);
+                    if(value>maxSample)return WINCODEC_ERR_BADIMAGE;
+                    const uint32_t normalized=
+                        (value*65535u+maxSample/2)/maxSample;
+                    out[c]=BYTE(normalized&255);
+                    out[c+1]=BYTE(normalized>>8);
+                }
+            }
+        }
+    }
+    return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__deref_out_opt IWICMetadataQueryReader **ppIMetadataQueryReader)
