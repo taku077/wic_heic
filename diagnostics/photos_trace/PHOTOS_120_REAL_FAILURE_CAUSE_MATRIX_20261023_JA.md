@@ -765,3 +765,22 @@ Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder�
 - **以後、実機診断は小出しにしない**：同一バージョンの追加診断を依頼せず、ソース修正とGitHub CIで事前検証し、区切り良い候補のみ1セッションでまとめて実機検証する。診断レポートや写真再提出を重複要求しない。
 
 **製品コードを進める修正**：`wic_heic/HeicLosslessNative.h` で、従来 `iref` 参照ボックスがなくても構造上完全なHEICの**単一・primary `hvc1` 画像**が、無再圧縮回転を一律拒否される問題を修正。今回の新実装 `NoReferenceSinglePrimary` は、iinfが単一かつそのitem IDがprimary、タイプ `hvc1`、ipmaにほかの画像・Exif・補助要素がないことを確認して、**その限定条件だけ**元コンテナのirotを安全に更新する。曖昧な構成／複数画像／Exif／HDR／サムネイルを容認しない。構造レベルの人工BMFF回帰テスト `NativeLosslessProbe::VerifyReferenceFreePrimary` で、単一画像を許容し複数・未知種別を拒否する。既存の完全人工HEICを使った4回90°・全RGB一致などの総合試験も継続。コード `b22836a1f732a868da7cfa3eb81aa39afa5bd42c`、試験 `2cb465f98336c9d2c2ce0d0526543981043395a8`。[**製品WIC総合CI #40078197911 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40078197911)。`NATIVE_HEIC_REFERENCE_FREE_SINGLE_PRIMARY_SAFE_ROTATION_PASS`、`NATIVE_LOSSLESS_HEIF_MATCHES_PYTHON_AND_ROTATION_TEST_PASSED`、Media Foundation MFT旧版/新版非干渉テストを含み合格。**これは一部のHEICの無再圧縮回転対応範囲を広げる修正であり、Windows10標準PhotosのHEVC警告や編集保存を直したとの証拠ではない**。Windows10実機MSIは未導入。新しい実機テストは現時点で不要。
+
+## 2026-10-24：WIC WriteSource拒否が次の正常保存を汚染するバグを再現・修正
+
+**優先P0（Windows10標準Photos編集／保存）の製品コード側前進**。ユーザーが希望する通り、個別の実機診断を追加せず、既存の1.1.18 vs 研究版隔離CIと公開人工HEICだけで保存失敗の実際の原因を一つ修正した。
+
+**公式仕様により却下した対症療法**：
+- 旧1.1.18で `QueryCapability` が `0x15`（SameEncoder + SomeImages + Thumbnail）、研究版で `0x0C`（SomeImages + Metadata）を返す差は既知。しかし `WICBitmapDecoderCapabilitySameEncoder` は「同じHEIC形式のエンコーダーがインストールされている」意味ではなく「**この画像が同じベンダーのエンコーダーで作成されたと認識している**」というMicrosoft仕様。従ってiPhone由来HEICへ安易にSameEncoderを復活させることは不正確で採用しない。
+- Microsoft WIC公式：https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder および https://learn.microsoft.com/en-us/windows/win32/api/wincodec/ne-wincodec-wicbitmapdecodercapabilities 。これだけでPhotosボタンが無効になる因果も未特定。
+
+**再現テスト**：
+1. 自作 `IWICBitmapFrameEncode` を未設定の新規フレームで初期化する。
+2. WICで生成した64×48人工RGBビットマップの `WriteSource` を呼ぶ。出自不明なので `WINCODEC_ERR_UNSUPPORTEDOPERATION=0x88982F81` で**意図通り安全拒否**。
+3. 同じフレームで別寸法の公開人工HEIC `fixture-irot3-exif6-noaux.heic`（1080×1920）を `WriteSource`、`Frame.Commit`、`Encoder.Commit` で保存し直す。
+4. 修正前のCI [**#40078786772 FAIL（狙い通り）**](https://github.com/taku077/wic_heic/actions/runs/40078786772) では2段階目の拒否時に自動取得した64×48の`m_Width,m_Height`と画素形式が残り、後続の正規HEIC保存が `0x88982F81` で失敗。レッドテスト追加コミット `25f59f1a0a7d8bbbd36cc7f0bd324f82c27ee1d1`。
+5. 製品コード `wic_heic/HeicBitmapFrameEncode.cpp` に `ScopedWicSourceSetterRollback` を導入（修正コミット `bc76ef8f3c9a30da835fc15b6c7f3174ff5c5373`）。呼出し前の自動サイズ・色形式・クロマ・精度を記録し、保存を受け入れた時だけ確定。**拒否・エラー・例外なら元の設定へロールバック**。不明なラスターを通すことはしない。元HEICコンテナ・ファイル・レジストリ・Photosには一切手を加えない。
+6. テストでは `IStream::Stat` で実際の長さを確認し、メモリから読み戻したHEICを公開fixtureと**全バイト一致**させる（`GetHGlobalFromStream/GlobalSize` の割当て余剰長を避ける）。コミット `181e18eebf294e862f410490eb02fa46db7fb709`。
+7. 修正後の製品CI [**#40078985290 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40078985290)：`WIC_WRITE_SOURCE_AUTOSETTER_REJECT_HRESULT=0x88982F81` に続いて `WIC_REJECTED_WRITE_SOURCE_DID_NOT_POISON_RETRY_AND_EXACT_HEIC_BYTES_PASS` を実証。既存 `NATIVE_LOSSLESS_HEIF_MATCHES_PYTHON_AND_ROTATION_TEST_PASSED`、旧研究WIC比較、HEVC MFT非干渉もPASS。旧マスク0x15／研究版0x0Cは維持（不正フラグ復活なし）。
+
+**境界**：これは「出自不明な入力を拒否した後に同じフレームで正常保存を再試行できる」**製品の保存エンジンの不具合修正**。Photos 2026.11090.22001.0の独自HEVC拡張警告／編集・回転ボタン／GUIからのHEIC保存を実機で直したわけではない。ユーザーへ新しいMSIや細切れの実機テストは提供・要求しない。旧1.1.18を正常扱いもしない。
