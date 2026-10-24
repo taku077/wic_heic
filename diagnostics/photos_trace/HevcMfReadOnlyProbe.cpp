@@ -187,6 +187,30 @@ bool VerifySyntheticFixture(std::vector<BYTE>& out) {
     if(!success)out.clear();
     return success;
 }
+// Full-frame digest is computed ONLY after the adjacent SHA-pinned public
+// fixture was verified. A bounded RGB buffer is never printed or written.
+// Its geometry/digest makes a Photos-style orientation or partial-row
+// corruption distinguishable from a successful 16x8 corner read.
+void DigestPinnedSyntheticFullFrame(IWICBitmapSource* rgb,UINT w,UINT h,
+                                   const char* role,bool automatic) {
+    if(!rgb||!w||!h||w>20000||h>20000)return;
+    const unsigned long long stride=static_cast<unsigned long long>(w)*3ull;
+    const unsigned long long bytes=stride*h;
+    if(stride>0xFFFFFFFFull||bytes>64ull*1024*1024ull)return;
+    std::vector<BYTE> pixels(static_cast<size_t>(bytes));
+    const HRESULT hr=rgb->CopyPixels(nullptr,UINT(stride),
+        UINT(bytes),pixels.data());
+    const char* prefix=automatic?"HEVC_SYNTHETIC_AUTO_FULLFRAME":
+                                  "HEVC_SYNTHETIC_FULLFRAME";
+    std::printf("%s role=%s stage=copy_pixels hr=0x%08lX width=%u height=%u bytes=%llu\n",
+        prefix,role,static_cast<unsigned long>(hr),w,h,bytes);
+    if(SUCCEEDED(hr)) {
+        unsigned long long fingerprint=14695981039346656037ull;
+        for(BYTE sample:pixels){fingerprint^=sample;fingerprint*=1099511628211ull;}
+        std::printf("%s role=%s stage=rgb24_fnv64 value=%016llX\n",
+            prefix,role,fingerprint);
+    }
+}
 void DecodePinnedSynthetic(IWICImagingFactory* factory,
     const CLSID& decoderClsid,const char* role,std::vector<BYTE>& source) {
     using Microsoft::WRL::ComPtr;
@@ -236,6 +260,7 @@ void DecodePinnedSynthetic(IWICImagingFactory* factory,
         for(BYTE b:sample){fp^=b;fp*=1099511628211ull;}
         std::printf("HEVC_SYNTHETIC_WIC role=%s stage=rgb24_roi fnv64=%016llX\n",
             role,fp);
+        DigestPinnedSyntheticFullFrame(rgb.Get(),width,height,role,false);
     }
 }
 // This is the pathway WIC callers commonly use without an explicit vendor.
@@ -292,6 +317,7 @@ void DecodePinnedSyntheticAutomatic(IWICImagingFactory* factory,
         unsigned long long fp=14695981039346656037ull;
         for(BYTE c:sample){fp^=c;fp*=1099511628211ull;}
         std::printf("HEVC_SYNTHETIC_AUTO stage=rgb24_roi fnv64=%016llX\n",fp);
+        DigestPinnedSyntheticFullFrame(rgb.Get(),w,h,"selected",true);
     }
 }
 int RunPinnedSynthetic() {
