@@ -1,4 +1,4 @@
-# Compare REAL Windows 10 Microsoft Photos GUI A/B, not Windows Server CI.
+﻿# Compare REAL Windows 10 Microsoft Photos GUI A/B, not Windows Server CI.
 # Read-only on saved, sanitized synthetic-image result files.
 [CmdletBinding()]
 param([string]$Root=$PSScriptRoot,[switch]$NoWrite)

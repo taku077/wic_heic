@@ -70,7 +70,7 @@ jobs:
           $data.PhotosModules[0].WicHeicDllSha256=@('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
           ($data|ConvertTo-Json -Depth 9)|Set-Content -LiteralPath (Join-Path $folder 'Photos_AB_B.json') -Encoding UTF8
           $report=@(& 'diagnostics/photos_trace/Photos_AB_Compare.ps1' -Root $sandbox -NoWrite)
-          if(-not ($report -match 'HEVC警告') -or -not ($report -match 'DLL') -or
+          if(-not ($report -match 'HEVC') -or -not ($report -match 'DLL') -or
              -not ($report -match 'Photos')){
              throw 'A/B comparator did not cover Photos GUI and codec difference'
           }

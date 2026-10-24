@@ -1,4 +1,4 @@
-# Windows 10 Photos real-GUI A/B comparator, phase A=original 1.1.18, B=research.
+﻿# Windows 10 Photos real-GUI A/B comparator, phase A=original 1.1.18, B=research.
 # Built-in PowerShell 5.1, normal user. No MSI, registry writes, or personal images.
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][ValidateSet('A','B')][string]$Phase)
