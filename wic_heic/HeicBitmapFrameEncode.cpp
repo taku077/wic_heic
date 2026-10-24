@@ -102,12 +102,34 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Initialize(__RPC__in_opt IProp
 		VARIANT values[2]{};
 		HRESULT errors[2]{};
 		HRESULT hr=pIEncoderOptions->Read(2,props,nullptr,values,errors);
-		if (FAILED(hr)) return hr;
+		if (FAILED(hr)) {
+			for(auto& v:values) VariantClear(&v);
+			return hr;
+		}
 		for (int i=0;i<2;i++) {
-			if (SUCCEEDED(errors[i]) && values[i].vt==VT_UI1) {
+			if (FAILED(errors[i])) {
+				// Each IPropertyBag2 property carries its own HRESULT, even if
+				// the overall Read returned S_OK. An access/decoding failure is
+				// NOT a request for the default Rotate0/Don'tCare options:
+				// silently taking that path can save the wrong orientation.
+				// A genuinely absent optional property may retain the default,
+				// but only when the corresponding VARIANT has no value.
+				const bool absent=errors[i]==E_INVALIDARG ||
+				                  errors[i]==DISP_E_MEMBERNOTFOUND;
+				const HRESULT failure=absent && values[i].vt!=VT_EMPTY ?
+				                      DISP_E_TYPEMISMATCH : errors[i];
+				if (!absent || values[i].vt!=VT_EMPTY) {
+					for(auto& v:values) VariantClear(&v);
+					WicHeicDiagnostic::Emit("FrameInitializeOptionsReadFailed",0,0,
+					    transform,compression,i==0?"rotation":"compression",failure);
+					return failure;
+				}
+				continue;
+			}
+			if (values[i].vt==VT_UI1) {
 				if (i==0) transform=values[i].bVal;
 				else compression=values[i].bVal;
-			} else if (SUCCEEDED(errors[i]) && values[i].vt!=VT_EMPTY) {
+			} else if (values[i].vt!=VT_EMPTY) {
 				for(auto& v:values) VariantClear(&v);
 				return DISP_E_TYPEMISMATCH;
 			}
