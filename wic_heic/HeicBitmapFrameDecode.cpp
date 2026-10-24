@@ -261,9 +261,37 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetColorContexts(UINT cCount, __RPC__inout_ecount_full_opt(cCount) IWICColorContext **ppIColorContexts, __RPC__out UINT *pcActualCount)
 {
-	DbgLog("%s", __FUNCTION__);
-
-	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	// Photos and other WIC clients query this before editing. The historical
+	// decoder always returned UNSUPPORTEDOPERATION, even if HEIF contained a
+	// genuine ICC profile. The encoder already preserves an explicitly supplied
+	// WIC ICC, so make that source profile discoverable without changing decode
+	// selection, pixel formats, image content or codec registration.
+	if (!pcActualCount) return E_POINTER;
+	*pcActualCount=0;
+	if (cCount && !ppIColorContexts) return E_INVALIDARG;
+	try {
+		if (m_Handle.empty()) return WINCODEC_ERR_BADIMAGE;
+		auto* handle=m_Handle.get_raw_image_handle();
+		const size_t profileSize=heif_image_handle_get_raw_color_profile_size(handle);
+		if (!profileSize) return S_OK;
+		if (profileSize < 132 || profileSize > (4u << 20))
+			return WINCODEC_ERR_BADIMAGE;
+		*pcActualCount=1;
+		// WIC permits a count-only query with no allocated color contexts.
+		if (!cCount) return S_OK;
+		if (!ppIColorContexts[0]) return E_INVALIDARG;
+		std::vector<uint8_t> icc(profileSize);
+		auto error=heif_image_handle_get_raw_color_profile(handle,icc.data());
+		if (error.code!=heif_error_Ok || memcmp(icc.data()+36,"acsp",4)!=0)
+			return WINCODEC_ERR_BADIMAGE;
+		const HRESULT hr=ppIColorContexts[0]->InitializeFromMemory(
+			icc.data(),static_cast<UINT>(icc.size()));
+		if (SUCCEEDED(hr))
+			WicHeicDiagnostic::Emit("DecoderICCProvided",0,0,0,0,"icc-for-wic");
+		return hr;
+	}
+	catch(const std::bad_alloc&) { return E_OUTOFMEMORY; }
+	catch(...) { return WINCODEC_ERR_BADIMAGE; }
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetThumbnail(__RPC__deref_out_opt IWICBitmapSource **ppIThumbnail)
