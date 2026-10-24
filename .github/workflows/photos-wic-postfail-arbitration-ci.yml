@@ -701,3 +701,121 @@ jobs:
           Write-Host 'PHOTOS_2026_EDITOR_HEVC_WARNING_PERSISTS_AFTER_GLOBAL_WIC_INSTALL'
           Write-Host 'WINDOWS10_PHOTOS_ACTUAL_ROTATE_EDIT_PASS=0'
           Write-Host 'EXPERIMENTAL_MSI_ARTIFACT_RELEASE_BLOCKED_NO_FURTHER_FIELD_TESTS'
+
+      # B diagnostic is not a certified working Photos release. Users opt in.
+      - name: Stage exact-old/experimental-new B field comparison kit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $stage=Join-Path $env:RUNNER_TEMP 'Photos_RealGUI_B_Trial'
+          if(Test-Path -LiteralPath $stage){throw 'Refuse to overwrite old B stage'}
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          $old=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'historical118') -Recurse -Filter '*.msi' -File)
+          if($old.Count -ne 1){throw 'Missing exact old MSI'}
+          if((Get-FileHash -LiteralPath $old[0].FullName -Algorithm SHA256).Hash -cne '4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'){
+            throw 'Historical 118 installer differs from verified original'
+          }
+          $new=Join-Path $env:RUNNER_TEMP 'wic_coexist/global.msi'
+          $dll=Join-Path $env:RUNNER_TEMP 'wic_coexist/global.dll'
+          if(!(Test-Path -LiteralPath $new) -or !(Test-Path -LiteralPath $dll)){throw 'Missing research WIC build'}
+          $files=@{
+            'diagnostics/photos_trace/WIC120_OneTimeTrial.ps1'='WIC120_OneTimeTrial.ps1'
+            'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1'='WIC_Preflight_ReadOnly.ps1'
+            'diagnostics/photos_trace/WIC_Preflight_Compare.ps1'='WIC_Preflight_Compare.ps1'
+            'diagnostics/photos_trace/B_Field_Install_Admin.cmd'='B_Field_Install_Admin.cmd'
+            'diagnostics/photos_trace/B_Field_Restore_Admin.cmd'='B_Field_Restore_Admin.cmd'
+            'diagnostics/photos_trace/B_Field_Restore_Latest.ps1'='B_Field_Restore_Latest.ps1'
+            'diagnostics/photos_trace/B_FieldTrial_GUI_Readme_JA.txt'='README_まずお読みください.txt'
+          }
+          foreach($item in $files.GetEnumerator()){
+            Copy-Item -LiteralPath $item.Key -Destination (Join-Path $stage $item.Value) -ErrorAction Stop
+          }
+          Copy-Item -LiteralPath $old[0].FullName -Destination (Join-Path $stage 'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi')
+          Copy-Item -LiteralPath $new -Destination (Join-Path $stage 'WicHeic-Repair-1.1.20-TRIAL-x64.msi')
+          [IO.File]::WriteAllText((Join-Path $stage 'WIC120_MSI_SHA256.txt'),
+              (Get-FileHash -LiteralPath $new -Algorithm SHA256).Hash+[Environment]::NewLine,[Text.Encoding]::ASCII)
+          [IO.File]::WriteAllText((Join-Path $stage 'WIC120_DLL_SHA256.txt'),
+              (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash+[Environment]::NewLine,[Text.Encoding]::ASCII)
+          $fixture='wictest/samples/fixture-irot3-exif6-noaux.heic'
+          if((Get-Item -LiteralPath $fixture).Length -ne 10597 -or
+             (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash -cne
+             'D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95'){throw 'Invalid synthetic comparison HEIC'}
+          Copy-Item -LiteralPath $fixture -Destination (Join-Path $stage 'SYNTHETIC_REFERENCE_DO_NOT_EDIT.heic')
+          $msiObject=New-Object -ComObject WindowsInstaller.Installer
+          function Props([string]$path){
+            $database=$msiObject.OpenDatabase($path,0)
+            $out=@{}
+            foreach($name in @('ProductName','ProductVersion','ProductCode','UpgradeCode')){
+              $view=$database.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+              try{$null=$view.Execute();$result=$view.Fetch();$out[$name]=if($result){[string]$result.StringData(1)}else{''}}
+              finally{$view.Close()}
+            }
+            return $out
+          }
+          $a=Props (Join-Path $stage 'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi')
+          $b=Props (Join-Path $stage 'WicHeic-Repair-1.1.20-TRIAL-x64.msi')
+          if($a.ProductName -cne $b.ProductName -or $a.UpgradeCode -cne $b.UpgradeCode -or
+              $a.ProductVersion -cne '1.1.18' -or $b.ProductVersion -cne '1.1.20' -or
+              $a.ProductCode -ceq $b.ProductCode){
+            throw 'MSI major-upgrade identity mismatch'
+          }
+          if(@(Get-ChildItem -LiteralPath $stage -File).Count -ne 12){throw 'B trial staging incomplete'}
+          Write-Host 'PHOTOS_REAL_GUI_AB_B_MSI_AND_EXACT118_RESTORE_STAGED_PASS'
+      - name: Prove old118 researchB old118 restoration with kit scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $stage=Join-Path $env:RUNNER_TEMP 'Photos_RealGUI_B_Trial'
+          foreach($script in @('WIC120_OneTimeTrial.ps1','B_Field_Restore_Latest.ps1')){
+            $tok=$null;$errors=$null
+            [Management.Automation.Language.Parser]::ParseFile((Join-Path $stage $script),[ref]$tok,[ref]$errors)|Out-Null
+            if(@($errors).Count){throw ('PS5.1 trial script invalid: '+$script)}
+          }
+          $old=Join-Path $stage 'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi'
+          $proc=Start-Process -FilePath 'msiexec.exe' -ArgumentList ('/i "'+$old+'" /qn /norestart') -Wait -PassThru
+          if($proc.ExitCode -ne 0){throw 'Could not stage original 1.1.18 in disposable CI'}
+          $trial=Join-Path $stage 'WIC120_OneTimeTrial.ps1'
+          & $trial -CheckOnly
+          if(-not $?){throw 'Trial check-only gate failed'}
+          & $trial -Install
+          if(-not $?){throw 'B trial installation failed on isolated runner'}
+          if(@(Get-ChildItem -LiteralPath $stage -Filter 'WIC120_Session_*.json' -File).Count -ne 1){
+            throw 'B trial session file missing'
+          }
+          & (Join-Path $stage 'B_Field_Restore_Latest.ps1')
+          if(-not $?){throw 'B trial restoration failed on isolated runner'}
+          & $trial -CheckOnly
+          if(-not $?){throw 'Original 118 was not restored'}
+          Write-Host 'PHOTOS_REAL_GUI_AB_B_INSTALL_AND_ORIGINAL118_FULL_RESTORE_CI_PASS'
+      - name: Publish only vetted user-action files (never CI session logs)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $src=Join-Path $env:RUNNER_TEMP 'Photos_RealGUI_B_Trial'
+          $dest='dist/Photos_RealGUI_B_Release'
+          if(Test-Path -LiteralPath $dest){throw 'Refuse to overwrite B release directory'}
+          New-Item -ItemType Directory -Path $dest | Out-Null
+          $releaseFiles=@(
+            'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi',
+            'WicHeic-Repair-1.1.20-TRIAL-x64.msi',
+            'WIC120_MSI_SHA256.txt','WIC120_DLL_SHA256.txt',
+            'WIC120_OneTimeTrial.ps1','WIC_Preflight_ReadOnly.ps1',
+            'WIC_Preflight_Compare.ps1','B_Field_Install_Admin.cmd',
+            'B_Field_Restore_Admin.cmd','B_Field_Restore_Latest.ps1',
+            'README_まずお読みください.txt','SYNTHETIC_REFERENCE_DO_NOT_EDIT.heic'
+          )
+          foreach($name in $releaseFiles){
+            Copy-Item -LiteralPath (Join-Path $src $name) -Destination (Join-Path $dest $name) -ErrorAction Stop
+          }
+          if(@(Get-ChildItem -LiteralPath $dest -File).Count -ne 12){throw 'Missing B field release files'}
+          if(@(Get-ChildItem -LiteralPath $dest -Filter '*.json' -File).Count -ne 0){
+            throw 'CI private logs must not enter field kit'
+          }
+          Write-Host 'PHOTOS_B_AB_USER_INITIATED_DIAGNOSTIC_KIT_RELEASE_GATE_PASS'
+      - name: Upload opt-in B/old118 comparative diagnostic (not working Photos claim)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Photos_Win10_Research_B_Compare_and_118_Restore_v0_1
+          path: dist/Photos_RealGUI_B_Release/
+          if-no-files-found: error
+          retention-days: 14
