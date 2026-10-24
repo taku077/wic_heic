@@ -186,9 +186,9 @@ function MSIProperty([string]$name) {
  try {$null=$q.Execute(); $x=$q.Fetch();return $(if($x){[string]$x.StringData(1)}else{''})}
  finally {$q.Close()}
 }
-$msiName=[string](MSIProperty 'ProductName')
-$msiVersion=[string](MSIProperty 'ProductVersion')
-$msiCode=([string](MSIProperty 'ProductCode')).ToUpperInvariant()
+$msiName=([string](MSIProperty 'ProductName')).Trim()
+$msiVersion=([string](MSIProperty 'ProductVersion')).Trim()
+$msiCode=([string](MSIProperty 'ProductCode')).Trim().ToUpperInvariant()
 Write-Output ('RESTORE_MSI_READONLY_IDENTITY name='+$msiName+' version='+$msiVersion+' code='+$msiCode)
 if($msiName -cne 'WicHeic Repair Test' -or $msiVersion -cne '1.1.18' -or
    $msiCode -cne $oldCode){
