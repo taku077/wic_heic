@@ -16,7 +16,9 @@ if not exist "%CHECK%" (
  exit /b 2
 )
 echo Windows 10 Photos HEVC investigation (READ ONLY)
-echo Nothing will be installed, removed or changed.
+echo No codecs or settings will be intentionally installed, removed, or changed.
+echo The optional image-free WIC COM check may load registered codec DLLs.
+echo New report files will be saved in this diagnostic folder.
 echo Report: "%REPORT%"
 echo ---
 >"%REPORT%" echo Photos and HEVC read-only report
@@ -31,13 +33,16 @@ set "NATIVE_RC=%ERRORLEVEL%"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CHECK%" >>"%REPORT%" 2>&1
 set "SCRIPT_RC=%ERRORLEVEL%"
 >>"%REPORT%" echo Preflight return code: %SCRIPT_RC%
-if "%NATIVE_RC%"=="0" if "%SCRIPT_RC%"=="0" (
+set "RESULT=0"
+if not "%NATIVE_RC%"=="0" set "RESULT=1"
+if not "%SCRIPT_RC%"=="0" set "RESULT=1"
+if "%RESULT%"=="0" (
  echo Diagnostics finished. Please inspect the report before sharing.
 ) else (
- echo Read-only diagnostics partly failed. Inspect report for details.
+ echo One or more diagnostics failed. Inspect the report for details.
 )
 echo Report saved at: "%REPORT%"
 echo NOTE: the separate JSON created by the preflight contains local DLL paths.
 echo Check personal paths before sending diagnostic files to anyone.
 pause
-exit /b 0
+exit /b %RESULT%
