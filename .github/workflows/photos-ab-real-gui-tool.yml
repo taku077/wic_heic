@@ -1,4 +1,4 @@
-name: Photos Win10 GUI real A-B comparison tool v0.1
+name: Photos Win10 GUI real A-B comparison tool v0.2
 
 on:
   workflow_dispatch:
@@ -86,6 +86,41 @@ jobs:
                 if($body -match [regex]::Escape($bad)){throw 'Probe has forbidden mutation command: '+$bad}
             }
           }
+          # Regression: v0.1 left Photos_AB_A_Synthetic after an aborted run;
+          # v0.2 must keep it AND the old JSON intact, then succeed repeatedly.
+          $retry=Join-Path $env:RUNNER_TEMP 'PhotosABRetry'
+          $results=Join-Path $retry 'Photos_AB_Results'
+          New-Item -ItemType Directory -Path $results -Force | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $results 'Photos_AB_A_Synthetic') | Out-Null
+          Copy-Item -LiteralPath (Join-Path $folder 'Photos_AB_A.json') -Destination $results
+          Copy-Item -LiteralPath (Join-Path $folder 'Photos_AB_B.json') -Destination $results
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/Photos_AB_Capture.ps1' -Destination $retry
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/Photos_AB_Compare.ps1' -Destination $retry
+          Copy-Item -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic' -Destination $retry
+          Copy-Item -LiteralPath 'dist/tool_build/HevcMfReadOnlyProbe.exe' -Destination $retry
+          $capturer=Join-Path $retry 'Photos_AB_Capture.ps1'
+          & $capturer -Phase A -CiDryRun
+          & $capturer -Phase A -CiDryRun
+          if(@(Get-ChildItem -LiteralPath $results -Filter 'Photos_AB_A_*.json' -File).Count -ne 2){
+            throw 'Retry did not preserve two distinct A reports'
+          }
+          if(-not (Test-Path (Join-Path $results 'Photos_AB_A_Synthetic')) -or
+             -not (Test-Path (Join-Path $results 'Photos_AB_A.json'))){
+            throw 'Retry unexpectedly removed legacy session'
+          }
+          $latestReport=@(& (Join-Path $retry 'Photos_AB_Compare.ps1') -Root $retry)
+          if(-not ($latestReport -match 'Photos_AB_A_20') -or
+             -not ($latestReport -match 'Photos_AB_B.json')){
+            throw 'Comparator did not select latest A and legacy B'
+          }
+          $files=@(Get-ChildItem -LiteralPath $results -Filter 'Photos_AB_Comparison_*.txt' -File)
+          if($files.Count -ne 1){throw 'Timestamped compare result missing'}
+          & (Join-Path $retry 'Photos_AB_Compare.ps1') -Root $retry | Out-Null
+          if(@(Get-ChildItem -LiteralPath $results -Filter 'Photos_AB_Comparison_*.txt' -File).Count -ne 2){
+            throw 'Repeat compare overwrote the previous result'
+          }
+          Write-Host 'PHOTOS_GUI_AB_RETRY_AFTER_INCOMPLETE_SESSION_PASS'
+          Write-Host 'PHOTOS_GUI_AB_LATEST_REPORT_AND_LEGACY_PRESERVED_PASS'
           Write-Host 'WINDOWS10_PHOTOS_GUI_AB_POWERSHELL51_AND_OFFLINE_COMPARISON_PASS'
       - name: Package early diagnostic tool, sample image and detector
         shell: pwsh
@@ -108,7 +143,7 @@ jobs:
       - name: Publish one downloadable A/B comparison kit (NO MSI)
         uses: actions/upload-artifact@v4
         with:
-          name: Photos_GUI_Real_AB_Compare_v0_1_Win10
+          name: Photos_GUI_Real_AB_Compare_v0_2_Win10
           path: dist/Photos_AB_GUI_Win10_x64/
           if-no-files-found: error
           retention-days: 14
