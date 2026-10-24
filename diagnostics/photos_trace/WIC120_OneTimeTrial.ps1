@@ -7,11 +7,12 @@ param(
  [Parameter(ParameterSetName='Check')][switch]$CheckOnly,
  [Parameter(ParameterSetName='Install',Mandatory=$true)][switch]$Install,
  [Parameter(ParameterSetName='Restore',Mandatory=$true)][switch]$Restore,
- [Parameter(ParameterSetName='Restore',Mandatory=$true)][string]$Session
+ [Parameter(ParameterSetName='Restore',Mandatory=$true)][string]$Session,
+ [Parameter(ParameterSetName='Restore')][string]$KitRoot
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
-$root=(Get-Item -LiteralPath $PSScriptRoot -ErrorAction Stop).FullName
+$root=(Get-Item -LiteralPath $(if($PSCmdlet.ParameterSetName -eq 'Restore' -and $KitRoot){$KitRoot}else{$PSScriptRoot}) -ErrorAction Stop).FullName
 if($root -notmatch '^[A-Za-z]:\\'){throw 'Local NTFS drive path required'}
 function Assert-RealPath([string]$p){
  $node=Get-Item -LiteralPath $p -ErrorAction Stop
