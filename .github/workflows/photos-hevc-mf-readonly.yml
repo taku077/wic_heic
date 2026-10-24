@@ -86,6 +86,10 @@ jobs:
             throw 'WIC probe accepted an unknown source-selection argument'
           }
           Write-Host 'HEVC_WIC_UNKNOWN_ARGUMENT_REJECTED_PASS'
+          # GitHub pwsh wrapper exits with $LASTEXITCODE if it is nonzero.
+          # The prior invalid-argument check intentionally returned 2 and
+          # was already asserted above; clear that intentional negative-case native exit code.
+          $global:LASTEXITCODE=0
       - name: Verify portable one-click script and assemble read-only diagnostic ZIP
         shell: pwsh
         run: |
