@@ -154,7 +154,7 @@ $globals=@($before.Data.WicHeicMsi|Where-Object {
 if($globals.Count -ne 1){throw 'Unexpected WIC MSI count. No changes made.'}
 if($globals[0].Version -eq '1.1.18'){
  $null=CheckGlobal $before.Data '1.1.18' $oldDllHash
- Write-Host 'WIC_118_ALREADY_RESTORED_NO_CHANGES'
+ Write-Output 'WIC_118_ALREADY_RESTORED_NO_CHANGES'
  return
 }
 if($globals[0].Version -ne '1.1.20'){
@@ -168,9 +168,9 @@ if($registry.Count -ne 2 -or
 }
 $trialHash=[string]$registry[0].SHA256
 $product=CheckGlobal $before.Data '1.1.20' $trialHash
-Write-Host ('QUALIFIED_B_1.1.20_INSTALLED_HASH='+$trialHash)
+Write-Output ('QUALIFIED_B_1.1.20_INSTALLED_HASH='+$trialHash)
 if(-not $Restore) {
- Write-Host 'READ_ONLY_PRECHECK_PASS - To restore, run 01_Restore_Original118_Admin.cmd as administrator.'
+ Write-Output 'READ_ONLY_PRECHECK_PASS - To restore, run 01_Restore_Original118_Admin.cmd as administrator.'
  return
 }
 $principal=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
