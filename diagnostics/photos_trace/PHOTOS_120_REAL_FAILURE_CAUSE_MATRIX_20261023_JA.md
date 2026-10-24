@@ -913,3 +913,13 @@ Microsoft WICエンコーダー仕様: https://learn.microsoft.com/en-us/windows
 - 旧版`GetMetadataQueryWriter`はフレーム初期化前後とも`0x80004001`、研究版は初期化前`0x88982F04`、正常初期化後は`S_OK`。この正しいCOMライフサイクル差分を`wictest/WICDecoderCapabilityProbe.h`で記録、既存の旧版と同値であることを要求する旧CI条件のみ修正（`a2817a21...`）。旧版の動作を疑似的に真似るために`E_NOTIMPL`を返すわけではない。
 
 **未解決・製品判定**：実際に異なるExif値を**書き換える実装ではない**。元情報を確実に保持できないPhotosのラスター編集／回転保存は引き続き拒否。HEVC拡張警告・Photos GUIの編集回転・保存の正常化について**Windows10実機成功ゼロ**。安全なWICの部分修正であり、用户の3目標は未完了。検証していないMSIを実機に導入・提供しない。人工HEICだけを使い、ユーザー画像・既存のWIC登録・HEIC Managerには変更していない。
+
+## 2026-10-24：総当たりを中止しWindows10標準Photos GUI A/Bを直接測るv0.1を配布
+
+**ユーザー要望に合わせた方法の変更**：目的の警告解除・フォト編集/回転保存・メタ情報保持と無関係なWIC微修正を停止。歴史的1.1.18と研究版で実際のPhotos GUIと使用WICを比べる、最小限の実機診断パッケージを先行公開した。
+
+- ソース：`diagnostics/photos_trace/Photos_AB_Capture.ps1`、`Photos_AB_Compare.ps1`、`01_Capture_OLD_118.cmd`、`02_Capture_RESEARCH.cmd`、`03_Compare_AB.cmd`、`Photos_AB_GUI_README_JA.txt`。既存の`HevcMfReadOnlyProbe.exe`とSHA-256固定公開人工HEIC 10,597Bを同梱した。製品WIC DLLには変更なし、MSIは同梱しない。研究版の導入・削除・レジストリ操作はツールに実装しない。
+- 旧版A、研究版Bのそれぞれで、ユーザーが**人工作業コピーのみ**標準フォトで表示し、警告・編集/回転ボタン・保存・画面崩れを回答する。Photosプロセスの`wic_heic.dll` SHA-256、HEIF/HEVC/Photos AppX版、同一人工HEICでのWIC画素取得・エンコーダーHRESULTと作業コピーのハッシュを、写真パス/Exif内容をレポートへ出さず比較する。OSやAppXも変化していればWIC原因とは断定しない。結果は`Photos_AB_Results\Photos_AB_Comparison.txt`。
+- **CI #40101550960 SUCCESS**: Windows 2022 x64上で診断EXEビルド、Windows PowerShell 5.1のBOM付き日本語スクリプトの構文検証、偽A/B入力で実GUI結果/EXE段階差分レポート生成、HEIC固定ハッシュ、最終パッケージ8ファイル検査。公開GitHub Actions artifact `Photos_GUI_Real_AB_Compare_v0_1_Win10` をリリース。2026-10-24時点で実Windows10標準フォトのA/B操作結果はまだ収集していない。今回のCIを「Photos GUI修正成功」と誤認しない。
+- 明確な限界：WIC診断EXEは固定人工HEICを通じてOSのWIC経路を直接実行するが、**Photos自身の内部COM API呼出しを観測するものではない**。A/BでフォトUIが変わるのにWIC直接APIが等しい場合、次にPhotosプロセス内の実際の呼出し分岐だけを対象に計測する。UIが動かないのに一般WICテストを増やす作業へ戻らない。
+- Aは現在導入済みの旧1.1.18を保持したまま採取可能。Bは復旧方法を備えた研究版の明示的な実機検証許可が出るまで実行しない。**このv0.1は診断アプリの先行公開であり、不具合修正MSIのリリースではない。**
