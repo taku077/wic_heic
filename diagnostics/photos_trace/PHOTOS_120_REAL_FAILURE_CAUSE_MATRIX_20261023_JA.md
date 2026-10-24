@@ -636,3 +636,14 @@ Windows Server 2022の従来CIでは、旧v1.1.18と研究版それぞれの自�
 - 独自のコンテナーGUIDは両版に共通であり、旧1.1.18で編集ボタンが押せたのに研究版では無効という退行の単独原因にはならない。標準フォトが実際にどのGUIDでエンコーダーを探索するかは未確認。
 - 登録GUIDを強制的にMicrosoftへ差し替えると既存WICの登録衝突・互換性破壊が発生する可能性があるため、研究版DLLに変更を加えていない。レジストリ、ユーザーPC、ユーザー写真、HEIC Managerに変更なし。MSIの完成版配布は禁止を継続。
 - 画像の無再圧縮4回90度の全画素一致、ICC/EXIF、部分書込み拒否とv0.4.0独立性は最終CIで再合格。Windows 10 Photos編集・回転保存のGUIテストは0件で未達。次は純正／自作コーデックのWindows10実環境での選択経路と、Media Foundation/Store HEVC使用可否を一度の安全な診断で区別できるよう準備する。
+
+## 2026-10-24：Win10の純正HEIF COM活性化状態を画像なしで測る単発診断をCI完了
+
+**背景／対象**：旧v1.1.18と研究版のWindows Server 2022隔離CIではMicrosoft純正WIC HEIFが登録されていても COM生成で WINCODEC_ERR_COMPONENTINITIALIZEFAILURE 0x88982F8B となり、MF HEVC decoder/encoder=0だった。ただしユーザーWin10にはMicrosoft HEIF画像拡張が入っているので、その実機に本当に同じ初期化失敗があると断定してはならない。既存の `HevcMfReadOnlyProbe.exe` と `Run_Photos_HEVC_ReadOnly.cmd` を増強し、未解決P0の*実機固有の分岐条件*を取れるようにした。新MSIやユーザー写真は用意しない。
+
+- Nativeコード `diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp`（主修正 `88dfd798d40f324e169e7d595dd36d4e3e69e7a9`、SDK `windowscodecs.lib` リンク `7f99de67ce294e8faad769d487d2f0bc04d59d23`）。従来のMFTEnumEx 4種に加え、純正HEIF decoder／自作WIC HEIC decoder／自作HEIC encoderのWICコンポーネント登録とコンテナーGUIDを取得。引数なしはCOMコーデックインスタンスを作らない**受動照会**。明示引数 `--wic-activate-no-image` はWIC `CreateInstance` と公式HEIF GUID `CreateEncoder` の結果を追加採取する。ユーザー画像ファイル、Photosアプリ、レジストリ変更、MFT活性化、Storeライセンス操作はコード中に存在しない。
+- 起動用 `diagnostics/photos_trace/Run_Photos_HEVC_ReadOnly.cmd` は上記の引数付き1回の画像なしCOM診断と従来のWIC/AppX/Photos情報の読取専用PowerShellの両方を実行。片方が失敗した場合でも終了コード0と誤報していた問題を `67fd94b0f28e6f9a715b195e683dc2b5108bbf2c` で解消。レポート／JSONは従来どおり新規ファイルに保存、原本を変更せず、元写真を読まない。**ただし外部WIC COMインスタンスを生成するので、そのDLL内部の初期化・OSキャッシュの副作用まで保証するものではない**と説明した。
+- 独立CI `.github/workflows/photos-hevc-mf-readonly.yml` を作業ブランチでも自動実行するように変更（`63e58929ee8ee9fc1b7aafd2ca310aa121324c43`）。受動照会、明示COM活性化、未知の引数の拒否を検査する。最初の CI #40071187133 は検査上*意図的に返したエラーコード2*がpwshのシェル終了コードに残ったためFAILED。検査後にその意図的エラーコードをクリアした修正 `9308caaba83577fe773f3c61c6cb47b7a9634ed8` で回復。実行プログラム本体の不具合ではない。
+- [**最終CI #40071379364 全工程SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40071379364)、コードヘッド `a7dc49125760166a482453fc144f62752808f773`：`HEVC_WIC_PASSIVE_METADATA_CI_PASS`、`HEVC_WIC_ACTIVE_NO_IMAGE_CI_PASS`、`HEVC_WIC_UNKNOWN_ARGUMENT_REJECTED_PASS`、`HEVC_MF_INVENTORY_ISOLATED_WINDOWS_CI_PASS`、`HEVC_MF_SINGLE_READONLY_DIAG_BUNDLE_PASS` がすべてPASS。Microsoft HEIF登録情報から公式コンテナーGUIDを取得、純正HEIF CreateInstance は例のCI VMでは 0x88982F8B、HEVC MF decoder/encoderとも0件。独自のWICはこの診断ワークフローではMSIを導入しないため未登録（0x88982F50）；ユーザー実機でも未登録とは解釈しない。
+- 最終CIはダウンロード可能な診断用アーティファクト `Photos_HEVC_ReadOnly_Win10_x64`（artifact ID `12551053893`）を保存した。保持期限 **2026-11-07 UTC**。ワンクリックCMD、上記診断用EXE、既存PowerShell、更新済みREADMEの4点。**完成MSIではない**。
+- 次の実機判定で欲しい差は「Microsoft HEIFの登録があるがCOM生成が失敗するか／Windows10では生成成功するか」と「自作WICは存在しCOM生成できるか」。これを現行HEVC AppX/MFT状態と結びつけ、既にWICで画像を読めるのにPhotosで編集できないという不一致の原因追跡に使用する。Windows10 PhotosのGUI操作／回転保存成功はまだ0件。**実機未実施を明記し、完成進捗45％を安易に上げない**。
