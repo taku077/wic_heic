@@ -619,3 +619,20 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 **限定された結論**：両MSIは少なくともCIランナーにHEVC Media Foundation MFTを導入・登録しない。旧WICで標準フォトUIが有効化されたユーザー観測を「HEVC MFTの登録が増えたから」と解釈する根拠は見当たらない。WICの機能申告とICC APIは異なるが、**どれがPhotosのGUI状態を決めたかは未確定**であり、旧版の誤った`SameEncoder`／`Thumbnail`宣言をコピーしても正しい修正にならない。
 
 **P0継続**：CIのWindows Server 2022はWindows10 Photos 2026.11090.22001.0のGUIを起動せず、HEVCのStore AppXライセンス／MFT実活性化も検証していない。ユーザーPCでのHEVC AppXなし／MF 0件の実測は別の過去診断で確認済みだが、過去のA-B-Aの全時点に同じMFT状態だったことは証明されない。実機Photos編集ボタン・変形なし回転保存は未達。試験WIC MSIを再提供せず、ユーザー写真／HEIC Manager／グローバルWIC登録は変更していない。
+
+## 2026-10-24：Microsoft純正HEIFとのコーデック競合／コンテナーGUID不一致を検証
+
+### 調査の必要性
+Windows Server 2022の従来CIでは、旧v1.1.18と研究版それぞれの自作WICデコーダーを既定で選べることは確認済み。しかし、ユーザーのWindows10にはMicrosoft HEIF拡張が存在し、標準フォトがMicrosoftネイティブのHEIFデコーダーやエンコーダーへ直接到達する可能性を排除できない。WIC登録パターン、COM生成の可否、WICデコーダーの自動選択、エンコーダー形式GUIDを分けて検証。
+
+### 実行した検証と根拠
+1. COM WICの登録全デコーダーに公開人工HEICのパターン照合を実施（試験32f221e8ffdbc713a01a3c46236f7f2d091e6759、CIゲート87d1117f1a700f9d5d3f9045c985258a825073a3）。[CI #40069701380 全工程SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40069701380)。登録全15件のうち、**2件**が同一HEICパターンに一致：Microsoft純正 {E9A4A80A-44FE-4DE4-8971-7150B10A5199} と自作 {6215667C-74CA-4076-A769-3F834C3F25F5}。この候補数は実旧MSI・研究版のどちらを入れても同じ。WIC自動選択では両版とも自作デコーダーが選択された。
+2. Microsoft純正デコーダーを自動選択によらず COM IWICBitmapDecoderInfo::CreateInstance で直接呼び出し、成否を観測（試験3ed15a7c8e9459dcc2b1e9d3a42a03a9c72d23a4、CIゲート2f6640894a52e9ab82ab1b64168c39f635b5aa45）。[CI #40070030479 全工程SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40070030479)。**旧／研究版とも HRESULT 0x88982F8B：WINCODEC_ERR_COMPONENTINITIALIZEFAILURE**。公式エラー表：https://learn.microsoft.com/ja-jp/windows/win32/wic/-wic-codec-error-codes 。純正HEIFの登録は存在するが、このServer環境ではCOMインスタンス生成が失敗し、フレーム読込に到達しない。MFのHEVC MFT数は両版で0件。これは**Windows10実機での失敗を証明するものではない**。
+3. 純正HEIFと自作HEICのコンテナーGUIDを比較し、どちらの形式でWICエンコーダーを探すか別々に観測（試験4d38cea235e3533edcbbf2983bcc388fb6c3013a、CIゲート56fe6d603a5db1ff1c8cc23a51919b72c2a6a2fc）。[CI #40070235237 全工程SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40070235237)。公式GUIDは {E1E62521-6787-405B-A339-500715B5763F}、自作登録のGUIDは {98CE31DD-5435-41BD-A1AF-29C387C20135}。両版とも異なる値で、GetContainerFormatは自作GUIDを返す。公式GUIDを指定したエンコーダー検索・自作ベンダー指定検索・デコーダー検索はいずれも当該CI環境で 0x88982F8B（自作エンコーダーが標準GUIDにより選択されたとの証拠はない）。Microsoft公式ID資料：https://learn.microsoft.com/ja-jp/previous-versions/windows/desktop/legacy/mt846532(v=vs.85) 。
+4. WICのデコーダー調停は複数の登録パターン候補の間で QueryCapability を評価する。レジストリ ArbitrationPriority は旧・研究版とも0。公式情報：https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks ／ https://learn.microsoft.com/en-us/windows/win32/wic/-wic-generalregentries 。旧版の能力申告0x15（実在しないサムネイルと根拠のないSameEncoder）を研究版へ戻すとWIC仕様違反になるため変更しない。
+
+### 解釈と禁止事項
+- **Microsoft純正デコーダーの登録があるだけでは実際の利用能力を保証しない**ことをCIで再現できた。ただしServerのStore拡張・MF HEVC環境はユーザーWindows10と異なる。
+- 独自のコンテナーGUIDは両版に共通であり、旧1.1.18で編集ボタンが押せたのに研究版では無効という退行の単独原因にはならない。標準フォトが実際にどのGUIDでエンコーダーを探索するかは未確認。
+- 登録GUIDを強制的にMicrosoftへ差し替えると既存WICの登録衝突・互換性破壊が発生する可能性があるため、研究版DLLに変更を加えていない。レジストリ、ユーザーPC、ユーザー写真、HEIC Managerに変更なし。MSIの完成版配布は禁止を継続。
+- 画像の無再圧縮4回90度の全画素一致、ICC/EXIF、部分書込み拒否とv0.4.0独立性は最終CIで再合格。Windows 10 Photos編集・回転保存のGUIテストは0件で未達。次は純正／自作コーデックのWindows10実環境での選択経路と、Media Foundation/Store HEVC使用可否を一度の安全な診断で区別できるよう準備する。
