@@ -6,6 +6,8 @@ on:
       - 'diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp'
       - 'diagnostics/photos_trace/HevcMfReadOnlyProbe.vcxproj'
       - 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd'
+      - 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.ps1'
+      - 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.cmd'
       - '.github/workflows/photos-hevc-mf-readonly.yml'
   workflow_dispatch:
 permissions:
@@ -153,6 +155,8 @@ jobs:
           Copy-Item -LiteralPath 'diagnostics/photos_trace/WIC_Preflight_ReadOnly.ps1' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/HEVC_MF_READONLY_DIAG_JA.md' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd' -Destination $target
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.ps1' -Destination $target
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.cmd' -Destination $target
           Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'photos_codec_check/fixture-irot3-exif6-noaux.heic') -Destination $target
           $syntheticCmd=[IO.File]::ReadAllText((Resolve-Path 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd').Path)
           foreach($required in @('--synthetic-wic-test','fixture-irot3-exif6-noaux.heic','No personal images')) {
@@ -161,8 +165,61 @@ jobs:
           foreach($forbidden in @('msiexec','reg add','reg delete','Remove-AppxPackage','powershell.exe -Command')) {
             if($syntheticCmd -match [regex]::Escape($forbidden)){throw ('Unsafe synthetic runner command: '+$forbidden)}
           }
-          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 6){throw 'Read-only and optional public synthetic test bundle incomplete'}
+          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 8){throw 'Full-batch test bundle incomplete'}
           Write-Host 'HEVC_MF_SINGLE_READONLY_DIAG_BUNDLE_PASS'
+      - name: Execute ONE batch and verify a sanitized single ZIP on an isolated Windows runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $source=Join-Path $env:RUNNER_TEMP 'Photos_HEVC_ReadOnly_Win10_x64'
+          $smoke=Join-Path $env:RUNNER_TEMP 'OneBatchSmoke'
+          if(Test-Path -LiteralPath $smoke){throw 'Refuse existing smoke destination'}
+          New-Item -ItemType Directory -Path $smoke | Out-Null
+          Get-ChildItem -LiteralPath $source -File | Copy-Item -Destination $smoke
+          $cmd=[IO.File]::ReadAllText((Join-Path $smoke 'Run_Photos_Batch_ReadOnly.cmd'))
+          $ps=[IO.File]::ReadAllText((Join-Path $smoke 'Run_Photos_Batch_ReadOnly.ps1'))
+          foreach($needed in @('Run_Photos_Batch_ReadOnly.ps1','-NoProfile','-ExecutionPolicy Bypass')) {
+            if(-not $cmd.Contains($needed)){throw ('Batch one-click launcher missing '+$needed)}
+          }
+          foreach($needed in @('--wic-activate-no-image','--synthetic-wic-test',
+                  'WIC_Preflight_ReadOnly.ps1','SHA256','WIC_Batch_Sanitized_Report.txt',
+                  'CreateFromDirectory','BATCH_COLLECTION_STATUS=')) {
+            if(-not $ps.Contains($needed)){throw ('Batch orchestrator missing '+$needed)}
+          }
+          foreach($forbidden in @('msiexec','Remove-AppxPackage','reg add','reg delete',
+                  'del /','Remove-Item','Set-ItemProperty','Set-Content')) {
+            if($ps -match [regex]::Escape($forbidden) -or $cmd -match [regex]::Escape($forbidden)){
+              throw ('Unsafe one-click batch command: '+$forbidden)
+            }
+          }
+          $out=@(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $smoke 'Run_Photos_Batch_ReadOnly.ps1') 2>&1)
+          $exitCode=$LASTEXITCODE
+          $out | ForEach-Object { Write-Host $_ }
+          if($exitCode -ne 0){throw ('Single batch PowerShell5.1 run failed '+$exitCode)}
+          $zips=@(Get-ChildItem -LiteralPath $smoke -Filter 'WIC_Batch_*.zip' -File)
+          if($zips.Count -ne 1){throw 'Batch must produce exactly one shareable ZIP'}
+          Add-Type -AssemblyName System.IO.Compression
+          $archive=[IO.Compression.ZipFile]::OpenRead($zips[0].FullName)
+          try {
+            $entries=@($archive.Entries)
+            if($entries.Count -ne 1 -or $entries[0].FullName -cne 'WIC_Batch_Sanitized_Report.txt') {
+              throw 'Shareable ZIP must contain only one sanitized report, no system paths'
+            }
+            $reader=New-Object IO.StreamReader($entries[0].Open())
+            try { $report=$reader.ReadToEnd() } finally { $reader.Dispose() }
+            foreach($key in @('BATCH_COLLECTION_STATUS=COMPLETE','[WIC_AND_MFT_INVENTORY]',
+                              '[SYNTHETIC_WIC_EXPLICIT_AND_AUTO]','HEVC_SYNTHETIC_AUTO stage=create_decoder',
+                              'HEVC_SYNTHETIC_GIT_BLOB_VERIFIED_PASS bytes=10597',
+                              'NativeMicrosoftCopyPixels=','CustomWicCopyPixels=',
+                              'AutoSelectedWicDecoder=','Photos editor, HEVC license')) {
+              if(-not $report.Contains($key)){throw ('Batch report missing '+$key)}
+            }
+            foreach($forbidden in @('C:\Users\','C:\Program Files','\AppData\','ProductKey','InprocServer32')) {
+              if($report.Contains($forbidden)){throw ('Batch leaked a raw device path/key '+$forbidden)}
+            }
+          } finally {$archive.Dispose()}
+          Write-Host 'WIC_PHOTOS_SINGLE_BATCH_POWERSHELL51_EXECUTION_PASS'
+          Write-Host 'WIC_PHOTOS_SINGLE_ZIP_PRIVACY_AND_COMPLETENESS_PASS'
       - name: Save optional single diagnostic ZIP for later approved real-machine checks
         uses: actions/upload-artifact@v4
         with:
