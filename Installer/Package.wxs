@@ -1,5 +1,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 	<Package Id="prsyahmi.WicHeic" Name="WicHeic Repair Test" Manufacturer="Community Repair Test (Unofficial)" Version="1.1.20">
+		<!-- Never request the Restart Manager to shut down Explorer or Photos when the MSI is launched directly. -->
+		<Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
 		<MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="!(loc.DowngradeError)" />
 		<Media Id="1" Cabinet="WicHeic.cab" EmbedCab="yes"></Media>
 
