@@ -193,44 +193,57 @@ inline void VerifyPartialLosslessStreamWriteRollback(IWICImagingFactory* fac) {
     puts("WIC_ENCODER_FAILED_COMMIT_RETRY_LOSSLESS_BLOCKED_PASS");
     puts("WIC_LOSSLESS_PARTIAL_WRITE_ROLLBACK_PASS");
 }
-// An IStream that can accept writes but REFUSES SetSize cannot recover from
-// a short success or I/O failure. An initially empty stream is not sufficient
-// to guarantee that a failed HEIC save leaves no corrupt prefix. Use only
-// checked-in public synthetic HEIC and an in-memory fake IStream.
-inline void VerifyNonTruncatableOutputRejectedBeforeBytes(IWICImagingFactory* fac) {
+// Valid Windows WIC streams may implement Seek, Stat and Write while
+// declining SetSize. A full write is still legal. Do not accidentally break
+// existing HEIC saves by requiring a no-op SetSize(0) preflight. Incomplete
+// writes already return STG_E_WRITEFAULT; without SetSize rollback, the
+// caller must dispose of the failed new output rather than publish it.
+inline void VerifyNoSetSizeStreamCanStillSaveCompleteHEIC(IWICImagingFactory* fac) {
     CComPtr<IWICBitmapDecoder> decoder;
     Check(fac->CreateDecoderFromFilename(
         L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
-        WICDecodeMetadataCacheOnDemand,&decoder),"nontruncatable synthetic source");
+        WICDecodeMetadataCacheOnDemand,&decoder),"no-SetSize synthetic input");
     CComPtr<IWICBitmapFrameDecode> source;
-    Check(decoder->GetFrame(0,&source),"nontruncatable source primary");
+    Check(decoder->GetFrame(0,&source),"no-SetSize synthetic frame");
     CComPtr<IStream> underlying;
     Check(CreateStreamOnHGlobal(nullptr,TRUE,&underlying),
-          "nontruncatable HEIC memory target");
-    CComPtr<IStream> cannotRollback;
-    cannotRollback.Attach(new(std::nothrow)
-        ShortWriteStream(underlying,false,false));
-    if(!cannotRollback)throw std::bad_alloc();
+          "no-SetSize memory stream");
+    CComPtr<IStream> noResize;
+    noResize.Attach(new(std::nothrow) ShortWriteStream(underlying,false,false));
+    if(!noResize)throw std::bad_alloc();
     CComPtr<IWICBitmapEncoder> encoder;
     Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
-          &GUID_VendorPrsyahmi,&encoder),"nontruncatable custom encoder");
-    Check(encoder->Initialize(cannotRollback,WICBitmapEncoderNoCache),
-          "nontruncatable encoder init");
+          &GUID_VendorPrsyahmi,&encoder),"no-SetSize encoder");
+    Check(encoder->Initialize(noResize,WICBitmapEncoderNoCache),
+          "no-SetSize encoder initialize");
     CComPtr<IWICBitmapFrameEncode> frame;
-    Check(encoder->CreateNewFrame(&frame,nullptr),"nontruncatable frame create");
-    Check(frame->Initialize(nullptr),"nontruncatable frame init");
+    Check(encoder->CreateNewFrame(&frame,nullptr),
+          "no-SetSize frame create");
+    Check(frame->Initialize(nullptr),"no-SetSize frame initialize");
     Check(frame->WriteSource(source,nullptr),
-          "nontruncatable lossless source snapshot");
-    Check(frame->Commit(),"nontruncatable frame commit");
-    const HRESULT status=encoder->Commit();
-    printf("WIC_LOSSLESS_NONTRUNCATABLE_OUTPUT_COMMIT=0x%08X\n",unsigned(status));
-    if(status!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
-        throw std::runtime_error("Accepted output stream cannot rollback failed HEIC save");
-    STATSTG stat{};
-    Check(underlying->Stat(&stat,STATFLAG_NONAME),"nontruncatable remaining bytes");
-    if(stat.cbSize.QuadPart!=0)
-        throw std::runtime_error("Nontruncatable target was written before refusal");
-    puts("WIC_HEIC_NONTRUNCATABLE_OUTPUT_REFUSED_WITH_ZERO_BYTES_PASS");
+          "no-SetSize lossless HEIC source");
+    Check(frame->Commit(),"no-SetSize frame commit");
+    Check(encoder->Commit(),
+          "no-SetSize full HEIC output must remain supported");
+    std::ifstream input("samples\\fixture-irot3-exif6-noaux.heic",
+                        std::ios::binary);
+    if(!input)throw std::runtime_error("no-SetSize fixture absent");
+    std::vector<BYTE> expected(std::istreambuf_iterator<char>{input},
+                                std::istreambuf_iterator<char>{});
+    STATSTG st{};
+    Check(underlying->Stat(&st,STATFLAG_NONAME),"no-SetSize output length");
+    if(st.cbSize.QuadPart!=expected.size())
+        throw std::runtime_error("no-SetSize stream produced incomplete HEIC");
+    LARGE_INTEGER beginning{};
+    Check(underlying->Seek(beginning,STREAM_SEEK_SET,nullptr),
+          "no-SetSize rewind");
+    std::vector<BYTE> actual(expected.size());
+    ULONG got=0;
+    Check(underlying->Read(actual.data(),ULONG(actual.size()),&got),
+          "no-SetSize memory readback");
+    if(got!=actual.size()||actual!=expected)
+        throw std::runtime_error("no-SetSize output lost synthetic EXIF/ICC bytes");
+    puts("WIC_HEIC_NO_SETSIZE_COMPLETE_OUTPUT_EXACT_BYTES_PASS");
 }
 // Inject the same partial output fault while the HEVC encoder is producing
 // a NEW, explicitly generated RGB image (as opposed to copying original HEIF).
@@ -516,7 +529,7 @@ inline void Run() {
     printf("ENCODER_NONEMPTY_STREAM_AND_THUMBNAIL_FAIL_CLOSED_PASSED\n");
     VerifyRgbaEncoderCapability(fac);
     VerifyPartialLosslessStreamWriteRollback(fac);
-    VerifyNonTruncatableOutputRejectedBeforeBytes(fac);
+    VerifyNoSetSizeStreamCanStillSaveCompleteHEIC(fac);
     VerifyPartialRasterStreamWriteRollback(fac);
 }
 } // namespace EncoderGuardProbe
