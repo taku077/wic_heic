@@ -817,3 +817,12 @@ Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder�
 - [**最終CI #40083397893 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40083397893)：`WIC_HEIC_10BIT_STANDARD_CLIP_ROTATE_0/1/2/3_MATERIALIZE_PASS`、`WIC_HEIC_10BIT_STANDARD_CLIP_ROTATE_MATERIALIZE_PASS`、既存の無再圧縮HEIC90/180/270度・Exif一致・旧研究WIC比較・Media Foundation非干渉もすべてPASS。
 
 **成果の解釈**：既存のHEIC閲覧・ラスター化回転機能を保持したまま、新しい10bit標準WIC経路の回帰保護を追加できた。**直接回転IFの実装自体は未採用**であり、研究版の標準Photos GUI編集・保存・HEVC警告の修正達成は**未確認**。主観的な52％をこの回帰テストだけで引き上げない。無根拠なMSI配布を行わず、実機での個別テストも依頼しない。
+
+## 2026-10-24：再圧縮HEICの部分書き込みもトランザクション復旧を検証
+
+GitHub現行ブランチで過去のNative SourceTransform対応実験はWindows標準WIC bitmap materialization／10bit角度変換と非互換が出たため巻戻し済み。Photos GUIの編集ボタン問題は未解決。今回はユーザーの写真やWindows10実機ではなく、CIの人工RGB→HEICエンコードの故障注入試験のみを拡充。
+
+- `wictest/EncoderGuardProbe.h` の `VerifyPartialRasterStreamWriteRollback` にトランザクション型の人工 `IStream` を追加。通常の `SetSize` 成功の場合と、`SetSize` を拒否するが `Revert` は有効な場合を**同一の人工RGB生成・短い書き込み注入**条件で評価する。後者でも `Encoder.Commit` は失敗、保存先の長さは0に回復、二度目の `Commit` は `WINCODEC_ERR_WRONGSTATE`、不完全なHEICコンテナを成功扱いしない。
+- 修正コミット `3a0b9a0dc9c53761796dce77772cca766adbe358`。製品DLLは今回変更せず、前回実装済みの `IStream::Revert` fallbackの再圧縮保存経路が動くことをCIで確認。
+- [**GitHub Windows総合CI #40086467361 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40086467361)。`WIC_RASTER_PARTIAL_WRITE_TRANSACTION_REVERT_PASS`、`WIC_RASTER_PARTIAL_WRITE_ROLLBACK_PASS`、`WIC_HEIC_PARTIAL_WRITE_TRANSACTION_REVERT_FALLBACK_PASS`、旧版／研究版WICのHEVC MFT非干渉確認を含む。使用データは合成RGBと既存公開HEICのみ。
+- **進捗率は暫定52％のまま**。再圧縮時の失敗復旧が検証されたが、標準フォトのHEVC拡張警告解消、編集・回転ボタン、GUIからの保存を実機で直した証拠ではない。実機テストの小出し要求、新MSI提供、ユーザー写真利用はしない。
