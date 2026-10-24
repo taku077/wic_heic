@@ -233,6 +233,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 		}
 
 		for (auto it = m_Frames.begin(); it != m_Frames.end(); ++it) {
+			// A Photos raster edit can explicitly supply an ICC profile.
+			// Carry it into the encoded HEIF rather than acknowledging and
+			// discarding the color information as older builds did.
+			if (!(*it)->m_RasterICC.empty()) {
+				(*it)->m_Frame.set_raw_color_profile(
+					heif_color_profile_type_prof,(*it)->m_RasterICC);
+			}
 			m_Context.encode_image((*it)->m_Frame, encoder);
 		}
 
