@@ -1,7 +1,11 @@
 ﻿# Windows 10 Photos real-GUI A/B comparator, phase A=original 1.1.18, B=research.
 # Built-in PowerShell 5.1, normal user. No MSI, registry writes, or personal images.
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][ValidateSet('A','B')][string]$Phase)
+param([Parameter(Mandatory=$true)][ValidateSet('A','B')][string]$Phase,
+      [switch]$CiDryRun)
+if($CiDryRun -and $env:GITHUB_ACTIONS -cne 'true') {
+  throw 'Simulation may only run in GitHub Actions CI'
+}
 $ErrorActionPreference='Stop'
 $root=(Get-Item -LiteralPath $PSScriptRoot -ErrorAction Stop).FullName
 $rootNode=Get-Item -LiteralPath $root
@@ -27,11 +31,12 @@ if(-not (Test-Path -LiteralPath $sessionRoot)){
 if((Get-Item -LiteralPath $sessionRoot).Attributes -band [IO.FileAttributes]::ReparsePoint){
   throw 'Results directory cannot be a junction'
 }
-$reportFile=Join-Path $sessionRoot ('Photos_AB_'+$Phase+'.json')
-$workDir=Join-Path $sessionRoot ('Photos_AB_'+$Phase+'_Synthetic')
-if(Test-Path -LiteralPath $reportFile){throw "Phase $Phase already recorded. No overwrite; use a fresh kit for another comparison."}
-if(Test-Path -LiteralPath $workDir){throw 'Existing synthetic session found; no overwrite'}
-$null=New-Item -ItemType Directory -Path $workDir
+# Every attempt has an isolated run ID. Even an aborted older v0.1 session
+# remains intact: NEVER delete old folders or overwrite any report.
+$runId=(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+[guid]::NewGuid().ToString('N').Substring(0,8)
+$reportFile=Join-Path $sessionRoot ('Photos_AB_'+$Phase+'_'+$runId+'.json')
+$workDir=Join-Path $sessionRoot ('Photos_AB_'+$Phase+'_Synthetic_'+$runId)
+$null=New-Item -ItemType Directory -Path $workDir -ErrorAction Stop
 $work=Join-Path $workDir 'synthetic-working.heic'
 $reference=Join-Path $workDir 'synthetic-original-READONLY.heic'
 foreach($dest in @($work,$reference)){
@@ -47,31 +52,54 @@ foreach($dest in @($work,$reference)){
 }
 [IO.File]::SetAttributes($reference,[IO.FileAttributes]::ReadOnly)
 Write-Host ''
-Write-Host ('=== Windows Photos A/B | phase '+$Phase+' ===') -ForegroundColor Cyan
-if($Phase -eq 'A'){Write-Host 'A: historical WIC 1.1.18 should be installed'}
-else{Write-Host 'B: RESEARCH WIC should be installed (changed separately with approved rollback)'}
-Write-Host 'The tool will NOT install or remove anything.'
-Write-Host 'Open only this artificial working copy in Microsoft Photos:'
-Write-Host ('  '+$work) -ForegroundColor Yellow
-Write-Host 'Do not open or rotate any of your own photographs.'
-$null=Read-Host 'When Photos shows THIS synthetic HEIC, press Enter'
-
+Write-Host '------------------------------' -ForegroundColor Cyan
+Write-Host ('フォトの実機比較 : '+ $(if($Phase -eq 'A'){'旧1.1.18'}else{'研究版'})) -ForegroundColor Cyan
+Write-Host '------------------------------'
+Write-Host '【手順 1】開いたフォルダにある「synthetic-working.heic」を'
+Write-Host '右クリック →「プログラムから開く」→「フォト」で表示してください。'
+Write-Host '本物の写真は一切操作しないでください。'
+Write-Host ('人工HEICの場所: '+$work)
+if(-not $CiDryRun) {
+  try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('/select,"'+$work+'"') -ErrorAction Stop }
+  catch { Write-Host 'エクスプローラーを開けませんでした。上記の場所を開いてください。' }
+}
 function Choice([string]$message,[string[]]$valid) {
-  for($i=0;$i -lt 4;$i++){
+  while($true) {
     $value=(Read-Host $message).Trim().ToLowerInvariant()
     if($valid -contains $value){return $value}
-    Write-Host ('Enter one of: '+($valid -join ', ')) -ForegroundColor Yellow
+    Write-Host ('入力できる値: '+($valid -join ' / ')) -ForegroundColor Yellow
   }
-  throw 'Unable to record an unambiguous result'
 }
-Write-Host 'Please answer from actual Photos UI; no screenshots or image data are collected.'
-$warning=Choice 'HEVC warning visible? (y=yes,n=no,?=unknown)' @('y','n','?')
-$editing=Choice 'Edit button usable? (y=yes,n=no,?=unknown)' @('y','n','?')
-$rotation=Choice 'Rotate button usable? (y=yes,n=no,?=unknown)' @('y','n','?')
-Write-Host 'If rotation is available, use it ONLY on the working synthetic copy.'
-$null=Read-Host 'After optional rotate / save attempt, press Enter'
-$save=Choice 'Rotate/save result? (s=success,f=failure,x=not attempted,?=unknown)' @('s','f','x','?')
-$distorted=Choice 'Visible geometry/angle distortion? (y=yes,n=no,?=unknown)' @('y','n','?')
+$warning='?';$editing='?';$rotation='?';$save='x';$distorted='?'
+if($CiDryRun) {
+  $warning='n';$editing='y';$rotation='y'
+}else{
+  $null=Read-Host '【手順 2】フォトで人工HEICを表示したら Enter を押す'
+  Write-Host '【手順 3】実際の表示を選んで数字を入力してください。'
+  Write-Host '  1 = HEVC警告なし・編集と回転ボタンが使える'
+  Write-Host '  2 = HEVC警告あり・編集と回転ボタンが使えない'
+  Write-Host '  3 = それ以外・判断できない'
+  $mode=Choice '状態（1 / 2 / 3）' @('1','2','3')
+  switch($mode){
+    '1' {$warning='n';$editing='y';$rotation='y'}
+    '2' {$warning='y';$editing='n';$rotation='n'}
+    default {
+      $warning=Choice 'HEVC警告はありますか？（y=ある / n=ない / ?=不明）' @('y','n','?')
+      $editing=Choice '編集ボタンは使えますか？（y / n / ?）' @('y','n','?')
+      $rotation=Choice '回転ボタンは使えますか？（y / n / ?）' @('y','n','?')
+    }
+  }
+  Write-Host '【手順 4】回転保存の確認は任意です。今は実施しなくても構いません。'
+  Write-Host '試す場合は表示中の人工作業コピーだけを操作してください。'
+  Write-Host '  0 = 回転保存は試さない　1 = 保存成功　2 = 保存失敗'
+  $status=Choice '保存結果（0 / 1 / 2）' @('0','1','2')
+  if($status -eq '1'){$save='s'}
+  if($status -eq '2'){$save='f'}
+  if($status -ne '0') {
+    $distorted=Choice '画像が伸びる・角度が崩れる等の異常はありますか？（y / n / ?）' @('y','n','?')
+  }
+  Write-Host '結果を自動的に保存します。以前の記録や作業フォルダは残します。'
+}
 
 # Work-copy hash is recorded AFTER the manual Photos action.
 $referenceOk=(Get-FileHash -LiteralPath $reference -Algorithm SHA256).Hash -ceq $expected
@@ -148,6 +176,6 @@ $json=$report|ConvertTo-Json -Depth 9
 $bytes=[Text.Encoding]::UTF8.GetBytes($json)
 $out=[IO.File]::Open($reportFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
 try {$out.Write($bytes,0,$bytes.Length)}finally{$out.Dispose()}
-Write-Host ('Phase '+$Phase+' saved; original synthetic verified. No MSI/registry modifications.') -ForegroundColor Green
+Write-Host ('完了：'+$Phase+' を新規保存しました。前の結果は消していません。') -ForegroundColor Green
 Write-Host ('Report: '+$reportFile)
-if($Phase -eq 'B'){Write-Host 'Now run 03_Compare.cmd for the A/B cause-difference report.'}
+if($Phase -eq 'B'){Write-Host '旧版Aの結果があれば、03_Compare_AB.cmd で比較できます。'}
