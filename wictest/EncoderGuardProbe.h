@@ -9,6 +9,87 @@ namespace EncoderGuardProbe {
 inline void Check(HRESULT hr,const char* step) {
     if (FAILED(hr)) { printf("GUARD ERROR %s: 0x%08X\n",step,(unsigned)hr); throw std::runtime_error(step); }
 }
+// A caller-owned IPropertyBag2 may return overall S_OK while one standard
+// option has a per-property access failure. Silently treating that failure as
+// Rotate0 can discard the caller's requested orientation during HEIC save.
+// Only an in-memory COM bag and an empty in-memory output are used.
+class FailingWicOptionReadBag final : public IPropertyBag2 {
+    std::atomic<ULONG> m_Refs{1};
+    CComPtr<IPropertyBag2> m_Inner;
+public:
+    explicit FailingWicOptionReadBag(IPropertyBag2* inner):m_Inner(inner) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** out) override {
+        if(!out)return E_POINTER;
+        *out=nullptr;
+        if(!IsEqualIID(iid,IID_IUnknown) && !IsEqualIID(iid,IID_IPropertyBag2))
+            return E_NOINTERFACE;
+        *out=static_cast<IPropertyBag2*>(this);
+        AddRef();
+        return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override {return ++m_Refs;}
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG remaining=--m_Refs;
+        if(!remaining)delete this;
+        return remaining;
+    }
+    HRESULT STDMETHODCALLTYPE Read(ULONG count,PROPBAG2* properties,
+        IErrorLog* errors,VARIANT* values,HRESULT* statuses) override {
+        const HRESULT hr=m_Inner->Read(count,properties,errors,values,statuses);
+        if(SUCCEEDED(hr) && count && statuses)
+            statuses[0]=E_ACCESSDENIED; // error only on BitmapTransform
+        return hr;
+    }
+    HRESULT STDMETHODCALLTYPE Write(ULONG count,PROPBAG2* properties,
+        VARIANT* values) override {
+        return m_Inner->Write(count,properties,values);
+    }
+    HRESULT STDMETHODCALLTYPE CountProperties(ULONG* count) override {
+        return m_Inner->CountProperties(count);
+    }
+    HRESULT STDMETHODCALLTYPE GetPropertyInfo(ULONG first,ULONG count,
+        PROPBAG2* properties,ULONG* returned) override {
+        return m_Inner->GetPropertyInfo(first,count,properties,returned);
+    }
+    HRESULT STDMETHODCALLTYPE LoadObject(LPCOLESTR name,DWORD hint,
+        IUnknown* unknown,IErrorLog* errors) override {
+        return m_Inner->LoadObject(name,hint,unknown,errors);
+    }
+};
+inline void VerifyPerOptionReadFailureCannotSilentlyLoseRotation(
+    IWICImagingFactory* fac) {
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"property-error HEIC encoder");
+    CComPtr<IStream> output;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&output),"property-error empty stream");
+    Check(encoder->Initialize(output,WICBitmapEncoderNoCache),
+        "property-error encoder initialize");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    CComPtr<IPropertyBag2> options;
+    Check(encoder->CreateNewFrame(&frame,&options),
+        "property-error new frame");
+    if(!options)throw std::runtime_error("WIC property options unavailable");
+    PROPBAG2 option{};option.pstrName=const_cast<LPOLESTR>(L"BitmapTransform");
+    VARIANT value{};value.vt=VT_UI1;value.bVal=1; // CW90, never silently Rotate0
+    Check(options->Write(1,&option,&value),"property-error set 90 degree");
+    CComPtr<IPropertyBag2> broken;
+    broken.Attach(new(std::nothrow) FailingWicOptionReadBag(options));
+    if(!broken)throw std::bad_alloc();
+    const HRESULT init=frame->Initialize(broken);
+    printf("WIC_FRAME_PARTIAL_OPTIONS_READ_FAILED_HRESULT=0x%08X\\n",
+        (unsigned)init);
+    if(init!=E_ACCESSDENIED)
+        throw std::runtime_error("Failed WIC BitmapTransform read silently used Rotate0");
+    // A failed options read cannot irrevocably initialize or publish output.
+    Check(frame->Initialize(options),"property-error valid retry preserves CW90");
+    STATSTG st{};
+    Check(output->Stat(&st,STATFLAG_NONAME),"property-error output stat");
+    if(st.cbSize.QuadPart!=0)
+        throw std::runtime_error("Failed frame option read wrote output bytes");
+    puts("WIC_FRAME_PROPERTY_READ_ERROR_CANNOT_SILENTLY_DROP_ROTATION_PASS");
+}
+
 // Synthetic-only proof of whether 32bppRGBA is *actually encodable*.
 // The decoder supports RGBA, but the encoder registry must not advertise
 // a format until a real encode + WIC readback retains its alpha channel.
@@ -407,6 +488,7 @@ inline void Run() {
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
         IID_IWICImagingFactory,(void**)&fac),"CoCreate WIC");
 
+    VerifyPerOptionReadFailureCannotSilentlyLoseRotation(fac);
     VerifyRejectedWriteSourceDoesNotLeakAutosetters(fac);
     const UINT W=192,H=320;
     std::vector<BYTE> pixels(size_t(W)*H*3);
