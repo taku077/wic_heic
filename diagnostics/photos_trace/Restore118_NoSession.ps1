@@ -188,7 +188,7 @@ function MSIProperty([string]$name) {
 }
 if((MSIProperty 'ProductName') -cne 'WicHeic Repair Test' -or
    (MSIProperty 'ProductVersion') -cne '1.1.18' -or
-   (MSIProperty 'ProductCode').ToUpperInvariant() -cne $oldCode){
+   ([string](MSIProperty 'ProductCode')).ToUpperInvariant() -cne $oldCode){
  throw 'Original MSI identity mismatch; no changes'
 }
 $db=$null;$engine=$null
