@@ -5,11 +5,23 @@ param([string]$Root=$PSScriptRoot,[switch]$NoWrite)
 $ErrorActionPreference='Stop'
 $root=(Get-Item -LiteralPath $Root -ErrorAction Stop).FullName
 $folder=Join-Path $root 'Photos_AB_Results'
-$oldFile=Join-Path $folder 'Photos_AB_A.json'
-$newFile=Join-Path $folder 'Photos_AB_B.json'
-foreach($f in @($oldFile,$newFile)){
-  if(-not (Test-Path -LiteralPath $f -PathType Leaf)){throw ('Missing A/B capture: '+[IO.Path]::GetFileName($f))}
-  if((Get-Item -LiteralPath $f).Length -gt 65536){throw 'Unexpectedly large diagnostic report'}
+# Select the most recent successful capture for each phase. Support
+# legacy v0.1 Photos_AB_A.json / B.json without altering them.
+function LatestPhase([string]$phase) {
+  $items=@(Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match ('^Photos_AB_'+$phase+'(?:_[0-9]{8}_[0-9]{6}_[0-9]{3}_[0-9a-fA-F]{8})?\\.json$') } |
+    Sort-Object LastWriteTimeUtc,Name -Descending)
+  if(-not $items.Count) {
+    throw ('No phase '+$phase+' report yet. Run 01 for OLD or 02 for RESEARCH first.')
+  }
+  return $items[0].FullName
+}
+$oldFile=LatestPhase 'A'
+$newFile=LatestPhase 'B'
+foreach($file in @($oldFile,$newFile)) {
+  if((Get-Item -LiteralPath $file).Length -gt 65536) {
+    throw 'Unexpectedly large diagnostic report'
+  }
 }
 $a=Get-Content -LiteralPath $oldFile -Raw -Encoding UTF8|ConvertFrom-Json
 $b=Get-Content -LiteralPath $newFile -Raw -Encoding UTF8|ConvertFrom-Json
@@ -38,6 +50,8 @@ function ProbeSummary($record) {
 }
 $results=New-Object 'System.Collections.Generic.List[string]'
 $results.Add('Windows 10 標準フォト / HEIC A-B 実機比較')
+$results.Add(('採用した最新版: A={0}, B={1}' -f [IO.Path]::GetFileName($oldFile),
+  [IO.Path]::GetFileName($newFile)))
 $results.Add('A=旧1.1.18 / B=研究版（手動の申告。導入状態はDLLハッシュで別途照合）')
 $results.Add('----------------------------------------------')
 $rows=@(
@@ -119,10 +133,11 @@ $results.Add('注意：実写真・ファイルパス・EXIF値・原画像は�
 $lines=$results.ToArray()
 $lines|ForEach-Object {Write-Output $_}
 if(-not $NoWrite){
-  $output=Join-Path $folder 'Photos_AB_Comparison.txt'
-  if(Test-Path -LiteralPath $output){throw 'Comparison already exists; refuse overwriting'}
+  # Keep ALL previous comparisons. The result name is unique per run.
+  $stamp=(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+[guid]::NewGuid().ToString('N').Substring(0,8)
+  $output=Join-Path $folder ('Photos_AB_Comparison_'+$stamp+'.txt')
   $bytes=[Text.Encoding]::UTF8.GetBytes(($lines -join [Environment]::NewLine)+[Environment]::NewLine)
   $file=[IO.File]::Open($output,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
   try{$file.Write($bytes,0,$bytes.Length)}finally{$file.Dispose()}
-  Write-Host 'Comparison saved in Photos_AB_Results\Photos_AB_Comparison.txt'
+  Write-Host ('比較結果を保存しました: '+$output)
 }
