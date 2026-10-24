@@ -589,3 +589,33 @@ https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbit
 **解釈**：テスト対象となった2種の8bit HEICについて、RGBの全バイト一致が成立。10bitのRGB差を、そのまま通常8bitの写真に一般化できない。Photosの編集ボタン無効・HEVC拡張警告が「8bitでのRGB画素の相違」だけに起因するという説は弱まった。ただし、これは *Windows Server 2022 WICによる人工ファイル2件の結果* で、Windows10 PhotosのGUI内経路、8bit HEIC全般の復号精度、特有のICC/EXIFの採用、Media Foundation HEVC判定までは測らない。旧1.1.18がGUIで編集有効でも、回転画像破損・保存不良の不具合版であることを変更しない。
 
 **次の調査対象**：bit-depth非依存のWIC `QueryCapability`／利用できるメタデータ／エンコーダー選択の差、および標準PhotosのWindows10実GUI固有の編集可否判定。既存診断のプロセス・SHA照合と旧v1.1.18の再インストールを反復しない。元画像・HEIC Manager・Windows10環境は無変更。新MSI配布保留。
+
+## 2026-10-24：Media Foundation HEVC登録への影響なし／8bit WIC編集事前条件のA/B確定
+
+**目的**：旧WIC v1.1.18で標準フォトの編集・回転ボタンが押せた一方、研究版WICではHEVC拡張警告が出て無効になった理由を、画素一致後も残るWIC能力申告とMedia Foundation MFT可視性の差に分離する。Windows10実GUIを動かせない隔離CIの制約を守り、過去のMF読取専用ツール `diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp/.vcxproj` を再利用し、列挙ツールを重複開発しない。
+
+**コード／CI**：
+- `wictest/WICDecoderCapabilityProbe.h` へ、先のA/BでRGB24全バイト一致済みの人工8bit HEIC 2種類（512×512の通常RGB／64×64のsRGB ICC付き）の `QueryCapability`、デコーダー／フレームのサムネイル取得、ICC個数・HRESULTを追加（`5572b2cf1606d7e61c3daced957d190628a2c076`）。元ストリームの読み込み位置が書き換わらないことも検査。既存の人工ファイルだけを読取り、保存や原本変更はしない。
+- `.github/workflows/photos-wic-postfail-arbitration-ci.yml` に、Media Foundation **未導入／実際の1.1.18 MSI導入／研究版MSI導入** の同一Windows Server 2022上の `MFTEnumEx` 観測を追加。同じABIと同じ読取専用プログラムを使い、HEVC decoder/encoder・field-of-use込decoder・対照H264 decoderの登録数を比較する。Windows環境への変更は使い捨てCIランナーのWIC MSI導入／削除のみ。アプリ起動、HEVC MFTの活性化、ライセンス操作なし。
+- CI設定の最初の編集で、PowerShell正規表現 `$'` がJavaScript文字列置換の特殊シーケンスと衝突しワークフローが重複。これは製品DLLの不具合ではない。直後に**元の検証済みCIファイルから再構築し、単一ジョブ・単一P0リリース停止ゲートを検証**（`2429abf646b9b7ddeeb5fd51a21c2f38e6bd35b7`）。
+- [**CI #40069180176 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40069180176)。WICの通常回帰テスト全合格、4回90°無再圧縮RGB 6,220,800バイト一致、部分書込み失敗回復、ICC/EXIF、独立v0.4.0インストール分離も維持。`WIC_PHOTOS_8BIT_CAPABILITY_THUMBNAIL_ICC_OBSERVATION_PASS`、`WIC_PHOTOS_HEVC_MFT_INVENTORY_UNCHANGED_ACROSS_BOTH_WIC_MSIS_PASS` 合格。
+
+**Media Foundationの実測**（Windows Server 2022の使い捨てCI VM、同一ランナー・同一ユーザー文脈）：
+
+| MFT登録 | WICなし | 旧v1.1.18導入 | 研究版導入 |
+|---|---:|---:|---:|
+| HEVC decoder（通常MFT） | 0 | 0 | 0 |
+| HEVC decoder（field-of-useも列挙） | 0 | 0 | 0 |
+| HEVC encoder（通常MFT） | 0 | 0 | 0 |
+| H264 decoder（対照） | 1 | 1 | 1 |
+
+**人工8bit HEIC 2種類のWIC機能申告実測**（旧／研究版）：
+- `QueryCapability`：ICCなし・ICCありの両方で **`0x15`／`0x0C`**。旧MSIは実際に存在しないサムネイル機能を広告する。両版のデコーダー／フレーム `GetThumbnail` は `WINCODEC_ERR_CODECNOTHUMBNAIL=0x88982F44`。
+- ICCなし：旧版のコンテナー／フレームの `GetColorContexts(0,nullptr,...)` はともに `WINCODEC_ERR_UNSUPPORTEDOPERATION=0x88982F81`、研究版はともに `S_OK`／0個。
+- ICCあり：旧版は同じ `WINCODEC_ERR_UNSUPPORTEDOPERATION`／0個。研究版はコンテナー／フレームとも `S_OK`／1個。前ターンでCI合格した全RGB画素一致と両立している。
+- Microsoft仕様：`WICBitmapDecoderCapabilitySameEncoder` は**同一ベンダーのエンコーダーで生成されたことを認識できる場合だけ**申告。画像に存在しないサムネイルを申告することも不正。https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder
+- MicrosoftのWindows10フォトは静止画だけでもHEIFとHEVCの両拡張を要求する場合がある。https://support.microsoft.com/ja-jp/windows/apps/photos/photos-app-video-editor-error-can-t-view-this-file-type
+
+**限定された結論**：両MSIは少なくともCIランナーにHEVC Media Foundation MFTを導入・登録しない。旧WICで標準フォトUIが有効化されたユーザー観測を「HEVC MFTの登録が増えたから」と解釈する根拠は見当たらない。WICの機能申告とICC APIは異なるが、**どれがPhotosのGUI状態を決めたかは未確定**であり、旧版の誤った`SameEncoder`／`Thumbnail`宣言をコピーしても正しい修正にならない。
+
+**P0継続**：CIのWindows Server 2022はWindows10 Photos 2026.11090.22001.0のGUIを起動せず、HEVCのStore AppXライセンス／MFT実活性化も検証していない。ユーザーPCでのHEVC AppXなし／MF 0件の実測は別の過去診断で確認済みだが、過去のA-B-Aの全時点に同じMFT状態だったことは証明されない。実機Photos編集ボタン・変形なし回転保存は未達。試験WIC MSIを再提供せず、ユーザー写真／HEIC Manager／グローバルWIC登録は変更していない。
