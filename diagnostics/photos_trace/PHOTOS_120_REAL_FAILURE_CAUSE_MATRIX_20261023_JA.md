@@ -784,3 +784,17 @@ Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder�
 7. 修正後の製品CI [**#40078985290 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40078985290)：`WIC_WRITE_SOURCE_AUTOSETTER_REJECT_HRESULT=0x88982F81` に続いて `WIC_REJECTED_WRITE_SOURCE_DID_NOT_POISON_RETRY_AND_EXACT_HEIC_BYTES_PASS` を実証。既存 `NATIVE_LOSSLESS_HEIF_MATCHES_PYTHON_AND_ROTATION_TEST_PASSED`、旧研究WIC比較、HEVC MFT非干渉もPASS。旧マスク0x15／研究版0x0Cは維持（不正フラグ復活なし）。
 
 **境界**：これは「出自不明な入力を拒否した後に同じフレームで正常保存を再試行できる」**製品の保存エンジンの不具合修正**。Photos 2026.11090.22001.0の独自HEVC拡張警告／編集・回転ボタン／GUIからのHEIC保存を実機で直したわけではない。ユーザーへ新しいMSIや細切れの実機テストは提供・要求しない。旧1.1.18を正常扱いもしない。
+
+## 2026-10-24：部分HEIC書込みの復旧経路を拡張・SetSize非対応ストリームとの互換性を維持
+
+**実ユーザー写真を使わずWindows GitHub隔離CIのみで検証。Photos UI未検証。** HEIC出力 `IStream` の一部は `SetSize` を実装せず、既存エンコーダーはHEICデータの一部だけを書いた後に `IStream::Write` が短い成功／失敗を返した場合、復旧用の `SetSize(0)` が拒否され、不完全な出力が残り得る（元写真が破損した実測ではない）。
+
+1. **不採用案と戻し**：最初に `Commit` 前の `SetSize(0)` を全出力先へ必須とする案を検証した。赤テスト [CI #40079649535 FAILED](https://github.com/taku077/wic_heic/actions/runs/40079649535) に対してこの制限を製品コードへ実装（`bb3b81a8c07c7e2c40b2cdef37b4fc169358d134`）したところ、実際に合法なWindows WICの12MP人工HEIC生成まで `0x88982F81` で失敗した [CI #40079796882 FAILED](https://github.com/taku077/wic_heic/actions/runs/40079796882)。**新たな保存障害を生むため、即座にこの制約を戻した**（`59e1aaafe9be722b82abf1503095747b3804969b`）。`SetSize` 非対応でも全バイトを正常に書ける出力先を拒否しない。
+2. `wictest/EncoderGuardProbe.h` に、`SetSize` 非対応・全Write成功の人工 `IStream` でも、元合成HEICのExif等を含むバイト列が**すべて等しい**という互換性試験を追加（`d100cf9cfe96d4b9fee5ec8c9ae6bd9b9a084e88`）。[CI #40079984332 SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40079984332)：`WIC_HEIC_NO_SETSIZE_COMPLETE_OUTPUT_EXACT_BYTES_PASS` と既存の正常・失敗保存保護がPASS。
+3. **実際に追加した安全策**：`SetSize(0)` での部分書込みロールバックが失敗したとき、`IStream::Revert()` がサポートされる**トランザクション型ストリームに限って**、最後のコミット前の状態へ復旧を試みる。元画像に触らず、人工の短い成功Writeを発生させ、`SetSize` を拒否するが `Revert` は動作する人工トランザクションストリームで赤テスト [CI #40080244318 FAILED](https://github.com/taku077/wic_heic/actions/runs/40080244318) を先に再現。修正 `wic_heic/HeicBitmapEncoder.cpp` `28c25e578c508b578a2c028eb23607d04c5dd2dd` で、HEIC生バイトのlossless出力とlibheifのrasterエンコード出力の**両方**の部分失敗時に `Revert()` を追加。[CI #40080397751 SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40080397751) で `WIC_HEIC_PARTIAL_WRITE_TRANSACTION_REVERT_FALLBACK_PASS` と通常ストリームの回帰テストPASS。
+4. **誤った復旧成功表示を防止**：Microsoft `IStream::Revert` 公式仕様では、トランザクションを使わない**直接モードではS_OKを返しても何も変更しない**場合がある。従って単なる `SUCCEEDED(Revert)` を復旧成功と扱わず、呼出し後の `Stat` で出力長が0と再確認できた場合だけ `stream-revert-restored` を診断出力に記録する補強 `f37905c1041e506dd221bebab2401486fb8f7a96` を追加。戻せなければ `stream-rollback-unavailable` のまま。失敗した保存のHRESULTを成功に置き換えない。公式：https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-istream-revert
+5. **最終総合CI [#40080568410 SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40080568410)**。製品WICのWindowsビルド、完全合成HEICの正確な復号・無再圧縮保存・回転、部分Write拒否、トランザクション復旧、SetSize無し正常出力、旧v1.1.18と研究版の回帰比較、MSIとプライベートサムネイルの独立性を検証。
+
+**保証の限界**：非トランザクション型かつ `SetSize` 不可の出力先で書込みが途中失敗した場合、WICコーデック内部からその外部ファイルの全消去や原子的上書き防止を保証することはできない。エンコーダーは失敗を返し、復旧できたと偽装しない。呼出元アプリが元画像を事前に上書き／切詰める場合もこのWIC DLLだけでは保護できないため、実機の標準Photos試験は**人工HEICと独立コピーのみ**という不変条件を維持。
+
+**進捗評価**：今回は保存処理の事故復旧の一部が拡張された製品コード修正であり、標準Photosの編集ボタン有効化・HEVC拡張警告の解消・回転保存成功の直接検証ではない。暫定52％は維持し、新規MSIや細切れの実機検査を依頼しない。
