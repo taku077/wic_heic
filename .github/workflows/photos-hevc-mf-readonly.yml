@@ -8,6 +8,7 @@ on:
       - 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd'
       - 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.ps1'
       - 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.cmd'
+      - 'diagnostics/photos_trace/WIC_PHOTOS_ONE_BATCH_POLICY_20261024_JA.md'
       - '.github/workflows/photos-hevc-mf-readonly.yml'
   workflow_dispatch:
 permissions:
@@ -157,6 +158,7 @@ jobs:
           Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.ps1' -Destination $target
           Copy-Item -LiteralPath 'diagnostics/photos_trace/Run_Photos_Batch_ReadOnly.cmd' -Destination $target
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/WIC_PHOTOS_ONE_BATCH_POLICY_20261024_JA.md' -Destination $target
           Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'photos_codec_check/fixture-irot3-exif6-noaux.heic') -Destination $target
           $syntheticCmd=[IO.File]::ReadAllText((Resolve-Path 'diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd').Path)
           foreach($required in @('--synthetic-wic-test','fixture-irot3-exif6-noaux.heic','No personal images')) {
@@ -165,7 +167,7 @@ jobs:
           foreach($forbidden in @('msiexec','reg add','reg delete','Remove-AppxPackage','powershell.exe -Command')) {
             if($syntheticCmd -match [regex]::Escape($forbidden)){throw ('Unsafe synthetic runner command: '+$forbidden)}
           }
-          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 8){throw 'Full-batch test bundle incomplete'}
+          if(@(Get-ChildItem -LiteralPath $target -File).Count -ne 9){throw 'Full-batch test bundle and user instructions incomplete'}
           Write-Host 'HEVC_MF_SINGLE_READONLY_DIAG_BUNDLE_PASS'
       - name: Execute ONE batch and verify a sanitized single ZIP on an isolated Windows runner
         shell: pwsh
