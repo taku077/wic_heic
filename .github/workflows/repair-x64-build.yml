@@ -443,10 +443,10 @@ jobs:
             throw "Candidate has unexpected product identity: $productName $version"
           }
           if([string]::IsNullOrWhiteSpace([string]$code)) {
-            throw 'Candidate MSI has empty ProductCode; cannot safely identify or remove this release'
+            throw 'Candidate MSI ProductCode blank, cannot identify release safely'
           }
-          if($code -notmatch '^\\{[0-9A-Fa-f-]{36}\\}
-            throw 'Candidate reuses original 1.1.18 ProductCode, not a distinct upgrade'
+          if($code.ToUpperInvariant() -eq '{A9F264DD-92D3-419B-8CA0-A88B00FA42F3}') {
+            throw 'Candidate reused original 1.1.18 ProductCode'
           }
           Write-Host "MSI_RELEASE_IDENTITY_PASS version=$version productCode=$code"
           $db=$null;$installer=$null
