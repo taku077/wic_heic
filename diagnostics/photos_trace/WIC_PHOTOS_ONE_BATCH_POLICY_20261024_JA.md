@@ -32,3 +32,15 @@
 - 読み取り専用診断：`HEVC_MF_READONLY_DIAG_JA.md`。
 - Windows10実機で純正HEIFは `CopyPixels=0xC00D5212`、旧v1.1.18の自作WICは同一合成HEICのROI `CopyPixels=S_OK`。しかし標準Photosの自動デコーダー選択と独自HEVC拡張判定は未特定。
 - 今回の一括収集キットは実際の編集・保存動作を改善する**MSIではない**。新しい実機試験の依頼は、実際に修正された候補ができてからまとめて行う。
+
+## 2026-10-24 追記：純正HEIF／自作HEICのメモリ内保存比較
+
+Windows10標準フォトのHEVC拡張警告・編集ボタン無効化の原因調査について、既存の一括診断に**WICエンコーダー実動作比較**を追加した。これはMSI提供でもPhotos GUI試験でもなく、ユーザーに直ちに再試験を求めるものでもない。
+
+- `HevcMfReadOnlyProbe.exe --synthetic-wic-test` は、SHA-1（Git blob）とSHA-256で固定した10,597バイトの公開人工HEICについて、自動選択されたWICフレームをMicrosoft純正HEIFエンコーダーと自作HEICエンコーダーにそれぞれ与える。出力は `CreateStreamOnHGlobal` による**メモリ内の空IStreamのみ**で、ディスクにHEICを保存しない。
+- `CreateEncoder`／`CreateNewFrame`／`Frame.Initialize`／`GetMetadataQueryWriter`／`WriteSource`／両`Commit`のHRESULTを独立に表示し、実際に完了した場合はメモリ出力と元コンテナーを全バイト照合する。元データや出力画素をログに出さず、保存先は32MiBまでに制限。結果はWICの無編集コピー経路の実証であり、Photosが使用する保存経路、回転後の寸法、Exif/ICC/HDR/メーカー固有情報の全保持やHEVCライセンスを証明しない。
+- 既存の `Run_Photos_Batch_ReadOnly.ps1` にも上記のHRESULTと全バイト一致フラグをサニタイズして同一ZIPのテキスト1件へ収録する。ZIPに画像・実写真・ユーザー名・製品キー・絶対DLLパスを入れない。バッチの起動回数は増やさない。
+- [**隔離Windows診断CI #40093401870 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40093401870)：x64ビルド、固定公開HEICのハッシュ認証と改ざん拒否、PowerShell 5.1での一括ZIP1個・匿名レポート作成、必要な新項目を含むことを検証。ただしこのWindows Server 2022には自作WICがインストールされておらず、自動HEIFデコーダー作成が `0x88982F8B` で失敗したため、**純正／自作の実保存比較値はまだ採取していない**。
+- この診断を既存の旧1.1.18／研究版MSI連続試験に組み込む試みはワークフロー定義エラーとなったため採用せず、**既存の成功済み統合CI定義を完全一致で復元**した。旧版／研究版の実保存A/B成功を主張しない。
+
+**現時点の運用**：旧1.1.18を維持し、ユーザーへ新しいMSIや個別診断を依頼しない。以後も一回の実機セッションを必要な証拠と機能改善がまとまるまで保留する。
