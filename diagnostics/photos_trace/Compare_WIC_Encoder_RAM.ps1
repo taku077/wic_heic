@@ -29,7 +29,7 @@ if($code -ne 0 -or
    -not ($log -match '^HEVC_SYNTHETIC_WIC_COMPARISON_COMPLETE')){
   throw ('Synthetic HEIC WIC A/B incomplete, label='+$Label+' exit='+$code)
 }
-$full=$log -join [Environment]::NewLine
+$full=$log -join ([string][char]10) # normalize to LF for anchored .NET regex
 # Stage-only diagnostics: no paths, filenames, EXIF, image bytes or user data.
 foreach($entry in $log){
   if([string]$entry -match '^HEVC_SYNTHETIC_(WIC|AUTO|ENCODER) ' -and
