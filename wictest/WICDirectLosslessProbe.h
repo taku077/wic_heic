@@ -145,6 +145,42 @@ inline void RejectRasterOnlyRotation(IWICImagingFactory* factory) {
         throw std::runtime_error("WIC raster wrapper was incorrectly treated as lossless source");
 }
 
+// REAL old-1.1.18 based regression: without any optional compression flags,
+// unchanged decoder-frame WriteSource must never re-encode or lose Exif/10-bit.
+inline void UnmodifiedOriginalExact(IWICImagingFactory* factory) {
+    const wchar_t* src=L"samples\\fixture-irot3-exif6-noaux.heic";
+    const wchar_t* dst=L"samples\\fixture-118-unchanged-byteexact.heic";
+    const auto original=Read(src);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(src,&GUID_VendorPrsyahmi,
+        GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),
+        "historical custom WIC decoder");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"get original full HEIC frame");
+    UINT w=0,h=0;
+    Check(source->GetSize(&w,&h),"exact source dimensions");
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+        &GUID_VendorPrsyahmi,&encoder),"original WIC encoder");
+    CComPtr<IWICStream> stream;
+    Check(factory->CreateStream(&stream),"new output stream");
+    Check(stream->InitializeFromFilename(dst,GENERIC_WRITE),"open isolated CI output");
+    Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),"init unchanged HEIC encoder");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"default frame, no options");
+    Check(frame->Initialize(nullptr),"init default frame");
+    Check(frame->SetSize(w,h),"keep original HEIC dimensions");
+    Check(frame->WriteSource(source,nullptr),"WriteSource on original WIC frame");
+    Check(frame->Commit(),"commit exact raw-frame transfer");
+    Check(encoder->Commit(),"commit exact HEIF bytes");
+    frame.Release();encoder.Release();stream.Release();
+    const auto actual=Read(dst);
+    if(actual!=original)
+       throw std::runtime_error("Historical WIC auto save unexpectedly recompressed or lost metadata");
+    printf("WIC118_DEFAULT_UNCHANGED_HEIF_BYTE_IDENTICAL_EXIF_10BIT_PASS bytes=%zu\n",
+         actual.size());
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -159,6 +195,7 @@ inline void Run() {
         L"samples\\fixture-lossless-cw270.heic");
     if(Read(L"samples\\fixture-irot3-exif6-noaux.heic")!=original)
         throw std::runtime_error("Original synthetic HEIC was modified");
+    UnmodifiedOriginalExact(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
