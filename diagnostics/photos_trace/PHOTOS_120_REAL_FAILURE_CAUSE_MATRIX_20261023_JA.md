@@ -837,3 +837,16 @@ GitHub現行ブランチで過去のNative SourceTransform対応実験はWindows
 4. [**最終Windows総合CI #40090686956 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40090686956)：`WIC_EXPLICIT_HEVC_VERIFIED_SOURCE_CONTAINER_BYTE_EXACT_PASS`、`WIC_RAW_HEIC_EXPLICIT_HEVC_GEOMETRY_AND_CROP_FAIL_CLOSED_PASS`、既存90/180/270度回転と元メタ情報の保持、部分書込み時のRevert、プライベートサムネイル共存、旧1.1.18との比較、Media Foundation HEVC MFT非干渉を含む総合CIを確認。ユーザーのPC・写真・レジストリ・HEIC Managerには一切変更なし。
 
 **依然未証明**：Windows10 Photos 2026.11090.22001.0 が実際にこの保存APIオプションを選択するか、HEVC拡張警告が消えるか、編集・回転ボタンが有効になるか、Photos GUIからの安全な回転保存は未検証。Photos GUIと同等の最終合格ではない。実機テストの小出し・MSI提示を行わず、**進捗率は暫定52％のまま**とする。
+
+## 2026-10-24：WIC 全範囲 WICRect の安全なロスレス保存（赤→緑、Photos P0 GUIは未合格）
+
+**根拠**：Microsoft公式 `IWICBitmapFrameEncode::WriteSource` は省略可能な `WICRect* prc` でソース領域を指定できる。特に `SetSize` 未指定時は渡された矩形の寸法を使用する。元画素の全領域を `{0,0,幅,高さ}` と明示した場合、実画素編集は行っていないため、`prc==nullptr` の場合と同じ無再圧縮保存を可能にすべき。一方、部分領域・座標ずれ・元画素の不明なラッパーは圧縮データとメタデータを正しく保全できないため危険な成功を防ぐ。
+
+- [**赤テストコミット `31e822c45f8778cb5bbe3f03c4d9aecfab1e4a38`**](https://github.com/taku077/wic_heic/commit/31e822c45f8778cb5bbe3f03c4d9aecfab1e4a38) を `wictest/WICDirectLosslessProbe.h` に追加。公開人工 `fixture-irot3-exif6-noaux.heic` に対して、`WICRect{0,0,1080,1920}` を指定し、(1) 明示HEVCの完全コンテナーコピーと (2) 無再圧縮90度回転をメモリストリームのみで実施し、既存の基準コンテナーと全バイト一致を要求。
+- [**赤CI #40091296410（意図どおりFAIL）**](https://github.com/taku077/wic_heic/actions/runs/40091296410)：最初の全範囲コピーで `WIC_LOSSLESS_COM_FAILURE full ROI lossless WriteSource 0x88982F81`。元HEICの内容を変更していないのに `prc` 非NULLを理由に無再圧縮経路から排除していたことを再現。
+- [**製品修正コミット `eaab1287e32dcc31125d57daa19a5a2f21cc2035`**](https://github.com/taku077/wic_heic/commit/eaab1287e32dcc31125d57daa19a5a2f21cc2035)：`HeicBitmapFrameEncode.cpp::WriteSource` で入力元 `IWICBitmapSource::GetSize` を取得し、矩形が原点(0,0)から元画像の幅・高さ**完全一致**の場合のみ `sourceRectangleIsWholeImage=true` と判定。従来の `prc==nullptr` およびこの真正な全範囲矩形だけにロスレスコピー／回転処理を許可。変形済みWICラッパー、未検証出自、部分クロップ、出力寸法変更、明示ICC変更の拒否は解除しない。
+- [**緑CI #40091487604 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40091487604)。実ログ `WIC_FULL_FRAME_ROI_LOSSLESS_COPY_CONTAINER_BYTE_EXACT_PASS`、`WIC_FULL_FRAME_ROI_LOSSLESS_ROTATE90_CONTAINER_BYTE_EXACT_PASS`。従来 `WIC_EXPLICIT_HEVC_VERIFIED_SOURCE_CONTAINER_BYTE_EXACT_PASS`、`WIC_RAW_HEIC_EXPLICIT_HEVC_GEOMETRY_AND_CROP_FAIL_CLOSED_PASS`、90/180/270度回転、10bit標準WICクリップ・回転・画像化、再圧縮部分書込みのトランザクション復旧、旧1.1.18の比較、HEVC MFT非干渉、独立サムネイル共存も総合テスト合格。
+
+**限界と次のP0**：この試験はWindows Server 2022のWIC APIと人工HEICであり、Windows10 Photos 2026.11090.22001.0 が現実に `WriteSource` へ全範囲 `WICRect` を渡すかは**未観測**。HEVC拡張警告・編集ボタン無効・Photos GUI保存成功は依然として未達。Microsoft公式はWindows10 PhotosのHEIF画像でHEVC拡張を要求する場合があると説明しているため、WIC DLLのみで確実に解決可能とはしない。用户写真・HEIC Manager・既存WIC登録・Windows10実機には変更なし。新MSI配布・細切れ実機テストはしない。**暫定進捗52％維持**。
+
+WIC仕様: https://learn.microsoft.com/ja-jp/windows/win32/api/wincodec/nf-wincodec-iwicbitmapframeencode-writesource
