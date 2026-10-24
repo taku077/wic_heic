@@ -878,3 +878,17 @@ Microsoft WICエンコーダー仕様: https://learn.microsoft.com/en-us/windows
 - 既存の旧版／研究版MSIインストールA/B統合CIに接続しようとしたが、ワークフロー定義が不正になったため中止。試行 `6a272975221ddbaf7145ec2c9356ee87bdcb88cc` と `b2bc064471422b9e1ac2ae5075f9bb43ed78f76e` はActionsのジョブを開始できず**不採用**。成功済みワークフローのblob `44e477970fa02bf67281f5b11993925ebe4769d6` をコミット `ebdba5e5976ddf790e55fac13b3b06b25f8f9a47` で全バイト一致復旧。これらの失敗をWIC本体・Photos UIの失敗やA/B実測と誤認しない。
 
 **判定**：標準Photos警告解除、編集／回転ボタンの復活、標準Photosからの変形・メタデータ損失なし保存は依然として未達。ユーザー実機の既存旧v1.1.18を正常版扱いせず、新MSI配布／個別診断も行わない。暫定進捗 **52％維持**。今回の開発成果は安全な一括診断の計測能力拡張のみ。
+
+## 2026-10-24：旧1.1.18対研究版の人工HEICメモリ保存A/B実証
+
+**WIC同一公開人工HEICのWindows Server 2022 CI実測（Windows10 Photos GUIではない）**
+
+旧1.1.18が画像を編集・回転できるUIを復活させた一方、実保存時に画像変形・エラーを起こす不具合版だったことに留意。これまで自動WIC候補/QueryCapability/CopyPixelsはA/B済みであったが、元フレームからの`WriteSource`→`Frame.Commit`→`Encoder.Commit`→コンテナー全バイト一致という**同条件実保存**の旧／研究版比較は実施できていなかった。今回、既存の独立CIに短い呼出し1行だけ足し、CI専用 `diagnostics/photos_trace/Compare_WIC_Encoder_RAM.ps1` で検証する方式へ整理。固定公開人工HEIC 10,597B、SHA-256 `D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95` に限定し、HEIC出力は`CreateStreamOnHGlobal`を通じた**メモリのみ**。別の画像、原本、ユーザーPC、HEIC Managerやレジストリの変更は行わない。
+
+- [**最終統合CI #40095659394 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40095659394)。旧MSIはソース基準`a18b9ab146ca4d6f7b46a86507d7f0d0d882dc87`／既存のSHA-256照合済みActions MSIを使用し、研究版MSIを同じ使い捨てランナーで入れ替え。Media Foundation HEVC MFT数は導入前後で不変、既存90/180/270度回転・RGB/ICC・全画素・Explorerプレビューv0.4.0共存・アンインストール復旧も通過。
+- **両版とも固定人工HEICの自動デコーダーは自作WIC**（`custom=1,microsoft=0`）。純正HEIFデコーダー生成は当該Server CIではいずれも`0x88982F8B`で失敗。これをWindows10へ外挿しない。
+- **CLSID指定の自作WICフレーム→自作WICエンコーダー、メモリ内無編集保存**：旧1.1.18は`CreateEncoder=S_OK`、`Frame.Initialize=S_OK`、`WriteSource=0x88982F04`（`WINCODEC_ERR_WRONGSTATE`）、`Commit`未到達。研究版は`WriteSource=S_OK`、両`Commit=S_OK`、読戻しサイズ **10,597B**、元コンテナーと**全バイト一致**、`Exact=1`。
+- Windows Server 2022の純正HEIFエンコーダーは両版とも`CreateEncoder=0x88982F8B`、以降未到達。**ユーザーWindows10実機では過去診断で純正HEIFエンコーダーのCOM生成S_OK**なのでServer側の失敗を実機の可否として扱わない。
+- 途中の赤CIには`#40094848720`（自動選択に関する過剰な前提）、`#40095203041`（比較元デコーダーの区別とエラー）、`#40095453124`（PowerShell CRLFと行末アンカー不一致による結果抽出ミス）がある。製品WICの保存結果を誤解しないため、デコーダーの自動調停とCLSID固定の保存元を分離、診断HRESULT段階を匿名化して表示し、最後に行末をLF正規化することで全合格。誤ったCI定義を本流へ残さない。
+
+**ここから言えること**：研究版の無編集・メタデータ保持型HEIC保存経路は旧版より明確に改善した。少なくともこの公開人工HEICでは、研究版が`WriteSource`不能だからPhotosの編集ボタンが無効化された、という単純な説明は支持されない。**しかしPhotos自身がこのAPI経路を使った事実はなく、警告解除・編集ボタン有効化・人工HEICのGUI回転保存の3つは依然未合格。** MF HEVC／純正HEIFのアプリ依存も残る。元写真・MSI・WIC登録・HEIC Managerに手を加えていない。進捗は**暫定52％維持**。次のP0は標準Photos固有のHEVC条件と編集保存APIの実経路の隔離であり、MSIを小出しにしない。
