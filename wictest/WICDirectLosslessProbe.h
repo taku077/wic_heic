@@ -147,9 +147,11 @@ inline void RejectRasterOnlyRotation(IWICImagingFactory* factory) {
 
 // REAL old-1.1.18 based regression: without any optional compression flags,
 // unchanged decoder-frame WriteSource must never re-encode or lose Exif/10-bit.
-inline void UnmodifiedOriginalExact(IWICImagingFactory* factory) {
+inline void UnmodifiedOriginalExact(IWICImagingFactory* factory,bool fullRect=false) {
     const wchar_t* src=L"samples\\fixture-irot3-exif6-noaux.heic";
-    const wchar_t* dst=L"samples\\fixture-118-unchanged-byteexact.heic";
+    const wchar_t* dst=fullRect
+       ? L"samples\\fixture-118-unchanged-fullrect-byteexact.heic"
+       : L"samples\\fixture-118-unchanged-byteexact.heic";
     const auto original=Read(src);
     CComPtr<IWICBitmapDecoder> decoder;
     Check(factory->CreateDecoderFromFilename(src,&GUID_VendorPrsyahmi,
@@ -170,7 +172,9 @@ inline void UnmodifiedOriginalExact(IWICImagingFactory* factory) {
     Check(encoder->CreateNewFrame(&frame,nullptr),"default frame, no options");
     Check(frame->Initialize(nullptr),"init default frame");
     Check(frame->SetSize(w,h),"keep original HEIC dimensions");
-    Check(frame->WriteSource(source,nullptr),"WriteSource on original WIC frame");
+    WICRect region{0,0,static_cast<INT>(w),static_cast<INT>(h)};
+    Check(frame->WriteSource(source,fullRect?&region:nullptr),
+        fullRect?"WriteSource explicit whole image":"WriteSource original frame");
     Check(frame->Commit(),"commit exact raw-frame transfer");
     Check(encoder->Commit(),"commit exact HEIF bytes");
     frame.Release();encoder.Release();stream.Release();
@@ -196,6 +200,7 @@ inline void Run() {
     if(Read(L"samples\\fixture-irot3-exif6-noaux.heic")!=original)
         throw std::runtime_error("Original synthetic HEIC was modified");
     UnmodifiedOriginalExact(factory);
+    UnmodifiedOriginalExact(factory,true);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
