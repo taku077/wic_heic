@@ -157,6 +157,68 @@ inline void PreserveOriginalHevcWithExplicitHevcOption(IWICImagingFactory* facto
     puts("WIC_EXPLICIT_HEVC_VERIFIED_SOURCE_CONTAINER_BYTE_EXACT_PASS");
 }
 
+// A non-null WICRect covering the entire frame is an identity ROI, not a
+// crop. Photos-compatible WIC callers may pass it explicitly. Verify both
+// default metadata-preserving HEVC copy and a genuine lossless 90-degree
+// BitmapTransform, never consuming actual user photographs.
+inline void PreserveFullFrameRectWithoutRasterFallback(IWICImagingFactory* factory) {
+    const wchar_t* sourceFile=L"samples\\fixture-irot3-exif6-noaux.heic";
+    const auto original=Read(sourceFile);
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(sourceFile,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"full ROI synthetic source");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"full ROI source frame");
+    UINT w=0,h=0;
+    Check(source->GetSize(&w,&h),"full ROI original size");
+    if(w!=1080 || h!=1920)throw std::runtime_error("Unpinned full ROI input geometry");
+    WICRect full{0,0,int(w),int(h)};
+    for(int rotate=0;rotate<2;++rotate) {
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"full ROI encoder");
+        CComPtr<IStream> output;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&output),"full ROI new memory stream");
+        Check(encoder->Initialize(output,WICBitmapEncoderNoCache),
+            "full ROI encoder initialize");
+        CComPtr<IWICBitmapFrameEncode> frame;
+        CComPtr<IPropertyBag2> options;
+        Check(encoder->CreateNewFrame(&frame,&options),"full ROI frame options");
+        if(!options)throw std::runtime_error("Full ROI option bag missing");
+        PROPBAG2 keys[2]{};
+        keys[0].pstrName=const_cast<LPOLESTR>(L"BitmapTransform");
+        keys[1].pstrName=const_cast<LPOLESTR>(L"HeifCompressionMethod");
+        VARIANT values[2]{};
+        values[0].vt=VT_UI1;values[0].bVal=rotate?1:0;
+        values[1].vt=VT_UI1;values[1].bVal=rotate?1:2;
+        Check(options->Write(2,keys,values),"full ROI transform options");
+        Check(frame->Initialize(options),"full ROI frame initialize");
+        // Caller intentionally omits SetSize/SetPixelFormat. Both the full
+        // rectangle and the output geometry must be inferred correctly.
+        Check(frame->WriteSource(source,&full),"full ROI lossless WriteSource");
+        Check(frame->Commit(),"full ROI frame commit");
+        Check(encoder->Commit(),"full ROI encoder commit");
+        const auto expected=rotate?
+            Read(L"samples\\fixture-lossless-cw90.heic"):original;
+        STATSTG stat{};
+        Check(output->Stat(&stat,STATFLAG_NONAME),"full ROI output stat");
+        if(stat.cbSize.QuadPart!=expected.size())
+            throw std::runtime_error("Full ROI output byte size mismatch");
+        LARGE_INTEGER zero{};
+        Check(output->Seek(zero,STREAM_SEEK_SET,nullptr),"full ROI seek");
+        std::vector<uint8_t> actual(expected.size());
+        ULONG received=0;
+        Check(output->Read(actual.data(),static_cast<ULONG>(actual.size()),&received),
+            "full ROI readback");
+        if(received!=actual.size() || actual!=expected)
+            throw std::runtime_error("Full ROI silently stripped HEIC metadata");
+        printf("WIC_FULL_FRAME_ROI_LOSSLESS_%s_CONTAINER_BYTE_EXACT_PASS\\n",
+            rotate?"ROTATE90":"COPY");
+    }
+    if(Read(sourceFile)!=original)
+        throw std::runtime_error("Full ROI modified source synthetic HEIC");
+}
+
 inline void PreserveExplicitIccOnDefaultCopy(IWICImagingFactory* factory) {
     const wchar_t* sourceFile=L"samples\\icc-roundtrip.heic";
     const wchar_t* destFile=L"samples\\icc-exact-default-copy.heic";
@@ -1006,6 +1068,7 @@ inline void Run() {
         throw std::runtime_error("Original synthetic HEIC was modified");
     PreserveCompleteHEICOnDefaultCopy(factory);
     PreserveOriginalHevcWithExplicitHevcOption(factory);
+    PreserveFullFrameRectWithoutRasterFallback(factory);
     PreserveExplicitIccOnDefaultCopy(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
