@@ -578,6 +578,31 @@ jobs:
               Write-Host ('WIC_PHOTOS_WIC_HEIC_AB_'+$key+'='+$values[0])
             }
             Write-Host 'WIC_PHOTOS_WIC_HEIC_CANDIDATE_SET_SAME_ON_BOTH_MSIS_PASS'
+            # WIC may register Microsoft's native HEIF decoder even when
+            # MFVideoFormat_HEVC has no enumerated decoder. Its COM activation
+            # and actual CopyPixels result are observed separately, not
+            # inferred from registration or from the custom decoder.
+            foreach($label in @('ORIGINAL118','RESEARCH')){
+              if([string]$script:abSurveys[$label] -notmatch 'WIC_PHOTOS_MS_HEIF_NATIVE_DISPATCH_SURVEY_PASS') {
+                throw ('Microsoft HEIF native candidate not examined in Windows Server A/B: '+$label)
+              }
+            }
+            foreach($key in @('CREATE_HRESULT','INITIALIZE_HRESULT',
+                               'FRAME0_HRESULT','FRAME_SIZE_HRESULT',
+                               'RGB24_CONVERT_HRESULT','RGB24_COPYPixels_HRESULT')) {
+              $name='WIC_PHOTOS_MS_HEIF_NATIVE_'+$key
+              $vals=@()
+              foreach($label in @('ORIGINAL118','RESEARCH')){
+                $m=[regex]::Match([string]$script:abSurveys[$label],
+                   '(?m)^'+[regex]::Escape($name)+'=(0x[0-9A-F]+)')
+                $vals+= $(if($m.Success){$m.Groups[1].Value}else{'NOT_REACHED'})
+              }
+              Write-Host ('WIC_PHOTOS_MS_HEIF_NATIVE_AB_'+$key+' old='+$vals[0]+' research='+$vals[1])
+              if($vals[0] -cne $vals[1]) {
+                throw ('Microsoft native HEIF stage unexpectedly changed after WIC MSI swap: '+$key)
+              }
+            }
+            Write-Host 'WIC_PHOTOS_MS_HEIF_NATIVE_DECODER_WIC_MF_SEPARATION_PASS'
             Write-Host 'WIC_PHOTOS_EDITOR_13_API_STABLE_ACROSS_118_AND_RESEARCH_PASS'
             # New A/B: both codecs may win arbitration, but only a real
             # full-resolution CopyPixels proves that the WIC pixel path works.
