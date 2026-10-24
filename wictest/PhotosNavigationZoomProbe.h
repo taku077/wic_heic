@@ -57,6 +57,87 @@ inline void Probe(IWICImagingFactory* fac,const wchar_t* path) {
     printf("WIC_PHOTOS_FULLRES_ZOOM_REGION_EXACT_PASS width=%u height=%u bpp=%u\n",
            w,h,bpp*8u);
 }
+// The Windows Photos/WIC wrapper path MUST remain operational even as the
+// private decoder evolves. A prior experiment exposed
+// IWICBitmapSourceTransform on frames but broke materializing a WIC rotated
+// bitmap. Validate the ordinary public WIC Clipper -> FlipRotator ->
+// CreateBitmapFromSource path on a real checked-in 10-bit synthetic HEIC.
+// Pixel comparisons use the original WIC frame's 48bppRGB and never RGB24.
+inline void Verify10BitWicClipRotateMaterialization(IWICImagingFactory* fac) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr=fac->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder);
+    if(FAILED(hr))throw std::runtime_error("10bit WIC crop source decoder");
+    CComPtr<IWICBitmapFrameDecode> frame;
+    if(FAILED(decoder->GetFrame(0,&frame)))
+        throw std::runtime_error("10bit WIC crop source frame");
+    WICPixelFormatGUID nativeFormat{};
+    if(FAILED(frame->GetPixelFormat(&nativeFormat)) ||
+       !IsEqualGUID(nativeFormat,GUID_WICPixelFormat48bppRGB))
+        throw std::runtime_error("WIC crop synthetic fixture must be 48bppRGB");
+    constexpr UINT cropWidth=16,cropHeight=12,bpp=6;
+    WICRect roi{13,19,INT(cropWidth),INT(cropHeight)};
+    std::vector<BYTE> source(size_t(cropWidth)*cropHeight*bpp);
+    if(FAILED(frame->CopyPixels(&roi,cropWidth*bpp,UINT(source.size()),source.data())))
+        throw std::runtime_error("WIC crop reference pixels");
+    for(const WICBitmapTransformOptions turn:
+        {WICBitmapTransformRotate0,WICBitmapTransformRotate90,
+         WICBitmapTransformRotate180,WICBitmapTransformRotate270}) {
+        CComPtr<IWICBitmapClipper> clipped;
+        if(FAILED(fac->CreateBitmapClipper(&clipped)) ||
+           FAILED(clipped->Initialize(frame,&roi)))
+            throw std::runtime_error("10bit WIC native clipper unavailable");
+        CComPtr<IWICBitmapFlipRotator> rotated;
+        if(FAILED(fac->CreateBitmapFlipRotator(&rotated)) ||
+           FAILED(rotated->Initialize(clipped,turn)))
+            throw std::runtime_error("10bit WIC rotator initialize failed");
+        CComPtr<IWICBitmap> materialized;
+        HRESULT render=fac->CreateBitmapFromSource(rotated,
+            WICBitmapCacheOnLoad,&materialized);
+        if(FAILED(render)) {
+            printf("WIC_HEIC_10BIT_WRAPPER_MATERIALIZE_FAILED_HR=0x%08X\n",
+                unsigned(render));
+            throw std::runtime_error("10bit WIC rotated bitmap materialization");
+        }
+        UINT w=0,h=0;
+        if(FAILED(materialized->GetSize(&w,&h)))
+            throw std::runtime_error("WIC rotated materialized dimensions");
+        const bool quarter=turn==WICBitmapTransformRotate90||
+                           turn==WICBitmapTransformRotate270;
+        if(w!=(quarter?cropHeight:cropWidth)||
+           h!=(quarter?cropWidth:cropHeight))
+            throw std::runtime_error("WIC rotated bitmap wrong image geometry");
+        WICPixelFormatGUID format{};
+        if(FAILED(materialized->GetPixelFormat(&format)) ||
+           !IsEqualGUID(format,nativeFormat))
+            throw std::runtime_error("WIC bitmap lost original 10bit channels");
+        const UINT stride=w*bpp;
+        std::vector<BYTE> image(size_t(stride)*h);
+        if(FAILED(materialized->CopyPixels(nullptr,stride,UINT(image.size()),image.data())))
+            throw std::runtime_error("WIC materialized 10bit bitmap unreadable");
+        for(UINT y=0;y<h;++y)for(UINT x=0;x<w;++x) {
+            UINT sx=0,sy=0;
+            switch(turn) {
+            case WICBitmapTransformRotate90:
+                sx=y;sy=cropHeight-1-x;break;
+            case WICBitmapTransformRotate180:
+                sx=cropWidth-1-x;sy=cropHeight-1-y;break;
+            case WICBitmapTransformRotate270:
+                sx=cropWidth-1-y;sy=x;break;
+            default:sx=x;sy=y;break;
+            }
+            const BYTE* expected=source.data()+
+                (size_t(sy)*cropWidth+sx)*bpp;
+            const BYTE* got=image.data()+size_t(y)*stride+size_t(x)*bpp;
+            if(memcmp(expected,got,bpp)!=0)
+                throw std::runtime_error("WIC materialized 10bit rotation changed pixel components");
+        }
+        printf("WIC_HEIC_10BIT_STANDARD_CLIP_ROTATE_%u_MATERIALIZE_PASS\n",
+            unsigned(turn));
+    }
+    puts("WIC_HEIC_10BIT_STANDARD_CLIP_ROTATE_MATERIALIZE_PASS");
+}
 // Synthetic-only MTA stress: all worker threads share ONE decoded WIC frame.
 // Creating the frame inside an MTA thread avoids crossing the main test's
 // STA boundary with an unmarshaled COM interface. Cold-start CopyPixels
@@ -159,6 +240,7 @@ inline void Run() {
     Probe(factory,L"samples\\fixture-irot3-exif6-noaux.heic");
     Probe(factory,L"samples\\fixture-irot3-exif6.heic");
     Probe(factory,L"samples\\fixture-irot3-exif6-noaux.heic");
+    Verify10BitWicClipRotateMaterialization(factory);
     VerifySharedFrameConcurrentMta();
     puts("WIC_PHOTOS_MULTIFILE_NAVIGATION_DECODE_REGRESSION_PASS");
 }
