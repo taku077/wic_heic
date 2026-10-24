@@ -9,6 +9,94 @@ namespace EncoderGuardProbe {
 inline void Check(HRESULT hr,const char* step) {
     if (FAILED(hr)) { printf("GUARD ERROR %s: 0x%08X\n",step,(unsigned)hr); throw std::runtime_error(step); }
 }
+// HEIC Photos metadata-save regression: the writer must never report
+// successful edits while its encoder silently loses EXIF/XMP/ICC.
+// Only SHA-pinned public HEIC and in-memory output streams are used.
+inline void VerifyMetadataWriterCannotDiscardOrAlterSource(IWICImagingFactory* fac) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(fac->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"metadata guard source");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"metadata guard frame");
+    CComPtr<IWICMetadataQueryReader> reader;
+    Check(source->GetMetadataQueryReader(&reader),"metadata guard reader");
+    PROPVARIANT orient;
+    PropVariantInit(&orient);
+    Check(reader->GetMetadataByName(L"/app1/ifd/{ushort=274}",&orient),
+          "metadata guard EXIF orientation");
+    if(orient.vt!=VT_UI2) {
+        PropVariantClear(&orient);
+        throw std::runtime_error("Expected WIC EXIF orientation VT_UI2");
+    }
+    for(int edit=0;edit<2;edit++){
+        CComPtr<IWICBitmapEncoder> encoder;
+        Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,
+            &GUID_VendorPrsyahmi,&encoder),"metadata guard encoder");
+        CComPtr<IStream> output;
+        Check(CreateStreamOnHGlobal(nullptr,TRUE,&output),"metadata guard IStream");
+        Check(encoder->Initialize(output,WICBitmapEncoderNoCache),
+            "metadata guard Initialize");
+        CComPtr<IWICBitmapFrameEncode> frame;
+        CComPtr<IPropertyBag2> opts;
+        Check(encoder->CreateNewFrame(&frame,&opts),"metadata guard new frame");
+        Check(frame->Initialize(opts),"metadata guard frame Initialize");
+        CComPtr<IWICMetadataQueryWriter> writer;
+        Check(frame->GetMetadataQueryWriter(&writer),
+            "metadata guard writer required");
+        GUID container{};
+        Check(writer->GetContainerFormat(&container),"metadata guard container");
+        if(!IsEqualGUID(container,GUID_ContainerFormatHEIC))
+            throw std::runtime_error("metadata writer wrong HEIC container");
+        PROPVARIANT supplied;
+        PropVariantInit(&supplied);
+        Check(PropVariantCopy(&supplied,&orient),"metadata guard copy property");
+        if(edit)supplied.uiVal=orient.uiVal==1?2:1;
+        Check(writer->SetMetadataByName(L"/app1/ifd/{ushort=274}",&supplied),
+            "metadata guard stage orientation");
+        PropVariantClear(&supplied);
+        const HRESULT hr=frame->WriteSource(source,nullptr);
+        if(edit) {
+            printf("WIC_HEIC_METADATA_ALTERED_SOURCE_WRITESOURCE_HRESULT=0x%08X\n",
+                unsigned(hr));
+            if(hr!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+                throw std::runtime_error("Changed EXIF was falsely accepted");
+            STATSTG st{};
+            Check(output->Stat(&st,STATFLAG_NONAME),"metadata denied output Stat");
+            if(st.cbSize.QuadPart)
+                throw std::runtime_error("Rejected EXIF change wrote HEIC output");
+            puts("WIC_HEIC_METADATA_CHANGED_FAIL_CLOSED_PASS");
+        }else{
+            Check(hr,"metadata unchanged WriteSource");
+            if(writer->RemoveMetadataByName(L"/app1/ifd/{ushort=274}")!=
+                WINCODEC_ERR_UNSUPPORTEDOPERATION)
+                throw std::runtime_error("Metadata removal was accepted");
+            Check(frame->Commit(),"metadata unchanged frame Commit");
+            Check(encoder->Commit(),"metadata unchanged encoder Commit");
+            STATSTG st{};
+            Check(output->Stat(&st,STATFLAG_NONAME),"metadata unchanged Stat");
+            if(st.cbSize.QuadPart!=10597)
+                throw std::runtime_error("Metadata save changed HEIC byte length");
+            std::ifstream original("samples/fixture-irot3-exif6-noaux.heic",
+                std::ios::binary);
+            std::vector<BYTE> before((std::istreambuf_iterator<char>(original)),
+                std::istreambuf_iterator<char>());
+            if(before.size()!=10597)
+                throw std::runtime_error("Pinned original unavailable");
+            LARGE_INTEGER zero{};
+            Check(output->Seek(zero,STREAM_SEEK_SET,nullptr),"metadata stream Seek");
+            std::vector<BYTE> after(before.size());
+            ULONG copied=0;
+            Check(output->Read(after.data(),ULONG(after.size()),&copied),
+                "metadata stream readback");
+            if(copied!=after.size()||before!=after)
+                throw std::runtime_error("Unmodified EXIF source was not byte exact");
+            puts("WIC_HEIC_METADATA_SAME_VALUE_CONTAINER_BYTE_EXACT_PASS");
+        }
+    }
+    PropVariantClear(&orient);
+}
+
 // A caller-owned IPropertyBag2 may return overall S_OK while one standard
 // option has a per-property access failure. Silently treating that failure as
 // Rotate0 can discard the caller's requested orientation during HEIC save.
@@ -489,6 +577,7 @@ inline void Run() {
         IID_IWICImagingFactory,(void**)&fac),"CoCreate WIC");
 
     VerifyPerOptionReadFailureCannotSilentlyLoseRotation(fac);
+    VerifyMetadataWriterCannotDiscardOrAlterSource(fac);
     VerifyRejectedWriteSourceDoesNotLeakAutosetters(fac);
     const UINT W=192,H=320;
     std::vector<BYTE> pixels(size_t(W)*H*3);
