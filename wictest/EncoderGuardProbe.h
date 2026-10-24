@@ -1,6 +1,8 @@
 #pragma once
 #include <atomic>
 #include <new>
+#include <fstream>
+#include <iterator>
 // Guard regression tests against malformed frame size, incomplete WritePixels,
 // and false BGR pixel-format negotiation. Uses temporary sample outputs only.
 namespace EncoderGuardProbe {
@@ -239,11 +241,64 @@ inline void VerifyPartialRasterStreamWriteRollback(IWICImagingFactory* fac) {
     puts("WIC_ENCODER_FAILED_COMMIT_RETRY_RASTER_BLOCKED_PASS");
     puts("WIC_RASTER_PARTIAL_WRITE_ROLLBACK_PASS");
 }
+// Synthetic-only retry regression: WriteSource previously inferred frame
+// dimensions/pixel-format before discovering that the opaque bitmap must be
+// rejected. It left the inferred dimensions behind and poisoned a later
+// valid HEIC source on the SAME frame. No file outputs or Photos UI used.
+inline void VerifyRejectedWriteSourceDoesNotLeakAutosetters(IWICImagingFactory* fac) {
+    CComPtr<IWICBitmap> unverified;
+    Check(fac->CreateBitmap(64,48,GUID_WICPixelFormat24bppRGB,
+        WICBitmapCacheOnLoad,&unverified),"Create opaque synthetic bitmap");
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(fac->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"Load public synthetic HEIC");
+    CComPtr<IWICBitmapFrameDecode> original;
+    Check(decoder->GetFrame(0,&original),"Read synthetic HEIC primary");
+    CComPtr<IStream> output;
+    Check(CreateStreamOnHGlobal(nullptr,TRUE,&output),"HEIC retry memory stream");
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(fac->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,
+        &encoder),"HEIC retry encoder");
+    Check(encoder->Initialize(output,WICBitmapEncoderNoCache),
+        "HEIC retry encoder init");
+    CComPtr<IWICBitmapFrameEncode> frame;
+    Check(encoder->CreateNewFrame(&frame,nullptr),"HEIC retry new frame");
+    Check(frame->Initialize(nullptr),"HEIC retry frame init");
+    const HRESULT rejected=frame->WriteSource(unverified,nullptr);
+    printf("WIC_WRITE_SOURCE_AUTOSETTER_REJECT_HRESULT=0x%08X\n",
+           unsigned(rejected));
+    if(rejected!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
+        throw std::runtime_error("Ambiguous WIC bitmap source unexpectedly saved");
+    // Same frame, source of DIFFERENT geometry. Failed WriteSource must
+    // leave default (unset) geometry/format so source inference works now.
+    Check(frame->WriteSource(original,nullptr),
+        "HEIC valid source after failed unverified bitmap source");
+    Check(frame->Commit(),"HEIC retry lossless frame commit");
+    Check(encoder->Commit(),"HEIC retry lossless container commit");
+    std::ifstream reference("samples\\fixture-irot3-exif6-noaux.heic",
+                            std::ios::binary);
+    if(!reference)throw std::runtime_error("HEIC retry fixture not found");
+    std::vector<BYTE> expected(std::istreambuf_iterator<char>{reference},
+                                std::istreambuf_iterator<char>{});
+    HGLOBAL global=nullptr;
+    Check(GetHGlobalFromStream(output,&global),"HEIC retry memory handle");
+    const SIZE_T size=GlobalSize(global);
+    const void* data=GlobalLock(global);
+    if(!data)throw std::runtime_error("HEIC retry memory inaccessible");
+    const bool identical=size==expected.size() &&
+        memcmp(data,expected.data(),expected.size())==0;
+    GlobalUnlock(global);
+    if(!identical)
+        throw std::runtime_error("HEIC retry lost exact Exif/ICC/container bytes");
+    puts("WIC_REJECTED_WRITE_SOURCE_DID_NOT_POISON_RETRY_AND_EXACT_HEIC_BYTES_PASS");
+}
 inline void Run() {
     CComPtr<IWICImagingFactory> fac;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
         IID_IWICImagingFactory,(void**)&fac),"CoCreate WIC");
 
+    VerifyRejectedWriteSourceDoesNotLeakAutosetters(fac);
     const UINT W=192,H=320;
     std::vector<BYTE> pixels(size_t(W)*H*3);
     for(UINT y=0;y<H;y++)for(UINT x=0;x<W;x++) {
