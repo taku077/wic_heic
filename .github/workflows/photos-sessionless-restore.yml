@@ -1,0 +1,120 @@
+name: Restore exact WIC118 without B trial session
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - investigate/photos-wic-arbitration-after-120-failure
+    paths:
+      - .github/workflows/photos-sessionless-restore.yml
+      - diagnostics/photos_trace/Restore118_NoSession.ps1
+      - diagnostics/photos_trace/01_Restore_Original118_Admin.cmd
+      - diagnostics/photos_trace/00_Check_Installed_WIC.cmd
+
+jobs:
+  recovery:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: WicHeic-HEIC-x64-MSI-only-Win10-Photos-UNVERIFIED
+          run-id: 39433397223
+          repository: taku077/wic_heic
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/old118
+      - uses: actions/download-artifact@v4
+        with:
+          name: Photos_Win10_Research_B_Compare_and_118_Restore_v0_1
+          run-id: 40106381404
+          repository: taku077/wic_heic
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/oldB
+      - uses: actions/download-artifact@v4
+        with:
+          name: Photos_Win10_Research_B_ExplorerSafe_v0_2
+          run-id: 40108631744
+          repository: taku077/wic_heic
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/newB
+      - name: Stage pinned old118 rescue and confirm Windows PowerShell 5.1 syntax
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $kit=Join-Path $env:RUNNER_TEMP 'Rescue118'
+          New-Item -Path $kit -ItemType Directory -ErrorAction Stop|Out-Null
+          $a=@(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'old118') -Filter '*.msi' -File -Recurse)
+          if($a.Count -ne 1){throw 'Historic MSI missing'}
+          if((Get-FileHash -LiteralPath $a[0].FullName -Algorithm SHA256).Hash -cne '4FE1809A98C0B7EB7E7A505A6105BE57A34052DE74D79A13DB0853A9EC2AACE6'){
+            throw 'Original MSI SHA mismatch'
+          }
+          Copy-Item -LiteralPath $a[0].FullName -Destination (Join-Path $kit 'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi')
+          $names=@(
+            'Restore118_NoSession.ps1','00_Check_Installed_WIC.cmd',
+            '01_Restore_Original118_Admin.cmd','WIC_Preflight_ReadOnly.ps1'
+          )
+          foreach($name in $names){
+            Copy-Item -LiteralPath (Join-Path 'diagnostics/photos_trace' $name) -Destination $kit
+          }
+          Copy-Item -LiteralPath 'diagnostics/photos_trace/Restore118_NoSession_README_JA.txt' -Destination (Join-Path $kit 'README_JA.txt')
+          $tokens=$null;$errors=$null
+          [Management.Automation.Language.Parser]::ParseFile((Join-Path $kit 'Restore118_NoSession.ps1'),[ref]$tokens,[ref]$errors)|Out-Null
+          if(@($errors).Count){throw ('PowerShell syntax: '+$errors[0].Message)}
+          Write-Host 'SESSIONLESS_RESCUE_SCRIPT_POWERSHELL51_PARSE_PASS'
+      - name: Old B A384 to old118 no session, then new B F46D to old118
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $kit=Join-Path $env:RUNNER_TEMP 'Rescue118'
+          $old=Join-Path $kit 'WicHeic-Repair-1.1.18-ORIGINAL-x64.msi'
+          $oldB=@(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'oldB') -File -Recurse -Filter 'WicHeic-Repair-1.1.20-TRIAL-x64.msi')
+          $newB=@(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'newB') -File -Recurse -Filter 'WicHeic-Repair-1.1.20-TRIAL-x64.msi')
+          if($oldB.Count -ne 1 -or $newB.Count -ne 1){throw 'Old or new B MSI missing'}
+          if((Get-FileHash $oldB[0].FullName -Algorithm SHA256).Hash -cne 'F7A9C9B20118946ADA4060B8DFC67E2DDD7D8DAD1A7EBB296F876DC81F7EB2B9'){
+            throw 'Incident original B SHA mismatch'
+          }
+          if((Get-FileHash $newB[0].FullName -Algorithm SHA256).Hash -cne '8B6441EE2EF392C5BBAEC6C0847173E6813DFB5FA1FF31164CF780FD6F9691FF'){
+            throw 'Explorer-safe B SHA mismatch'
+          }
+          function Msi([string]$mode,[string]$path){
+            $args='/'+$mode+' "'+$path+'" /qn /norestart MSIRESTARTMANAGERCONTROL=Disable'
+            $p=Start-Process msiexec.exe -ArgumentList $args -Wait -PassThru
+            if($p.ExitCode -ne 0){throw ('CI MSI '+$mode+' exit '+$p.ExitCode)}
+          }
+          $script=Join-Path $kit 'Restore118_NoSession.ps1'
+          Msi i $oldB[0].FullName
+          $pre=@(& $script)
+          if(-not ($pre -match 'READ_ONLY_PRECHECK_PASS')){throw 'Incident B was not recognized without session'}
+          & $script -Restore
+          if(-not $?){throw 'Recovery from original B failed'}
+          $after=@(& $script)
+          if(-not ($after -match 'WIC_118_ALREADY_RESTORED_NO_CHANGES')){throw 'Old118 recovery not verified'}
+          Write-Host 'INCIDENT_A384_OLD_B_TO_OLD118_NO_SESSION_PASS'
+          Msi x $old
+          Msi i $newB[0].FullName
+          & $script -Restore
+          if(-not $?){throw 'Recovery from new B failed'}
+          $after=@(& $script)
+          if(-not ($after -match 'WIC_118_ALREADY_RESTORED_NO_CHANGES')){throw 'New B old118 recovery failed'}
+          Write-Host 'EXPLORER_SAFE_F46D_B_TO_OLD118_NO_SESSION_PASS'
+      - name: Stage only exact old118 with sessionless recovery scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $src=Join-Path $env:RUNNER_TEMP 'Rescue118'
+          $dst='dist/Sessionless118'
+          New-Item -Path $dst -ItemType Directory -ErrorAction Stop|Out-Null
+          Copy-Item -LiteralPath "$src/*" -Destination $dst
+          if(@(Get-ChildItem $dst -File).Count -ne 6){throw 'Incorrect rescue ZIP contents'}
+          if(@(Get-ChildItem $dst -File -Filter '*TRIAL*').Count){throw 'No B installer allowed in rescue kit'}
+          Write-Host 'SESSIONLESS_118_RESCUE_ONLY_RELEASE_PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Photos_Restore_Original118_NoSession_v0_1
+          path: dist/Sessionless118/
+          if-no-files-found: error
+          retention-days: 14
