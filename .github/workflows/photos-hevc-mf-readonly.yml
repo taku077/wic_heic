@@ -215,7 +215,12 @@ jobs:
                               '[SYNTHETIC_WIC_EXPLICIT_AND_AUTO]','HEVC_SYNTHETIC_AUTO stage=create_decoder',
                               'HEVC_SYNTHETIC_GIT_BLOB_VERIFIED_PASS bytes=10597',
                               'NativeMicrosoftCopyPixels=','CustomWicCopyPixels=',
-                              'AutoSelectedWicDecoder=','Photos editor, HEVC license')) {
+                              'AutoSelectedWicDecoder=','Photos editor, HEVC license',
+                              'NativeHeifEncoderWriteSource=','NativeHeifEncoderCommit=',
+                              'NativeHeifEncoderExactSourceBytes=',
+                              'CustomHeicEncoderWriteSource=','CustomHeicEncoderCommit=',
+                              'CustomHeicEncoderExactSourceBytes=',
+                              'Encoder trial scope=memory_only; Photos GUI/HEVC license not tested.')) {
               if(-not $report.Contains($key)){throw ('Batch report missing '+$key)}
             }
             foreach($forbidden in @('C:\Users\','C:\Program Files','\AppData\','ProductKey','InprocServer32')) {
