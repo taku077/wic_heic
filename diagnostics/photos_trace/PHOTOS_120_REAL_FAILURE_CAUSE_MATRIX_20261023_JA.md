@@ -902,3 +902,14 @@ Microsoft WICエンコーダー仕様: https://learn.microsoft.com/en-us/windows
 現行唯一の優先順位・中止条件・一次資料と安全ゲートは [P0_PHOTOS_CRITICAL_PATH_DECISION_20261024_JA.md](P0_PHOTOS_CRITICAL_PATH_DECISION_20261024_JA.md) を参照。Microsoft公式はWindows10 Photosで写真のみ利用でもHEIFとHEVC両拡張が必要と明記。一方、旧1.1.18でUI復活した同一ユーザー実機A-B-Aの事実は独立して保持し、単純な「絶対不可能」結論にしない。まずUIの実証に効くWIC契約差分、またはPhotosのHEVC依存を確定し、未確認のWIC微修正を積み上げる作業は打ち切る。
 
 実機／インストールを伴う次の試験は、安全ゲートと具体的候補が成立した場合に限り**まとめて一度**行う。新たなコード変更・CIが無い場合は、実装が進んだように表現しない。
+
+## 2026-10-24：Photos向けフレームExif書込要求の原本一致検証実装（GUI未合格）
+
+ユーザー指定の3条件「HEVC警告を消す／Photosで編集回転保存をバグなく使う／Exif・ICC等を失わない」に直接関係する**メタ情報保存コード**を修正。今回の成果を「標準フォト復旧済」と読み替えない。
+
+- 現行`CHeicBitmapFrameEncode::GetMetadataQueryWriter`は`E_NOTIMPL`を返し、WICクライアントがメタ情報の書込要求を標準的に表現できなかった。旧1.1.18も`E_NOTIMPL`であり、これ単独でPhotos UI警告の原因とは**断定できない**。
+- `wic_heic/HeicMetadataWriteGuard.h`、`wic_heic/HeicBitmapFrameEncode.{h,cpp}`に**フレームごとの遅延メタ情報要求**を実装。新フレームを正常に`Initialize`した後`IWICMetadataQueryWriter`を提供し、`SetMetadataByName`要求を型付き`PROPVARIANT`として保持する。元HEICの同じフレームの`IWICMetadataQueryReader`値と**型と値が厳密一致**した場合に限り`WriteSource`の原コンテナー転送を許可し、それ以外は`WINCODEC_ERR_UNSUPPORTEDOPERATION`を返す。出力ストリームは空のまま。未知型・タグ変更・消去・メタデータのある`WritePixels`も安全拒否。ICCの既存の明示的変更チェック、原画像上書き禁止、フレーム単位の閉鎖状態を維持する。
+- [Windows統合CI **#40099156394 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40099156394)：固定公開人工HEICのEXIF Orientationを同値で`SetMetadataByName`→`WriteSource`→両`Commit`、10,597バイトの入力と**全バイト一致**：`WIC_HEIC_METADATA_SAME_VALUE_CONTAINER_BYTE_EXACT_PASS`。異なるEXIF Orientation値は`WriteSource=0x88982F81`で安全拒否し出力0バイト：`WIC_HEIC_METADATA_CHANGED_FAIL_CLOSED_PASS`。旧1.1.18との総合比較、フレームプロパティ、無再圧縮回転、Media Foundation非干渉、v0.4.0共存も成功。
+- 旧版`GetMetadataQueryWriter`はフレーム初期化前後とも`0x80004001`、研究版は初期化前`0x88982F04`、正常初期化後は`S_OK`。この正しいCOMライフサイクル差分を`wictest/WICDecoderCapabilityProbe.h`で記録、既存の旧版と同値であることを要求する旧CI条件のみ修正（`a2817a21...`）。旧版の動作を疑似的に真似るために`E_NOTIMPL`を返すわけではない。
+
+**未解決・製品判定**：実際に異なるExif値を**書き換える実装ではない**。元情報を確実に保持できないPhotosのラスター編集／回転保存は引き続き拒否。HEVC拡張警告・Photos GUIの編集回転・保存の正常化について**Windows10実機成功ゼロ**。安全なWICの部分修正であり、用户の3目標は未完了。検証していないMSIを実機に導入・提供しない。人工HEICだけを使い、ユーザー画像・既存のWIC登録・HEIC Managerには変更していない。
