@@ -751,3 +751,17 @@ Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder�
 **CIエビデンス**：先行 #40076800037 SUCCESS、**最終 [#40076956160 SUCCESS](https://github.com/taku077/wic_heic/actions/runs/40076956160)**。Windows Server 2022でネイティブEXEのビルド、既存の画像なし診断、SHA確認済み人工HEIC、改ざん拒否、**PowerShell 5.1での一括実行・プライバシー監査・ZIP1個のみの生成**を成功確認。GitHub artifactは単一の `Run_Photos_Batch_ReadOnly.cmd` と統合ランチャー／日本語運用文書を含み、旧2種類の個別CMDを同梱しない（最終アーティファクト名 `Photos_WIC_OneBatch_Win10_x64`、artifact ID `12553970556`、2026-11-07 UTCまで）。
 
 **重要**：これは**試験回数を減らすためのツール改善であり、製品WICがPhotos GUIのHEVC警告や編集・回転保存に対応したとの成果ではない**。暫定の50％は完成基準の実績とは言えず、CIツール追加だけで数字を引き上げない。次の作業はPhotosの編集可否と保存結果を変える安全なコード上の改善に集中し、小刻みな実機試験要求を差し控える。
+
+## 2026-10-24：1回の実機一括診断によりWIC自動選択と全画素成功を確定・保存コードを改良
+
+**一括実機資料**：ユーザー提出 `WIC_Batch_20261024_172255_928_394d8a028b8a4f95b80129ec61135b9b.zip` の唯一のファイル `WIC_Batch_Sanitized_Report.txt` を読み込み、`BATCH_COLLECTION_STATUS=COMPLETE` を確認。ユーザーの私有情報・元ZIPはリポジトリへ保存しない。
+
+- Windows10 Pro 22H2 build19045、Photos 2026.11090.22001.0、HEIF Image Extension 1.2.48.0、旧自作WicHeic Repair Test v1.1.18導入状態（※画像変形／保存エラーを持つので**正常版ではない**）。
+- MFT HEVC decoder/common=0、encoder/common=0、decoder including field-of-use=0、H264 control decoder=1。
+- Microsoft純正HEIF：COM/Initialize/GetFrame/GetSize/RGB24交渉すべてS_OK。**16×8 CopyPixels=0xC00D5212**、全フレームハッシュを算出できず。
+- 自作旧v1.1.18：同じ検証済み10,597B人工HEICで16×8 CopyPixels=S_OK、ROI RGB24 FNV64=`2C46D5C491E58AE4`、**1080×1920の6,220,800バイト全フレーム CopyPixels=S_OK、FNV64=`BBE3A110699D854C`**。
+- WIC `IWICImagingFactory::CreateDecoderFromStream`（ベンダー未指定）の**自動選択は自作WIC**：`custom=1,microsoft=0`、RGB24 ROI／全画素コピーともS_OK、FNV64が明示自作WICと完全一致。**「WIC自動選択で純正を選ぶから画像を表示できない」仮説はこの実機人工画像では否定**。
+- 一方、Photosのアプリ固有HEVC拡張チェック、編集ボタン、エンコーダー選択はこの診断で一切テストしていない。Microsoft純正WICの復号失敗はHEVC拡張不足と整合するが、Photosのボタン非活性の直接因果は依然不明。新MSIを実機に入れたわけではなく、**旧／研究版のWin10比較ではない**。
+- **以後、実機診断は小出しにしない**：同一バージョンの追加診断を依頼せず、ソース修正とGitHub CIで事前検証し、区切り良い候補のみ1セッションでまとめて実機検証する。診断レポートや写真再提出を重複要求しない。
+
+**製品コードを進める修正**：`wic_heic/HeicLosslessNative.h` で、従来 `iref` 参照ボックスがなくても構造上完全なHEICの**単一・primary `hvc1` 画像**が、無再圧縮回転を一律拒否される問題を修正。今回の新実装 `NoReferenceSinglePrimary` は、iinfが単一かつそのitem IDがprimary、タイプ `hvc1`、ipmaにほかの画像・Exif・補助要素がないことを確認して、**その限定条件だけ**元コンテナのirotを安全に更新する。曖昧な構成／複数画像／Exif／HDR／サムネイルを容認しない。構造レベルの人工BMFF回帰テスト `NativeLosslessProbe::VerifyReferenceFreePrimary` で、単一画像を許容し複数・未知種別を拒否する。既存の完全人工HEICを使った4回90°・全RGB一致などの総合試験も継続。コード `b22836a1f732a868da7cfa3eb81aa39afa5bd42c`、試験 `2cb465f98336c9d2c2ce0d0526543981043395a8`。**これは一部のHEICの無再圧縮回転対応範囲を広げる修正であり、Windows10標準PhotosのHEVC警告や編集保存を直したとの証拠ではない**。Windows10実機MSIは未導入。新しい実機テストは現時点で不要。
