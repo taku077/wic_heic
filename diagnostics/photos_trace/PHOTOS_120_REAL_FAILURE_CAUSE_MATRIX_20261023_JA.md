@@ -865,3 +865,16 @@ WIC仕様: https://learn.microsoft.com/ja-jp/windows/win32/api/wincodec/nf-winco
 **P0残課題**：正常な標準Photosが実際にこの読取エラーを出すとは限らず、UIのHEVC警告・編集/回転ボタン無効化の原因は依然未特定。実機Photosからの回転保存、Exif/ICC/HDRの網羅保持は未合格。ユーザー環境でのインストールや実写真へのアクセスはしない。研究版MSIの提示は保留し、暫定進捗は52％を維持する。
 
 Microsoft WICエンコーダー仕様: https://learn.microsoft.com/en-us/windows/desktop/wic/-wic-imp-iwicbitmapframeencode
+
+## 2026-10-24：標準HEIF／自作WICの保存可能性を実機一括診断に追加（CIのみ成功）
+
+**対象P0**：旧v1.1.18ではPhotos編集ボタンが有効化されたが、研究版WICではHEVC拡張警告／編集不可に退行。実機診断で自作WICの人工HEIC全画素復号成功、純正HEIFの `CopyPixels=0xC00D5212` を確定済み。しかしPhotos GUIが使用する**エンコーダー選択／編集保存**は直接の証拠がない。今回これを区別するための「メモリ内保存」観測を従来の**一括診断**へ組み込み、ユーザー実機には触れずにWindows x64 CIを検証した。
+
+**GitHub実装**：
+- `diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp`：コミット `233df1fc3c78f3f794d7bfb7970250dbf84ef548`、診断ログ改行修正 `e2a0b4d73794b4dd010adfe5154eed6c10af4933`。固定SHA-256認証済み公開人工HEICの**自動WICデコードフレーム**を同時条件のMicrosoft純正HEIF／自作HEIC WICエンコーダーへ与える。`CreateEncoder`／`Initialize`／`CreateNewFrame`／`GetMetadataQueryWriter`／`WriteSource`／`Frame.Commit`／`Encoder.Commit`／メモリ内読戻しの結果を段階別に記録する。出力は新規 `CreateStreamOnHGlobal` メモリストリームだけで、実写真、HEIC元ファイル、レジストリ、Store・MSIに変更しない。完了後の全バイト一致を検査するが、WIC出力成功はPhotos GUI保存成功・回転保存・メタ保持完全性と同義ではない。
+- `Run_Photos_Batch_ReadOnly.ps1`：コミット `61ba874bbc4cc6ff0bc35e35d6f7e5a8f7966676` と `b384bc7dfb8ceb4c40665abc2fd46f70cb25b31f`。上記のネイティブ／自作保存APIのHRESULTと完全一致フラグを、既存の匿名化済み単一ZIPテキストに収録。個別実機試験や新しいMSIは追加しない。
+- `.github/workflows/photos-hevc-mf-readonly.yml`：コミット `e2a2812099914b9cded33b14d7af6917324a56de`。出力レポートに新しい情報が存在することをチェックする。
+- [**診断CI #40093401870 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40093401870)：Windows Server 2022上でC++ビルド、合成HEICのSHA認証／改ざん拒否、PowerShell 5.1一括ZIP生成・サニタイズ、新フィールドを検証。この使い捨てランナーでは、ベンダー指定なしのWIC `CreateDecoderFromStream` が `0x88982F8B` で失敗し、旧版・研究版のどちらも導入していないため、**保存のA/B結果自体は計測されていない**。
+- 既存の旧版／研究版MSIインストールA/B統合CIに接続しようとしたが、ワークフロー定義が不正になったため中止。試行 `6a272975221ddbaf7145ec2c9356ee87bdcb88cc` と `b2bc064471422b9e1ac2ae5075f9bb43ed78f76e` はActionsのジョブを開始できず**不採用**。成功済みワークフローのblob `44e477970fa02bf67281f5b11993925ebe4769d6` をコミット `ebdba5e5976ddf790e55fac13b3b06b25f8f9a47` で全バイト一致復旧。これらの失敗をWIC本体・Photos UIの失敗やA/B実測と誤認しない。
+
+**判定**：標準Photos警告解除、編集／回転ボタンの復活、標準Photosからの変形・メタデータ損失なし保存は依然として未達。ユーザー実機の既存旧v1.1.18を正常版扱いせず、新MSI配布／個別診断も行わない。暫定進捗 **52％維持**。今回の開発成果は安全な一括診断の計測能力拡張のみ。
