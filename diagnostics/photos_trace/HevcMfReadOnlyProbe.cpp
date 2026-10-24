@@ -10,10 +10,16 @@
 #include <wincodec.h>
 #include <cstdio>
 #include <cwchar>
+#include <cstring>
+#include <vector>
+#include <string>
+#include <wincrypt.h>
+#include <wrl/client.h>
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "advapi32.lib")
 
 namespace {
 struct Result { HRESULT hr; UINT32 count; };
@@ -128,11 +134,137 @@ void ProbeWic(bool activate) {
     std::printf("HEVC_WIC_PROBE_COMPLETE activation=%u no_image=1 no_registry_write=1 no_codec_install=1 photos_not_verified=1\n",
         static_cast<unsigned>(activate));
 }
+// Opt-in ONLY: genuine WIC decoder output on a single checked-in PUBLIC
+// synthetic HEIC. No arbitrary image path argument is supported. The 10,597
+// bytes must exactly match git blob SHA1 126b24780e8c36a0e1521df982067ab12f971470,
+// including the Git "blob 10597\0" prefix. No photos/EXIF/paths are logged.
+bool VerifySyntheticFixture(std::vector<BYTE>& out) {
+    wchar_t exe[MAX_PATH]{};
+    const DWORD len=GetModuleFileNameW(nullptr,exe,MAX_PATH);
+    if(!len||len>=MAX_PATH-40)return false;
+    wchar_t* slash=std::wcsrchr(exe,L'\\');
+    if(!slash)return false;
+    slash[1]=L'\0';
+    const std::wstring path=std::wstring(exe)+L"fixture-irot3-exif6-noaux.heic";
+    const HANDLE h=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,
+        nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    if(h==INVALID_HANDLE_VALUE)return false;
+    BY_HANDLE_FILE_INFORMATION stat{};
+    LARGE_INTEGER size{};
+    bool valid=GetFileInformationByHandle(h,&stat) &&
+        !(stat.dwFileAttributes&FILE_ATTRIBUTE_REPARSE_POINT) &&
+        GetFileType(h)==FILE_TYPE_DISK &&
+        GetFileSizeEx(h,&size) && size.QuadPart==10597;
+    if(valid) {
+        out.resize(10597);
+        DWORD read=0;
+        valid=ReadFile(h,out.data(),DWORD(out.size()),&read,nullptr) &&
+              read==out.size();
+    }
+    CloseHandle(h);
+    if(!valid){out.clear();return false;}
+    HCRYPTPROV provider=0;
+    HCRYPTHASH hash=0;
+    const bool acquired=!!CryptAcquireContextW(&provider,nullptr,nullptr,
+        PROV_RSA_AES,CRYPT_VERIFYCONTEXT);
+    if(!acquired){out.clear();return false;}
+    bool success=!!CryptCreateHash(provider,CALG_SHA1,0,0,&hash);
+    const char prefix[]="blob 10597";
+    if(success) success=!!CryptHashData(hash,
+        reinterpret_cast<const BYTE*>(prefix),DWORD(sizeof(prefix)),0);
+    if(success) success=!!CryptHashData(hash,out.data(),DWORD(out.size()),0);
+    BYTE result[20]{};
+    DWORD hashBytes=DWORD(sizeof(result));
+    if(success) success=!!CryptGetHashParam(hash,HP_HASHVAL,
+                                             result,&hashBytes,0);
+    if(hash)CryptDestroyHash(hash);
+    CryptReleaseContext(provider,0);
+    const BYTE expected[20]={
+        0x12,0x6b,0x24,0x78,0x0e,0x8c,0x36,0xa0,0xe1,0x52,
+        0x1d,0xf9,0x82,0x06,0x7a,0xb1,0x2f,0x97,0x14,0x70};
+    success=success&&hashBytes==20 &&
+        std::memcmp(expected,result,sizeof(expected))==0;
+    if(!success)out.clear();
+    return success;
+}
+void DecodePinnedSynthetic(IWICImagingFactory* factory,
+    const CLSID& decoderClsid,const char* role,std::vector<BYTE>& source) {
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICComponentInfo> info;
+    HRESULT hr=factory->CreateComponentInfo(decoderClsid,info.GetAddressOf());
+    std::printf("HEVC_SYNTHETIC_WIC role=%s stage=info hr=0x%08lX\n",
+        role,static_cast<unsigned long>(hr));
+    if(FAILED(hr))return;
+    ComPtr<IWICBitmapDecoderInfo> decoderInfo;
+    hr=info.As(&decoderInfo);
+    if(FAILED(hr))return;
+    ComPtr<IWICBitmapDecoder> decoder;
+    hr=decoderInfo->CreateInstance(decoder.GetAddressOf());
+    std::printf("HEVC_SYNTHETIC_WIC role=%s stage=create hr=0x%08lX\n",
+        role,static_cast<unsigned long>(hr));
+    if(FAILED(hr))return;
+    ComPtr<IWICStream> stream;
+    hr=factory->CreateStream(stream.GetAddressOf());
+    if(SUCCEEDED(hr))
+        hr=stream->InitializeFromMemory(source.data(),UINT(source.size()));
+    if(FAILED(hr))return;
+    hr=decoder->Initialize(stream.Get(),WICDecodeMetadataCacheOnDemand);
+    std::printf("HEVC_SYNTHETIC_WIC role=%s stage=initialize hr=0x%08lX\n",
+        role,static_cast<unsigned long>(hr));
+    if(FAILED(hr))return;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr=decoder->GetFrame(0,frame.GetAddressOf());
+    std::printf("HEVC_SYNTHETIC_WIC role=%s stage=frame0 hr=0x%08lX\n",
+        role,static_cast<unsigned long>(hr));
+    if(FAILED(hr))return;
+    UINT width=0,height=0;
+    hr=frame->GetSize(&width,&height);
+    if(FAILED(hr)||width<16||height<8)return;
+    ComPtr<IWICBitmapSource> rgb;
+    hr=WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
+        frame.Get(),rgb.GetAddressOf());
+    std::printf("HEVC_SYNTHETIC_WIC role=%s stage=rgb24 hr=0x%08lX\n",
+        role,static_cast<unsigned long>(hr));
+    if(FAILED(hr))return;
+    BYTE sample[16*8*3]{};
+    WICRect roi{0,0,16,8};
+    hr=rgb->CopyPixels(&roi,16*3,UINT(sizeof(sample)),sample);
+    std::printf("HEVC_SYNTHETIC_WIC role=%s stage=copy_pixels hr=0x%08lX\n",
+        role,static_cast<unsigned long>(hr));
+    if(SUCCEEDED(hr)) {
+        unsigned long long fp=14695981039346656037ull;
+        for(BYTE b:sample){fp^=b;fp*=1099511628211ull;}
+        std::printf("HEVC_SYNTHETIC_WIC role=%s stage=rgb24_roi fnv64=%016llX\n",
+            role,fp);
+    }
+}
+int RunPinnedSynthetic() {
+    std::vector<BYTE> publicFixture;
+    if(!VerifySyntheticFixture(publicFixture)) {
+        std::puts("HEVC_SYNTHETIC_REFUSED public_fixture_missing_or_hash_mismatch=1");
+        return 8;
+    }
+    std::puts("HEVC_SYNTHETIC_GIT_BLOB_VERIFIED_PASS bytes=10597");
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    HRESULT hr=CoCreateInstance(CLSID_WICImagingFactory,nullptr,
+        CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,
+        reinterpret_cast<void**>(factory.GetAddressOf()));
+    if(FAILED(hr))return 9;
+    DecodePinnedSynthetic(factory.Get(),kMicrosoftDecoder,
+        "microsoft_heif",publicFixture);
+    DecodePinnedSynthetic(factory.Get(),kCustomDecoder,
+        "custom_heic",publicFixture);
+    std::puts("HEVC_SYNTHETIC_WIC_COMPARISON_COMPLETE photos_not_tested=1 source_unchanged=1 no_photo_path_input=1");
+    return 0;
+}
 }
 int wmain(int argc, wchar_t** argv) {
     const bool activation=(argc==2 && argv && argv[1] &&
         std::wcscmp(argv[1],L"--wic-activate-no-image")==0);
-    if (argc!=1 && !activation) {
+    const bool synthetic=(argc==2 && argv && argv[1] &&
+        std::wcscmp(argv[1],L"--synthetic-wic-test")==0);
+    if (argc!=1 && !activation && !synthetic) {
         std::puts("HEVC_MF_INVENTORY_REFUSED arguments_not_allowed=1");
         return 2;
     }
@@ -141,6 +273,11 @@ int wmain(int argc, wchar_t** argv) {
         std::printf("HEVC_MF_PROBE_STATUS stage=com hr=0x%08lX\n",
                     static_cast<unsigned long>(com));
         return 3;
+    }
+    if(synthetic) {
+        const int result=RunPinnedSynthetic();
+        CoUninitialize();
+        return result;
     }
     const HRESULT mf = MFStartup(MF_VERSION, MFSTARTUP_LITE);
     if (FAILED(mf)) {
