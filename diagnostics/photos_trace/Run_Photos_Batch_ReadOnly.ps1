@@ -67,7 +67,7 @@ try {
 $summary.Add('[INSTALLED_CODECS_AND_PHOTOS] exit='+$preflightCode)
 if($preflightCode -eq 0){
   $possible=@($preflightOutput | ForEach-Object {[string]$_} |
-    Where-Object {$_ -match '^[A-Za-z]:\\.*WIC_Preflight_\d+_\d+\.json$'})
+    Where-Object {$_ -match '^[A-Za-z]:\\.*WIC_Preflight_\d{8}_\d{6}_\d+_\d+\.json$'})
   if($possible.Count -gt 0) {
     $item=Get-Item -LiteralPath $possible[-1] -ErrorAction Stop
     Assert-NoReparse $item.FullName
