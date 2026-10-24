@@ -321,16 +321,6 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Read-only Media Foundation probe build failed'}
           $mfExe=Join-Path $mfDir 'HevcMfReadOnlyProbe.exe'
           if(!(Test-Path -LiteralPath $mfExe -PathType Leaf)){throw 'MF inventory executable missing'}
-          # Same pinned PUBLIC fixture across the old and research WIC MSI.
-          # Staging uses a new CI TEMP file; encoder outputs remain in RAM.
-          $pinnedFixture='wictest/samples/fixture-irot3-exif6-noaux.heic'
-          $fixtureHash='D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95'
-          if((Get-FileHash -LiteralPath $pinnedFixture -Algorithm SHA256).Hash -cne $fixtureHash){
-            throw 'Pinned synthetic source changed'
-          }
-          $syntheticStage=Join-Path $mfDir 'fixture-irot3-exif6-noaux.heic'
-          if(Test-Path -LiteralPath $syntheticStage){throw 'Synthetic staging target unexpectedly exists'}
-          Copy-Item -LiteralPath $pinnedFixture -Destination $syntheticStage
           function MFInventory([string]$label) {
             $lines=@(& $mfExe 2>&1)
             if($LASTEXITCODE -ne 0 -or -not ($lines -match '^HEVC_MF_PROBE_COMPLETE')) {
@@ -404,28 +394,6 @@ jobs:
               $script:abSurveys[$label]=$output
               Write-Host ('WIC_PHOTOS_AB_'+$label+'='+$output.Replace([Environment]::NewLine,';'))
               return [Convert]::ToUInt32($m.Groups[1].Value,16)
-              # A/B real encoder APIs, not just WIC registry capability bits.
-              # Both versions are installed only on a disposable Windows VM.
-              $saveRows=@(& $mfExe '--synthetic-wic-test' 2>&1)
-              $saveExit=$LASTEXITCODE
-              if($saveExit -ne 0 -or
-                 -not ($saveRows -match '^HEVC_SYNTHETIC_GIT_BLOB_VERIFIED_PASS bytes=10597') -or
-                 -not ($saveRows -match '^HEVC_SYNTHETIC_WIC_COMPARISON_COMPLETE')){
-                throw ('Synthetic codec save survey incomplete: '+$label)
-              }
-              $saveLog=$saveRows -join [Environment]::NewLine
-              $custom=[regex]::Match($saveLog,'(?m)^HEVC_SYNTHETIC_ENCODER role=custom_heic stage=write_source hr=0x([0-9A-F]{8})$')
-              $committed=[regex]::Match($saveLog,'(?m)^HEVC_SYNTHETIC_ENCODER role=custom_heic stage=encoder_commit hr=0x([0-9A-F]{8})$')
-              $complete=[regex]::Match($saveLog,'(?m)^HEVC_SYNTHETIC_ENCODER role=custom_heic stage=readback hr=0x[0-9A-F]{8} bytes=[0-9]+ exact_original_bytes=([01]) photos_not_tested=1$')
-              $writeHr=if($custom.Success){$custom.Groups[1].Value}else{'NOT_REACHED'}
-              $commitHr=if($committed.Success){$committed.Groups[1].Value}else{'NOT_REACHED'}
-              $exact=if($complete.Success){$complete.Groups[1].Value}else{'NOT_REACHED'}
-              Write-Host ('WIC_PHOTOS_SYNTHETIC_HEIC_RAM_SAVE label='+$label+' WriteSource='+$writeHr+' Commit='+$commitHr+' Exact='+$exact)
-              if($label -eq 'RESEARCH' -and
-                 ($writeHr -cne '00000000' -or $commitHr -cne '00000000' -or $exact -cne '1')){
-                throw 'Research HEIC original-source byte-exact WIC memory save failed'
-              }
-              Write-Host ('WIC_PHOTOS_HEIC_RAM_SAVE_AB_'+$label+'_PASS')
             } finally {
               Remove-Item Env:\WIC_HEIC_CAPABILITY_SURVEY_ONLY -ErrorAction SilentlyContinue
               Pop-Location
