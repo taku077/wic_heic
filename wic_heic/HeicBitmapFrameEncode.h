@@ -1,4 +1,5 @@
 #pragma once
+#include "HeicMetadataWriteGuard.h"
 
 // TODO: Support IWICPlanarBitmapFrameEncode
 class CHeicBitmapFrameEncode : public IWICBitmapFrameEncode
@@ -26,6 +27,7 @@ private:
 	WICPixelFormatGUID m_PixelFormat;
 	// Caller-specified output format vs WriteSource's implicit negotiation.
 	bool m_PixelFormatExplicitlySet;
+	std::shared_ptr<HeicGuardedMetadataState> m_MetadataState;
 	int m_BitDepthPerChannel;
 
 protected:
