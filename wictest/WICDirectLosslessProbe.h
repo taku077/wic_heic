@@ -233,6 +233,96 @@ inline void ExplicitRasterICCPreserved(IWICImagingFactory* factory) {
     printf("WIC118_RASTER_WIC_ICC_PRESERVED_IN_HEIF_PASS bytes=%zu\n",icc.size());
 }
 
+// Photos-like WIC rotation through a bitmap wrapper: this is a raster edit,
+// NOT a lossless HEVC bitstream transfer. Confirm our decoder actually exposes
+// the source ICC and our already-supported raster encoder carries it forward.
+// Only a public artificial 588-byte LittleCMS ICC and generated pixels are used.
+inline void RasterRotatorICCRoundTrip(IWICImagingFactory* factory) {
+    const auto reference=Read(L"samples\\Synthetic_sRGB_ICC_from_LittleCMS.icc");
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(
+        L"samples\\synthetic-wic-icc-raster.heic",&GUID_VendorPrsyahmi,
+        GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),
+        "open encoded synthetic ICC source");
+    CComPtr<IWICBitmapFrameDecode> source;
+    Check(decoder->GetFrame(0,&source),"synthetic ICC source frame");
+    UINT count=99;
+    Check(source->GetColorContexts(0,nullptr,&count),"query embedded ICC count");
+    if(count!=1)throw std::runtime_error("Source ICC was not exposed to WIC");
+    CComPtr<IWICColorContext> cc;
+    Check(factory->CreateColorContext(&cc),"allocate ICC WIC context");
+    IWICColorContext* context=cc;
+    Check(source->GetColorContexts(1,&context,&count),"read embedded WIC ICC");
+    if(count!=1)throw std::runtime_error("Incorrect source ICC count");
+    UINT byteCount=0;
+    Check(cc->GetProfileBytes(0,nullptr,&byteCount),"ICC roundtrip size");
+    if(byteCount!=reference.size())
+        throw std::runtime_error("WIC decoder reported wrong ICC length");
+    std::vector<BYTE> actual(byteCount);
+    Check(cc->GetProfileBytes(byteCount,actual.data(),&byteCount),"ICC roundtrip bytes");
+    if(actual!=reference)throw std::runtime_error("WIC decoder altered source ICC");
+
+    CComPtr<IWICBitmapFlipRotator> rotator;
+    Check(factory->CreateBitmapFlipRotator(&rotator),"create edited WIC raster rotator");
+    Check(rotator->Initialize(source,WICBitmapTransformRotate90),
+        "rotate artificial ICC image 90 degrees");
+    UINT width=0,height=0;
+    Check(rotator->GetSize(&width,&height),"rotated WIC dimensions");
+    if(width!=32 || height!=48)
+        throw std::runtime_error("WIC raster rotation has wrong dimensions");
+
+    CComPtr<IWICBitmapEncoder> encoder;
+    Check(factory->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,
+        &encoder),"create edited ICC HEIC encoder");
+    CComPtr<IWICStream> stream;
+    Check(factory->CreateStream(&stream),"create edited ICC stream");
+    const wchar_t* output=L"samples\\synthetic-wic-icc-rotated-raster.heic";
+    Check(stream->InitializeFromFilename(output,GENERIC_WRITE),
+        "open isolated artificial rotated ICC output");
+    Check(encoder->Initialize(stream,WICBitmapEncoderNoCache),"initialize ICC edit encoder");
+    CComPtr<IWICBitmapFrameEncode> target;
+    Check(encoder->CreateNewFrame(&target,nullptr),"create ICC rotated target frame");
+    Check(target->Initialize(nullptr),"initialize ICC rotated frame");
+    Check(target->SetSize(width,height),"set true rotated output dimensions");
+    WICPixelFormatGUID format=GUID_WICPixelFormat24bppRGB;
+    Check(target->SetPixelFormat(&format),"set ICC raster pixel format");
+    if(!IsEqualGUID(format,GUID_WICPixelFormat24bppRGB))
+        throw std::runtime_error("Unexpected WIC raster pixel format negotiation");
+    Check(target->SetColorContexts(1,&context),"transfer original ICC to rotated frame");
+    Check(target->WriteSource(rotator,nullptr),"write rotated raster with ICC");
+    Check(target->Commit(),"commit ICC rotated frame");
+    Check(encoder->Commit(),"commit ICC rotated image");
+    target.Release();encoder.Release();stream.Release();
+
+    CComPtr<IWICBitmapDecoder> savedDecoder;
+    Check(factory->CreateDecoderFromFilename(output,&GUID_VendorPrsyahmi,
+        GENERIC_READ,WICDecodeMetadataCacheOnDemand,&savedDecoder),
+        "reopen artificial rotated HEIC");
+    CComPtr<IWICBitmapFrameDecode> saved;
+    Check(savedDecoder->GetFrame(0,&saved),"read rotated ICC HEIC");
+    UINT outW=0,outH=0;
+    Check(saved->GetSize(&outW,&outH),"verify ICC rotate dimensions");
+    if(outW!=width || outH!=height)
+        throw std::runtime_error("Rotated ICC HEIC geometry changed");
+    UINT savedCount=0;
+    Check(saved->GetColorContexts(0,nullptr,&savedCount),"verify saved ICC count");
+    if(savedCount!=1)throw std::runtime_error("Rotated ICC profile lost after saving");
+    CComPtr<IWICColorContext> savedCC;
+    Check(factory->CreateColorContext(&savedCC),"create saved ICC context");
+    IWICColorContext* savedPtr=savedCC;
+    Check(saved->GetColorContexts(1,&savedPtr,&savedCount),"read saved ICC context");
+    UINT savedBytes=0;
+    Check(savedCC->GetProfileBytes(0,nullptr,&savedBytes),"saved ICC length");
+    if(savedBytes!=reference.size())throw std::runtime_error("Saved ICC length changed");
+    std::vector<BYTE> savedProfile(savedBytes);
+    Check(savedCC->GetProfileBytes(savedBytes,savedProfile.data(),&savedBytes),
+        "read saved ICC bytes");
+    if(savedProfile!=reference)
+        throw std::runtime_error("Rotated raster did not preserve original ICC");
+    printf("WIC118_ROTATED_RASTER_SOURCE_ICC_ROUNDTRIP_PASS bytes=%zu size=%ux%u\\n",
+        reference.size(),width,height);
+}
+
 inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -250,6 +340,7 @@ inline void Run() {
     UnmodifiedOriginalExact(factory);
     UnmodifiedOriginalExact(factory,true);
     ExplicitRasterICCPreserved(factory);
+    RasterRotatorICCRoundTrip(factory);
     RejectAuxiliaryImage(factory);
     RejectRasterOnlyRotation(factory);
     printf("WIC_NATIVE_LOSSLESS_90_180_270_EXACT_BYTES_AND_SAFETY_PASSED\n");
