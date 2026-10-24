@@ -393,6 +393,7 @@ jobs:
               }
               $script:abSurveys[$label]=$output
               Write-Host ('WIC_PHOTOS_AB_'+$label+'='+$output.Replace([Environment]::NewLine,';'))
+              & (Join-Path $env:GITHUB_WORKSPACE 'diagnostics/photos_trace/Compare_WIC_Encoder_RAM.ps1') -Label $label -Probe $mfExe
               return [Convert]::ToUInt32($m.Groups[1].Value,16)
             } finally {
               Remove-Item Env:\WIC_HEIC_CAPABILITY_SURVEY_ONLY -ErrorAction SilentlyContinue
