@@ -678,3 +678,17 @@ Windows Server 2022の従来CIでは、旧v1.1.18と研究版それぞれの自�
 **原因仮説の更新（優先順位）**：前ターンのCIから生じた「純正HEIFが実機でも初期化失敗してフォトを止めた」という仮説は棄却。次はWindows10上の**実際のHEIC画素処理／エンコーダー選択**とPhotosの編集ボタン判定に着目。旧版0x15／研究版0x0CのWIC能力申告、公式HEIF形式GUIDと自作HEIC形式GUIDが異なる事実はCI検証済みだが、ボタン無効化との因果はまだ未確定。誤ったSameEncoder/埋込みサムネイルの申告を戻さない。旧v1.1.18も回転後画像破損や保存エラーがある**不具合版**であり、正常版扱い禁止。
 
 **次回の対照試験の設計**：人工HEICのみ使用、ユーザー写真・原本を開かない。実機が今の旧WICのままでも安全に比較できる技術的ステップとして、Windows10側のMicrosoft純正／自作WICが合成HEICを本当に復号できるか（COM生成ではなく`Initialize/GetFrame/CopyPixels`）と、同一合成画像で選択されるエンコーダー情報を区別できる**単発の自動検証**を検討する。ただし同じMFT/COM診断の反復、レジストリ変更、新MSIの配布を行わない。GUI回転保存のP0未達、研究版Win10実機未検証、完成率45％は変更しない。
+
+## 2026-10-24：実機COM成功を受けた人工HEIC限定・ハッシュ認証済み実復号診断
+
+Windows10実機のユーザー提供診断では、Microsoft純正HEIF decoder・純正HEIF encoder・自作HEIC decoder/encoder のCOM生成が**すべてS_OK**で、Media FoundationのHEVC decoder/encoder登録数は0。一方、旧WIC v1.1.18での診断だったため、研究版のWindows10 GUI編集可否とは直結しない。実機レポートとユーザー環境のパス、DLLハッシュ、MSI製品キーの原本はGitHubへコミットせず、先の節に技術的事実のみ匿名化して記録。
+
+次の実証段階として、既存の `diagnostics/photos_trace/HevcMfReadOnlyProbe.cpp` に**独立オプトイン** `--synthetic-wic-test` を追加（コミット `e040771547f03378e5215cf5c8a2793d52febad0`）。実行ファイルの隣にある固定の公開人工HEIC `fixture-irot3-exif6-noaux.heic` だけを読む。10,597バイトかつGit blob SHA1 `126b24780e8c36a0e1521df982067ab12f971470` をWindows CryptoAPIで検証し、任意入力・リパースポイント・ハッシュ差を拒否。純正／自作WICをCLSID指定で別々にインスタンス化し、`Initialize`、`GetFrame`、WIC RGB24変換、メモリへの16×8画素`CopyPixels`のHRESULTと合成データの指紋を報告。ファイルや写真の上書き、レジストリ更新、Photos起動、MSIインストールは一切しない。元の画像なし診断の引数なし・`--wic-activate-no-image` は維持。
+
+別CMD `diagnostics/photos_trace/Run_Photos_WIC_Synthetic_Only.cmd` も追加（`22382a4b89f46ddc6f10e7d3f9fb5734028abac7`）。元の診断CMDから人工HEIC試験を自動実行することはない。ベンダーのDLLは実行プロセス内にロードされることがあるため、ユーザーが明示的に選択するモードに限定。
+
+[**専用CI #40072408037 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40072408037)：Windows x64 C++ビルド、通常の画像なし診断、人工HEICのみの試験の起動・SHA検証、使い捨てコピーを1バイト変更した場合にエラー8で拒否する検証、6ファイルの成果物組立て、アップロードまで完了。旧v1.1.18や研究版はこの隔離診断用VMには導入していないため、**自作WICの`CopyPixels`成功は現時点で確認できていない**。MSI提供とは無関係。
+
+実WIC A/B統合CIへ当該人工復号テストを増設した一時試験（`c1f497cb39ee25243a5525d99a411424eb2bbf05`）はジョブ生成前の失敗となり原因未確定。既存WIC製品の不具合と解釈せず、成功済みの従来ワークフローの全内容に復元（`e10a178f3f6252e70102b8e7c5ad35741a7c2f52`）。[**復旧後の統合CI #40072685441 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40072685441)。既存WICの保護機能、人工HEIC回転テスト、WIC旧研究A/Bおよび独立サムネイルMSI試験は変えていない。
+
+**判定限界と次**：この新コードの実機人工画像復号はユーザーがまだ実行していない。実行結果でMicrosoft純正HEIFが実際にHEICを復号できるかを把握できるが、それでもPhotosの編集ボタン判定や回転後保存までは実証できない。古い1.1.18の画像変形・保存エラーは依然あり、正常版扱いしない。既存写真・HEIC Managerに変更なし。完成率45%を据え置く。
