@@ -1,4 +1,4 @@
-#requires -version 5.1
+﻿#requires -version 5.1
 # Export ONLY latest B JSON and its SHA-pinned synthetic working HEIC.
 # Does not read arbitrary user photos. No overwrite, deletion or MSI activity.
 $ErrorActionPreference='Stop'

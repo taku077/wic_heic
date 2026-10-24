@@ -1,4 +1,4 @@
-#requires -version 5.1
+﻿#requires -version 5.1
 # Restore THIS kit or a previous kit's exact pre-install state using
 # current safe MSI flags. Never guess between multiple stored sessions.
 [CmdletBinding()]
