@@ -207,6 +207,33 @@ inline void NormalizeExif(const Bytes& b,size_t start,size_t length,std::vector<
         }else if(value!=1)Bad("Unsupported Exif Orientation");
     }
 }
+// An iref box is optional for a true single-item HEIC. The old rotation
+// path required iref even if no Exif/thumbnail/auxiliary item existed, so
+// metadata-free standalone HEIC copies could never rotate losslessly.
+// Accept absence of iref ONLY after verifying that iinf lists exactly ONE
+// primary HEVC-coded image and ipma associates no other item. Never use
+// absence of references to assume Exif, HDR or thumbnails are safe.
+inline bool NoReferenceSinglePrimary(const Bytes& b,const Box& iinf,
+    const std::vector<Association>& associations,uint32_t primary) {
+    const uint32_t v=uint32_t(Read(b,iinf.data,1));
+    if(v>1)Bad("Unsupported single-image iinf version");
+    const size_t nWidth=v?4:2;
+    const size_t n=Read(b,iinf.data+4,nWidth);
+    const auto entries=Children(b,iinf.data+4+nWidth,iinf.end);
+    if(n!=1||entries.size()!=1||entries[0].type!="infe")
+        return false;
+    const auto& e=entries[0];
+    const uint32_t ev=uint32_t(Read(b,e.data,1));
+    if(ev!=2&&ev!=3)return false;
+    const size_t idWidth=ev==2?2:4;
+    const uint32_t id=uint32_t(Read(b,e.data+4,idWidth));
+    const uint32_t itemType=uint32_t(Read(b,e.data+4+idWidth+2,4));
+    if(id!=primary||itemType!=0x68766331) // 'hvc1'
+        return false;
+    if(associations.size()!=1||associations[0].id!=primary)
+        return false;
+    return true;
+}
 // transform: 0 identity, 1 CW90, 2 CW180, 3 CCW90.
 inline Bytes Transform(const Bytes& original,uint8_t transform) {
     if(transform>3)Bad("Unsupported HEIF transform option");
@@ -253,12 +280,25 @@ inline Bytes Transform(const Bytes& original,uint8_t transform) {
     if(old>3)Bad("Malformed irot value");
     out[irot.data]=uint8_t((old+4-transform)%4);
     std::vector<Patch> exifPatches;
-    Box iinf=One(m,"iinf"),iref=One(m,"iref"),iloc=One(m,"iloc");
-    if(HasUnadjustedLinkedVisualImage(original,iref,primary))
+    const Box iinf=One(m,"iinf");
+    const Box* iref=nullptr;
+    for(const auto& item:m)if(item.type=="iref"){
+        if(iref)Bad("Duplicate HEIF reference box");
+        iref=&item;
+    }
+    if(!iref) {
+        if(!NoReferenceSinglePrimary(original,iinf,associations,primary))
+            Bad("Missing references for nontrivial HEIC item graph");
+        // A reference-free single hvc1 image cannot have Exif, thumbnails,
+        // gain maps or other image items. All unrelated bytes stay unchanged.
+        return out;
+    }
+    const Box iloc=One(m,"iloc");
+    if(HasUnadjustedLinkedVisualImage(original,*iref,primary))
         Bad("Thumbnail/HDR auxiliary image rotation not yet supported");
     const auto exifs=ExifIDs(original,iinf);
     uint32_t exifId=0;
-    for(uint32_t id:exifs)if(HasCdsc(original,iref,id,primary)){
+    for(uint32_t id:exifs)if(HasCdsc(original,*iref,id,primary)){
         if(exifId)Bad("Multiple primary Exif items");
         exifId=id;
     }
