@@ -373,8 +373,26 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) {
 		// A decoded RGB bitmap or a WIC flip-rotator has no HEVC bitstream to
 		// preserve. Only source frames from OUR decoder may take this path.
-		if(!pIBitmapSource || prc || m_LosslessReady || m_HasPixels)
+		if(!pIBitmapSource || m_LosslessReady || m_HasPixels || m_Created || m_WrittenLines)
 			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+		// WIC clients may pass an explicit full-image WICRect rather than NULL.
+		// This is exactly the same source content; accepting a strict full-image
+		// rectangle improves the Photos-style save path without ever rotating a
+		// cropped raster as if it represented the original compressed HEVC.
+		if(prc) {
+			UINT fullW=0,fullH=0;
+			HRESULT fullHr=pIBitmapSource->GetSize(&fullW,&fullH);
+			if(FAILED(fullHr))return fullHr;
+			if(!fullW || !fullH || prc->X!=0 || prc->Y!=0 ||
+				prc->Width<=0 || prc->Height<=0 ||
+				static_cast<UINT>(prc->Width)!=fullW ||
+				static_cast<UINT>(prc->Height)!=fullH) {
+				WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+					m_BitmapTransform,m_HeifCompressionMethod,"lossless-partial-rect",
+					WINCODEC_ERR_UNSUPPORTEDOPERATION);
+				return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+			}
+		}
 		IHeicRawSource* raw=nullptr;
 		HRESULT hr=pIBitmapSource->QueryInterface(
 			IID_IHeicRawSource,reinterpret_cast<void**>(&raw));
