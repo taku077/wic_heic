@@ -826,3 +826,14 @@ GitHub現行ブランチで過去のNative SourceTransform対応実験はWindows
 - 修正コミット `3a0b9a0dc9c53761796dce77772cca766adbe358`。製品DLLは今回変更せず、前回実装済みの `IStream::Revert` fallbackの再圧縮保存経路が動くことをCIで確認。
 - [**GitHub Windows総合CI #40086467361 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40086467361)。`WIC_RASTER_PARTIAL_WRITE_TRANSACTION_REVERT_PASS`、`WIC_RASTER_PARTIAL_WRITE_ROLLBACK_PASS`、`WIC_HEIC_PARTIAL_WRITE_TRANSACTION_REVERT_FALLBACK_PASS`、旧版／研究版WICのHEVC MFT非干渉確認を含む。使用データは合成RGBと既存公開HEICのみ。
 - **進捗率は暫定52％のまま**。再圧縮時の失敗復旧が検証されたが、標準フォトのHEVC拡張警告解消、編集・回転ボタン、GUIからの保存を実機で直した証拠ではない。実機テストの小出し要求、新MSI提供、ユーザー写真利用はしない。
+
+## 2026-10-24：明示HEVC保存の不要な拒否を修正（人工HEIC 赤→緑、標準Photos P0は未合格）
+
+**発見した製品コードの互換性不備**：`wic_heic/HeicBitmapFrameEncode.cpp::WriteSource` は元の自作HEICフレームに確実な `IHeicRawSource` があり、切抜き・幾何変更・ICC/画素形式の変更がない場合にも、`HeifCompressionMethod=2`（明示HEVC）を無条件で「元コンテナーの無再圧縮コピー」経路から除外していた。後段では元HEICのメタ情報を落とすラスター再エンコードを安全拒否するため、保存要求が失敗した。**この条件はWindows10 Photosの編集ボタンの原因と断定されていない。** 実証対象は公開人工HEICをWICから直接渡す経路のみ。
+
+1. **赤テスト** [コミット `1055998fe31a`](https://github.com/taku077/wic_heic/commit/1055998fe31a296f674e7afc2e74092eba4d3193)：`wictest/WICDirectLosslessProbe.h::PreserveOriginalHevcWithExplicitHevcOption` を追加。Exif等を含む公開人工HEICを明示HEVCオプション付きで `WriteSource` へ渡し、保存後にメモリストリームと原HEICの全バイト一致を要求。[**CI #40090039615**](https://github.com/taku077/wic_heic/actions/runs/40090039615) は `WIC_LOSSLESS_COM_FAILURE explicit HEVC raw source copy 0x88982F81` により期待どおりFAIL。
+2. **製品コードの最小修正** [コミット `43cd7a2b8e40`](https://github.com/taku077/wic_heic/commit/43cd7a2b8e40d080988a6acb2ec2cc465a0a2021)：元HEICを変更せずコピーできる経路について明示HEVC指定を許可。ただし指定時はHEIFの `ftyp` と `meta/iinf/infe` を解析し、primaryおよび他の符号化画像項目がHEVC `hvc1` と検証できる場合に限る。未認識構造・AV1等は拒否。コピー可能な場合は**HEVC再エンコードを実施せず、元コンテナー全体をバイト単位で保持**する。
+3. **旧安全テストの条件修正**：初回の修正CI [#40090372114](https://github.com/taku077/wic_heic/actions/runs/40090372114) は、新機能を証明する `WIC_EXPLICIT_HEVC_VERIFIED_SOURCE_CONTAINER_BYTE_EXACT_PASS` には合格したが、旧テストが「変更なしの明示HEVC保存も必ず拒否」という旧契約のままで FAIL。安全性を弱めず、**明示HEVC＋寸法変更**と**既定オプション＋切り抜き**のいずれも `0x88982F81` で拒否すべきことを保持するテストへ改訂した（[コミット `2328f1be19e6`](https://github.com/taku077/wic_heic/commit/2328f1be19e6b98b05c26346a3c917d4308d5a2d)）。
+4. [**最終Windows総合CI #40090686956 SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40090686956)：`WIC_EXPLICIT_HEVC_VERIFIED_SOURCE_CONTAINER_BYTE_EXACT_PASS`、`WIC_RAW_HEIC_EXPLICIT_HEVC_GEOMETRY_AND_CROP_FAIL_CLOSED_PASS`、既存90/180/270度回転と元メタ情報の保持、部分書込み時のRevert、プライベートサムネイル共存、旧1.1.18との比較、Media Foundation HEVC MFT非干渉を含む総合CIを確認。ユーザーのPC・写真・レジストリ・HEIC Managerには一切変更なし。
+
+**依然未証明**：Windows10 Photos 2026.11090.22001.0 が実際にこの保存APIオプションを選択するか、HEVC拡張警告が消えるか、編集・回転ボタンが有効になるか、Photos GUIからの安全な回転保存は未検証。Photos GUIと同等の最終合格ではない。実機テストの小出し・MSI提示を行わず、**進捗率は暫定52％のまま**とする。
