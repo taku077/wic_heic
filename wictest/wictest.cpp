@@ -111,7 +111,21 @@ void CheckRotatedExifFixture()
         printf("fixture: CopyPixels HRESULT=0x%08X\n",(unsigned)hr);
         throw std::exception("fixture: transformed pixels could not be read");
     }
-    printf("fixture: ROTATED_HEIC_METADATA_AND_PIXELS_PASSED\n");
+    // Metadata query reader must own its backing COM metadata blocks.
+    // Historically the metadata block reader's reference count was left
+    // uninitialized; releasing the source frame could destroy the reader.
+    pixels.Release();
+    frame.Release();
+    decoder.Release();
+    PropVariantInit(&value);
+    hr=metadata->GetMetadataByName(L"/app1/ifd/{ushort=274}",&value);
+    const unsigned retainedOrientation=(value.vt==VT_UI2)?value.uiVal:
+        (value.vt==VT_UI4)?value.ulVal:9999;
+    PropVariantClear(&value);
+    if(FAILED(hr) || retainedOrientation!=1)
+        throw std::exception("fixture: Exif reader died with its decoder frame");
+    printf("WIC118_EXIF_QUERY_READER_LIFETIME_PASS\\n");
+    printf("fixture: ROTATED_HEIC_METADATA_AND_PIXELS_PASSED\\n");
 }
 
 void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bool rotate90 = false)
