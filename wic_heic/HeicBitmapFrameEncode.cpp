@@ -278,6 +278,30 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 {
 	WicHeicDiagnostic::Emit("WriteSourceEnter",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,prc?"cropped":"full");
 
+	// A Photos rotation may send us a WIC flip-rotator, a converted
+	// raster, or our original HEIC frame. These have fundamentally different
+	// metadata / source-bitstream access. Emit only the COM interface class,
+	// never user image pixels, source filenames, paths, or EXIF values.
+	const char* sourceKind="null";
+	if (pIBitmapSource) {
+		const auto exposes=[&](REFIID iid)->bool {
+			void* iface=nullptr;
+			HRESULT hr=pIBitmapSource->QueryInterface(iid,&iface);
+			if(FAILED(hr)||!iface)return false;
+			reinterpret_cast<IUnknown*>(iface)->Release();
+			return true;
+		};
+		if(exposes(IID_IHeicRawSource)) sourceKind="self-wic-original";
+		else if(exposes(IID_IWICBitmapFlipRotator)) sourceKind="wic-flip-rotator";
+		else if(exposes(IID_IWICFormatConverter)) sourceKind="wic-format-converter";
+		else if(exposes(IID_IWICBitmapScaler)) sourceKind="wic-scaler";
+		else if(exposes(IID_IWICBitmapClipper)) sourceKind="wic-clipper";
+		else sourceKind="opaque-raster";
+	}
+	WicHeicDiagnostic::Emit("WriteSourceInputClass",
+		m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,sourceKind);
+
+
 	// INCREMENTAL 1.1.18 FIX: ordinary WIC WriteSource receives an authentic
 	// decoder frame when simply saving an unchanged HEIC. The historical
 	// 1.1.18 path unnecessarily recompressed it into 8-bit RGB and stripped
