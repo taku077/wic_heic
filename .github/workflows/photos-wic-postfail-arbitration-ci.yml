@@ -553,6 +553,31 @@ jobs:
               }
             }
             Write-Host 'WIC_ACTUAL_118_FORCES_RGB24_WHILE_RESEARCH_PRESERVES_RGB48_PASS'
+            # Old 1.1.18 and research are installed separately on
+            # Server 2022. Windows 10 may additionally register the
+            # Microsoft Store HEIF codec. Count HEIC signature candidates
+            # instead of assuming 'default is custom' proves Windows 10 UI
+            # compatibility. A difference here would invalidate this A/B.
+            foreach($key in @('WIC_PHOTOS_WIC_DECODER_CENSUS_TESTED',
+                               'WIC_PHOTOS_HEIC_PATTERN_MATCHING_DECODERS',
+                               'WIC_PHOTOS_HEIC_PATTERN_CUSTOM_DECODERS',
+                               'WIC_PHOTOS_HEIC_PATTERN_COMPETITOR_DECODERS',
+                               'WIC_PHOTOS_WIC_DECODER_CENSUS_QUERY_ERRORS')){
+              $values=@()
+              foreach($label in @('ORIGINAL118','RESEARCH')){
+                $pat='(?m)^'+[regex]::Escape($key)+'=(\d+)'
+                $m=[regex]::Match([string]$script:abSurveys[$label],$pat)
+                if(-not $m.Success) {
+                  throw ('HEIC registry candidate census missing '+$label+' '+$key)
+                }
+                $values+=[int]$m.Groups[1].Value
+              }
+              if($values[0] -ne $values[1]){
+                throw ('HEIC candidate count changed between MSI installations: '+$key)
+              }
+              Write-Host ('WIC_PHOTOS_WIC_HEIC_AB_'+$key+'='+$values[0])
+            }
+            Write-Host 'WIC_PHOTOS_WIC_HEIC_CANDIDATE_SET_SAME_ON_BOTH_MSIS_PASS'
             Write-Host 'WIC_PHOTOS_EDITOR_13_API_STABLE_ACROSS_118_AND_RESEARCH_PASS'
             # New A/B: both codecs may win arbitration, but only a real
             # full-resolution CopyPixels proves that the WIC pixel path works.
