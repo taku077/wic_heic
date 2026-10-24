@@ -1,5 +1,5 @@
 # Windows 10 PowerShell 5.1. Single user action: read-only WIC, MFT,
-# SHA-pinned public synthetic HEIC explicit and automatic decoder surveys.
+# SHA-pinned public synthetic HEIC decoder and memory-only encoder surveys.
 # No Photos GUI, MSIs, other photos, registration or existing output touched.
 # Shareable ZIP contains ONLY sanitized diagnostics, not raw DLL/user paths.
 $ErrorActionPreference='Stop'
@@ -111,6 +111,29 @@ $summary.Add('NativeMicrosoftCopyPixels='+$nativeHr)
 $summary.Add('CustomWicCopyPixels='+$customHr)
 $summary.Add('AutoSelectedWicDecoder='+$chosen)
 $summary.Add('AutoSelectedCopyPixels='+$autoHr)
+
+# Differentiates mere WIC encoder COM creation from acceptance and actual
+# memory-stream completion on the same unchanged, SHA-pinned HEIC input.
+# These fields NEVER claim an app UI save or user-picture metadata retention.
+foreach($pair in @(
+  @('microsoft_heif','NativeHeifEncoder'),
+  @('custom_heic','CustomHeicEncoder')
+)) {
+  $role=$pair[0];$label=$pair[1]
+  $sourceHr=FindHr $synthetic.Lines ('^HEVC_SYNTHETIC_ENCODER role='+$role+' stage=write_source hr=(0x[0-9A-F]{8})')
+  $commitHr=FindHr $synthetic.Lines ('^HEVC_SYNTHETIC_ENCODER role='+$role+' stage=encoder_commit hr=(0x[0-9A-F]{8})')
+  $exact='NOT_REACHED'
+  foreach($line in $synthetic.Lines) {
+    if($line -match ('^HEVC_SYNTHETIC_ENCODER role='+$role+' stage=readback hr=0x[0-9A-F]{8} bytes=\\d+ exact_original_bytes=([01]) photos_not_tested=1')) {
+      $exact=$Matches[1];break
+    }
+  }
+  $summary.Add($label+'WriteSource='+$sourceHr)
+  $summary.Add($label+'Commit='+$commitHr)
+  $summary.Add($label+'ExactSourceBytes='+$exact)
+}
+$summary.Add('Encoder trial scope=memory_only; Photos GUI/HEVC license not tested.')
+
 $hasPin=@($synthetic.Lines | Where-Object {$_ -match '^HEVC_SYNTHETIC_GIT_BLOB_VERIFIED_PASS bytes=10597'}).Count -eq 1
 $hasEnd=@($synthetic.Lines | Where-Object {$_ -match '^HEVC_SYNTHETIC_WIC_COMPARISON_COMPLETE'}).Count -eq 1
 $complete=($inventory.Exit -eq 0 -and $synthetic.Exit -eq 0 -and
