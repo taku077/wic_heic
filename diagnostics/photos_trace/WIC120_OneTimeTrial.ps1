@@ -116,6 +116,25 @@ function AdminRequired {
   throw 'Run this PowerShell as administrator ONLY after explicitly choosing -Install or -Restore'
  }
 }
+function AssertInteractiveShell([string]$stage) {
+ # Windows Server runner has no normal user's desktop.
+ if($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_TEMP){return}
+ $sid=[Diagnostics.Process]::GetCurrentProcess().SessionId
+ $desktop=@(Get-Process -Name explorer -ErrorAction SilentlyContinue |
+   Where-Object { $_.SessionId -eq $sid })
+ if($desktop.Count -eq 0) {
+   throw ('EXPLORER_NOT_RUNNING_'+$stage+': Desktop is not active. '+
+     'Open Task Manager (Ctrl+Shift+Esc), File > Run new task > explorer.exe. '+
+     'Do not retry MSI installation until Explorer works.')
+ }
+}
+function AssertPhotosClosed {
+ if($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_TEMP){return}
+ $active=@(Get-Process -Name Photos,Microsoft.Photos -ErrorAction SilentlyContinue)
+ if($active.Count) {
+   throw 'PHOTOS_OPEN: Close all Microsoft Photos windows before installing or restoring WIC. Nothing changed.'
+ }
+}
 function Msi([string]$op,[string]$file,[string]$tag){
  $log=Join-Path $root ('WIC120_'+$tag+'_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'.log')
  $ui=if($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_TEMP){'/qn'}else{'/passive'}
@@ -124,9 +143,16 @@ function Msi([string]$op,[string]$file,[string]$tag){
  # If the DLL is in use, the installer may require a controlled restart.
  $argsText='/'+$op+' "'+$file+'" '+$ui+' MSIRESTARTMANAGERCONTROL=Disable /norestart /l*v "'+$log+'"'
  $proc=Start-Process -FilePath 'msiexec.exe' -ArgumentList $argsText -Wait -PassThru
- if($proc.ExitCode -notin @(0,3010)){throw "MSI $op failed ($($proc.ExitCode)); inspect $log"}
  Write-Host "MSI_$tag EXIT=$($proc.ExitCode) LOG=$log"
- if($proc.ExitCode -eq 3010){Write-Warning 'Restart is required, do not edit photos before reboot'}
+ AssertInteractiveShell 'AFTER_MSI'
+ if($proc.ExitCode -eq 3010){
+   throw ('MSI_REBOOT_REQUIRED_'+$tag+': Windows Installer requires a system restart. '+
+     'No automatic reboot will occur. Do not open or edit HEIC files until manually restarting Windows, '+
+     'then check the installed WIC version before continuing. Keep session JSON and log.')
+ }
+ if($proc.ExitCode -ne 0) {
+   throw "MSI $op failed ($($proc.ExitCode)); inspect $log. Do not attempt another install."
+ }
 }
 $state=ReadState
 $preview=PreviewState
@@ -138,6 +164,8 @@ if($PSCmdlet.ParameterSetName -eq 'Check') {
  return
 }
 AdminRequired
+AssertInteractiveShell 'BEFORE_MSI'
+AssertPhotosClosed
 if($Install) {
  GlobalState $state.Data '1.1.18' $oldDllSha
  $sessionPath=Join-Path $root ('WIC120_Session_'+[guid]::NewGuid().ToString('N')+'.json')
