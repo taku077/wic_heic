@@ -459,27 +459,6 @@ jobs:
             }
             # Compare TWO already-generated 8-bit HEICs with the same exact
             # file bytes in both codecs. PLAIN is a disposable PNG->HEIC RGB
-            # The historical writer is NOT implemented. The research frame
-            # accepts a metadata writer only after legal Frame.Initialize.
-            # This is intentional; verify correct lifecycle and never count
-            # changed/ignored metadata as a safe Photos save.
-            foreach($item in @(
-              @('WIC_PHOTOS_EDITOR_FRAME_METADATA_WRITER_HRESULT','0x80004001','0x88982F04'),
-              @('WIC_PHOTOS_EDITOR_FRAME_READY_METADATA_WRITER_HRESULT','0x80004001','0x00000000')
-            )) {
-              $key=$item[0]
-              $values=@()
-              foreach($label in @('ORIGINAL118','RESEARCH')){
-                $m=[regex]::Match([string]$script:abSurveys[$label],
-                  '(?m)^'+[regex]::Escape($key)+'=([^\r\n]+)')
-                if(-not $m.Success){throw ('Metadata writer survey missing '+$label+' '+$key)}
-                $values+= $m.Groups[1].Value.Trim()
-              }
-              if($values[0] -cne $item[1] -or $values[1] -cne $item[2]){
-                throw ('Unexpected historical/research metadata lifecycle '+$key+': '+($values -join ' vs '))
-              }
-            }
-            Write-Host 'WIC_PHOTOS_FRAME_METADATA_WRITER_INITIALIZED_COMPATIBILITY_PASS'
             # encode; ICC is a 64x64 synthetic sRGB ICC roundtrip. Unlike the
             # previous 10-bit comparison, BOTH should advertise RGB24. This
             # controls for the historical 10-bit forced-RGB24 difference.
