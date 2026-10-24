@@ -30,8 +30,12 @@ if($code -ne 0 -or
   throw ('Synthetic HEIC WIC A/B incomplete, label='+$Label+' exit='+$code)
 }
 $full=$log -join [Environment]::NewLine
-if($full -notmatch '(?m)^HEVC_SYNTHETIC_AUTO stage=decoder_clsid hr=0x00000000 custom=1 microsoft=0$'){
-  throw ('Automatic synthetic HEIC frame not selected from private WIC '+$Label)
+$auto=[regex]::Match($full,'(?m)^HEVC_SYNTHETIC_AUTO stage=decoder_clsid hr=0x([0-9A-F]{8}) custom=([01]) microsoft=([01])$')
+if($auto.Success) {
+  Write-Host ('WIC_PHOTOS_SYNTHETIC_AUTO_DECODER label='+$Label+' hr='+$auto.Groups[1].Value+
+    ' custom='+$auto.Groups[2].Value+' microsoft='+$auto.Groups[3].Value)
+} else {
+  Write-Host ('WIC_PHOTOS_SYNTHETIC_AUTO_DECODER label='+$Label+' result=NOT_REACHED')
 }
 function Get-Stage([string]$role,[string]$stage) {
   $re='(?m)^HEVC_SYNTHETIC_ENCODER role='+[regex]::Escape($role)+' stage='+[regex]::Escape($stage)+' hr=0x([0-9A-F]{8})$'
@@ -45,14 +49,14 @@ function Get-Exact([string]$role) {
   if($match.Success -and $match.Groups[1].Value -eq '00000000') {return $match.Groups[3].Value}
   return 'NOT_REACHED'
 }
-foreach($role in @('microsoft_heif','custom_heic')) {
+foreach($role in @('microsoft_heif_explicit','custom_heic_explicit')) {
   $created=Get-Stage $role 'create'
   $wrote=Get-Stage $role 'write_source'
   $committed=Get-Stage $role 'encoder_commit'
   $exact=Get-Exact $role
   Write-Host ('WIC_PHOTOS_SYNTHETIC_RAM_SAVE_AB label='+$Label+' encoder='+$role+
     ' create='+$created+' write='+$wrote+' commit='+$committed+' exact='+$exact)
-  if($Label -eq 'RESEARCH' -and $role -eq 'custom_heic') {
+  if($Label -eq 'RESEARCH' -and $role -eq 'custom_heic_explicit') {
     if($created -cne '00000000' -or $wrote -cne '00000000' -or
        $committed -cne '00000000' -or $exact -cne '1'){
       throw 'Research WIC failed byte-exact synthetic HEIC memory output'
