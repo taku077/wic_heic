@@ -519,9 +519,11 @@ inline void RejectOpaqueSourceWithNoHeicProvenance(IWICImagingFactory* factory) 
     puts("WIC_OPAQUE_BITMAPSOURCE_HEIC_PROVENANCE_GUARD_PASS");
 }
 inline void RejectUnsafeOriginalHeicRasterFallback(IWICImagingFactory* factory) {
-    // Regression for a metadata-loss loophole: explicit HEVC and cropped
-    // WriteSource previously bypassed the exact-source safeguard and
-    // silently re-encoded an original HEIC with missing EXIF/HDR assets.
+    // Regression for a metadata-loss loophole: geometry edits that require
+    // rasterization must be rejected when source HEIC metadata cannot be
+    // carried forward. Unchanged verified HEVC sources with an explicit
+    // HEVC encoder request can instead use the separately tested exact-copy
+    // path without re-encoding or dropping EXIF/HDR assets.
     const wchar_t* sourceFile=L"samples\\fixture-irot3-exif6.heic";
     const auto original=Read(sourceFile);
     CComPtr<IWICBitmapDecoder> decoder;
@@ -560,7 +562,7 @@ inline void RejectUnsafeOriginalHeicRasterFallback(IWICImagingFactory* factory) 
                 "unsafe-raster explicit HEVC");
         }
         Check(frame->Initialize(options),"unsafe-raster init frame");
-        Check(frame->SetSize(test==0?w:w-1,h),"unsafe-raster output size");
+        Check(frame->SetSize(w-1,h),"unsafe-raster edited output size");
         WICRect crop{0,0,int(w-1),int(h)};
         const HRESULT hr=frame->WriteSource(source,test==0?nullptr:&crop);
         printf("WIC_RAW_HEIC_METADATA_SAFE_REJECTION_%d=0x%08X\n",
@@ -573,7 +575,7 @@ inline void RejectUnsafeOriginalHeicRasterFallback(IWICImagingFactory* factory) 
     }
     if(Read(sourceFile)!=original)
         throw std::runtime_error("HEIC raster rejection modified input");
-    printf("WIC_RAW_HEIC_EXPLICIT_HEVC_AND_CROP_FAIL_CLOSED_PASS\n");
+    printf("WIC_RAW_HEIC_EXPLICIT_HEVC_GEOMETRY_AND_CROP_FAIL_CLOSED_PASS\n");
 }
 
 inline void RejectMutationsAfterLosslessCapture(IWICImagingFactory* factory) {
