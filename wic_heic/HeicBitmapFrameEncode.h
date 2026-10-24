@@ -18,6 +18,8 @@ private:
 	bool m_OptionsInitialized;
 	bool m_LosslessReady;
 	std::vector<uint8_t> m_LosslessBytes;
+	// Explicit WIC ICC profile for raster edits; never silently discard it.
+	std::vector<uint8_t> m_RasterICC;
 	WICPixelFormatGUID m_PixelFormat;
 	int m_BitDepthPerChannel;
 
