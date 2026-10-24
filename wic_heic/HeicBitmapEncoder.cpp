@@ -232,13 +232,20 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 		    st.cbSize.QuadPart==0) return;
 		ULARGE_INTEGER zero{};
 		const HRESULT reset=m_Stream->SetSize(zero);
+		HRESULT reverted=E_NOTIMPL;
 		if (SUCCEEDED(reset)) {
 			LARGE_INTEGER begin{};
 			m_Stream->Seek(begin,STREAM_SEEK_SET,nullptr);
+		} else {
+			// Some Windows COM streams support transactional Revert even when
+			// SetSize is unavailable. Only try this after an actual failed
+			// encode, never during a successful write.
+			reverted=m_Stream->Revert();
 		}
 		WicHeicDiagnostic::Emit("EncoderRasterPartialWriteRollback",0,0,0,0,
-			SUCCEEDED(reset)?"empty-stream-restored":"stream-rollback-unavailable",
-			reset);
+			SUCCEEDED(reset)?"empty-stream-restored":
+			SUCCEEDED(reverted)?"stream-revert-restored":"stream-rollback-unavailable",
+			SUCCEEDED(reset)?reset:reverted);
 	};
 	try
 	{
@@ -289,13 +296,19 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 				// for an incomplete image, and do not touch input images.
 				ULARGE_INTEGER empty{};
 				const HRESULT reset=m_Stream->SetSize(empty);
+				HRESULT reverted=E_NOTIMPL;
 				if(SUCCEEDED(reset)) {
 					LARGE_INTEGER begin{};
 					m_Stream->Seek(begin,STREAM_SEEK_SET,nullptr);
+				} else {
+					// Fallback for transactional IStreams: Revert can restore
+					// the previous committed state without supporting resize.
+					reverted=m_Stream->Revert();
 				}
 				WicHeicDiagnostic::Emit("EncoderCommitPartialWriteRollback",
 					m_Frames[0]->m_Width,m_Frames[0]->m_Height,0,0,
-					SUCCEEDED(reset)?"empty-stream-restored":"stream-rollback-unavailable",
+					SUCCEEDED(reset)?"empty-stream-restored":
+					SUCCEEDED(reverted)?"stream-revert-restored":"stream-rollback-unavailable",
 					STG_E_WRITEFAULT);
 				return STG_E_WRITEFAULT;
 			}
