@@ -432,10 +432,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// our own source frame and silently discarded EXIF/XMP/MakerNote/HDR.
 	// Only the actual primary decoder frame has IHeicRawSource; a Photos
 	// bitmap/flip-rotator never gains that capability by guessing provenance.
-	// Explicit HEVC compression (2), supplied ICC, cropping or geometry
-	// changes prohibit this fast path.
+	// ICC changes, cropping, or geometry changes prohibit this fast path.
+	// Explicit HEVC (2) permits a byte-exact copy ONLY after verifying all
+	// compressed image items are HEVC; it does not force a lossy recompression.
 	if (pIBitmapSource && !prc && m_BitmapTransform == 0 &&
-	    m_HeifCompressionMethod != 2 &&
 	    !m_LosslessReady && !m_HasPixels && !m_WrittenLines && !m_Created) {
 		IHeicRawSource* originalSource = nullptr;
 		if (SUCCEEDED(pIBitmapSource->QueryInterface(
@@ -455,6 +455,18 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 				originalSource->Release();
 				if (FAILED(hr)) return hr;
 				if (originalBytes.empty()) return WINCODEC_ERR_BADIMAGE;
+                // An explicit HEVC request is already satisfied when every
+                // compressed image item is verified as hvc1. Retain the
+                // entire original HEIF container, including unknown metadata
+                // payload bytes, instead of recompressing and stripping them.
+                if(m_HeifCompressionMethod==2 &&
+                   !HeicLosslessNative::HasOnlyHevcImagesAndKnownMetadata(originalBytes)){
+                    WicHeicDiagnostic::Emit("WriteSourceRejected",m_Width,m_Height,
+                        0,m_HeifCompressionMethod,
+                        "explicit-hevc-source-codec-not-verified",
+                        WINCODEC_ERR_UNSUPPORTEDOPERATION);
+                    return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+                }
 				m_LosslessBytes = std::move(originalBytes);
 				m_LosslessReady = true;
 				stagedSettings.Accept();

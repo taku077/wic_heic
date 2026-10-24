@@ -234,6 +234,51 @@ inline bool NoReferenceSinglePrimary(const Bytes& b,const Box& iinf,
         return false;
     return true;
 }
+// Verify an unchanged source is already HEVC-coded before honoring an
+// explicit HEVC output option by copying its original container. Check the
+// actual primary item in iinf, not just the ftyp brand: HEIF may contain
+// image codecs other than HEVC. Fail closed for unrecognized item types.
+inline bool HasOnlyHevcImagesAndKnownMetadata(const Bytes& b) noexcept {
+    try {
+        if(b.empty() || b.size()>128u*1024u*1024u)return false;
+        const auto top=Children(b,0,b.size());
+        const auto ftyp=One(top,"ftyp"),meta=One(top,"meta");
+        if(ftyp.end-ftyp.data<8)return false;
+        const uint64_t brand=Read(b,ftyp.data,4);
+        bool heicBrand=(brand==0x68656963 || brand==0x68656978);
+        for(size_t pos=ftyp.data+8;pos+4<=ftyp.end;pos+=4){
+            const uint64_t value=Read(b,pos,4);
+            if(value==0x68656963 || value==0x68656978)heicBrand=true;
+        }
+        if(!heicBrand)return false;
+        const auto boxes=Children(b,meta.data+4,meta.end);
+        const auto iinf=One(boxes,"iinf");
+        const uint32_t primary=Primary(b,meta);
+        const uint32_t version=uint32_t(Read(b,iinf.data,1));
+        if(version>1)return false;
+        const size_t width=version?4:2;
+        const uint32_t count=uint32_t(Read(b,iinf.data+4,width));
+        const auto entries=Children(b,iinf.data+4+width,iinf.end);
+        if(count!=entries.size())return false;
+        bool verifiedPrimary=false;
+        for(const auto& entry:entries){
+            if(entry.type!="infe")return false;
+            const uint32_t ev=uint32_t(Read(b,entry.data,1));
+            if(ev!=2 && ev!=3)return false;
+            const size_t idWidth=ev==2?2:4;
+            const uint32_t id=uint32_t(Read(b,entry.data+4,idWidth));
+            const uint32_t type=uint32_t(Read(b,entry.data+4+idWidth+2,4));
+            if(type==0x68766331){ // 'hvc1': actual HEVC-coded image
+                if(id==primary)verifiedPrimary=true;
+            } else if(type!=0x45786966 && // 'Exif'
+                     type!=0x6D696D65 && // 'mime' (XMP)
+                     type!=0x75726920) { // 'uri ' metadata
+                return false; // AV1, grids, unknown coded items
+            }
+        }
+        return verifiedPrimary;
+    }catch(...){return false;}
+}
 // transform: 0 identity, 1 CW90, 2 CW180, 3 CCW90.
 inline Bytes Transform(const Bytes& original,uint8_t transform) {
     if(transform>3)Bad("Unsupported HEIF transform option");
