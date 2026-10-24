@@ -186,9 +186,12 @@ function MSIProperty([string]$name) {
  try {$null=$q.Execute(); $x=$q.Fetch();return $(if($x){[string]$x.StringData(1)}else{''})}
  finally {$q.Close()}
 }
-if((MSIProperty 'ProductName') -cne 'WicHeic Repair Test' -or
-   (MSIProperty 'ProductVersion') -cne '1.1.18' -or
-   ([string](MSIProperty 'ProductCode')).ToUpperInvariant() -cne $oldCode){
+$msiName=[string](MSIProperty 'ProductName')
+$msiVersion=[string](MSIProperty 'ProductVersion')
+$msiCode=([string](MSIProperty 'ProductCode')).ToUpperInvariant()
+Write-Output ('RESTORE_MSI_READONLY_IDENTITY name='+$msiName+' version='+$msiVersion+' code='+$msiCode)
+if($msiName -cne 'WicHeic Repair Test' -or $msiVersion -cne '1.1.18' -or
+   $msiCode -cne $oldCode){
  throw 'Original MSI identity mismatch; no changes'
 }
 $db=$null;$engine=$null
