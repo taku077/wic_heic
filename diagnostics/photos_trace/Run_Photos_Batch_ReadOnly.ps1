@@ -124,7 +124,7 @@ foreach($pair in @(
   $commitHr=FindHr $synthetic.Lines ('^HEVC_SYNTHETIC_ENCODER role='+$role+' stage=encoder_commit hr=(0x[0-9A-F]{8})')
   $exact='NOT_REACHED'
   foreach($line in $synthetic.Lines) {
-    if($line -match ('^HEVC_SYNTHETIC_ENCODER role='+$role+' stage=readback hr=0x[0-9A-F]{8} bytes=\\d+ exact_original_bytes=([01]) photos_not_tested=1')) {
+    if($line -match ('^HEVC_SYNTHETIC_ENCODER role='+$role+' stage=readback hr=0x[0-9A-F]{8} bytes=[0-9]+ exact_original_bytes=([01]) photos_not_tested=1')) {
       $exact=$Matches[1];break
     }
   }
