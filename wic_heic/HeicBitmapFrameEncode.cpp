@@ -285,7 +285,12 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 	// This deliberately does NOT accept FlipRotator, FormatConverter, Scaler
 	// or arbitrary rasters: they cannot prove which original HEVC bytes they
 	// represent. Transform/edit handling remains unchanged in this branch.
-	if (pIBitmapSource && !prc && m_OptionsInitialized &&
+	if (pIBitmapSource &&
+	    (!prc || (m_Width && m_Height && prc->X == 0 && prc->Y == 0 &&
+	        prc->Width > 0 && prc->Height > 0 &&
+	        static_cast<UINT>(prc->Width) == m_Width &&
+	        static_cast<UINT>(prc->Height) == m_Height)) &&
+	    m_OptionsInitialized &&
 	    m_BitmapTransform == 0 && m_HeifCompressionMethod == 0 &&
 	    !m_LosslessReady && !m_HasPixels && !m_Created &&
 	    m_WrittenLines == 0) {
