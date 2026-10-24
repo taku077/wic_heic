@@ -647,3 +647,34 @@ Windows Server 2022の従来CIでは、旧v1.1.18と研究版それぞれの自�
 - [**最終CI #40071379364 全工程SUCCESS**](https://github.com/taku077/wic_heic/actions/runs/40071379364)、コードヘッド `a7dc49125760166a482453fc144f62752808f773`：`HEVC_WIC_PASSIVE_METADATA_CI_PASS`、`HEVC_WIC_ACTIVE_NO_IMAGE_CI_PASS`、`HEVC_WIC_UNKNOWN_ARGUMENT_REJECTED_PASS`、`HEVC_MF_INVENTORY_ISOLATED_WINDOWS_CI_PASS`、`HEVC_MF_SINGLE_READONLY_DIAG_BUNDLE_PASS` がすべてPASS。Microsoft HEIF登録情報から公式コンテナーGUIDを取得、純正HEIF CreateInstance は例のCI VMでは 0x88982F8B、HEVC MF decoder/encoderとも0件。独自のWICはこの診断ワークフローではMSIを導入しないため未登録（0x88982F50）；ユーザー実機でも未登録とは解釈しない。
 - 最終CIはダウンロード可能な診断用アーティファクト `Photos_HEVC_ReadOnly_Win10_x64`（artifact ID `12551053893`）を保存した。保持期限 **2026-11-07 UTC**。ワンクリックCMD、上記診断用EXE、既存PowerShell、更新済みREADMEの4点。**完成MSIではない**。
 - 次の実機判定で欲しい差は「Microsoft HEIFの登録があるがCOM生成が失敗するか／Windows10では生成成功するか」と「自作WICは存在しCOM生成できるか」。これを現行HEVC AppX/MFT状態と結びつけ、既にWICで画像を読めるのにPhotosで編集できないという不一致の原因追跡に使用する。Windows10 PhotosのGUI操作／回転保存成功はまだ0件。**実機未実施を明記し、完成進捗45％を安易に上げない**。
+
+## 2026-10-24：Windows10実機 HEIF/MF/WIC 診断到着・純正COM成功（Serverとの差を確定）
+
+**出所**：ユーザーが実機で既存 `Photos_HEVC_ReadOnly_Win10_x64` 診断を実行し、レポートと `WIC_Preflight` JSONを提供。診断日時は2026-10-24、Windows10 Pro 22H2 build19045、Photos 2026.11090.22001.0。ZIP内JSONと別添JSONは全バイト一致。レポートでは native MF/WIC診断およびPowerShell事前確認のプロセス終了コードがともに0。実機のユーザー名、絶対パス、製品のGUIDキー、インストールDLLのハッシュやJSON原本をこのリポジトリへアップロードしない。
+
+**個人情報を除いた実測結果**：
+
+| 呼出し・状態 | Windows10実機（旧v1.1.18導入） | GitHub Windows Server 2022（旧／研究版両状態） |
+|---|---|---|
+| Microsoft純正WIC HEIF decoder: CreateComponentInfo | S_OK | S_OK |
+| Microsoft純正WIC HEIF decoder: CreateInstance | **S_OK** | **0x88982F8B** |
+| 自作WIC HEIC decoder: CreateComponentInfo / CreateInstance | S_OK / S_OK | 自作導入時利用可 |
+| 自作WIC HEIC encoder: CreateComponentInfo / CreateInstance | S_OK / S_OK | 自作導入時利用可 |
+| Microsoft公式HEIF形式GUID CreateEncoder | **S_OK** | **0x88982F8B** |
+| MF HEVC decoder / encoder列挙（通常・field-of-use） | **0 / 0（追加decoder 0）** | **0 / 0** |
+| MF H264 decoder列挙（対照） | 1 | 1 |
+| AppX HEIF Image Extension（現在のユーザー） | **インストール済み・Status=Ok** | 同じAppX環境とは限らない |
+| AppX HEVC拡張（現在のユーザー一覧） | **列挙なし** | 未比較 |
+| 自作WICの導入版 | **旧 v1.1.18** | 旧v1.1.18と研究版のA/B（研究版のWin10実測ではない） |
+
+**確定できること**：
+- **MF HEVC decoderの列挙数0だけでは、Microsoft純正HEIFのWICインスタンスが作れないと予測できない。** Windows10ではMicrosoft純正HEIF decoderがCOM生成でS_OKを返すため、直前の「CIで純正のCOM生成が失敗する」という観測は実機に外挿できない。
+- 純正HEIF形式のEncoderもCOM生成でS_OK。以前のWindows Server CIにおける純正形式のCreateEncoder失敗は**実機の保存経路が利用不能という根拠ではない**。
+- 自作デコーダー・エンコーダーもCOM生成S_OKであり、DLL未登録・COMクラスが見つからないという単純な故障説は**現在の旧1.1.18導入状態では支持されない**。
+- **COM生成S_OK、WICの登録、MFのMFT列挙0、AppX HEVC表示なしは相互に矛盾しない**。各層は別API。WICインスタンス生成はHEIF画像の実復号／回転保存／HEVCライセンス／Photos UI編集有効を証明しない。
+- この実機診断は**旧v1.1.18がインストールされた状態の一時点**のみ。研究版WICを実機へ入れ替えたA/Bではないため、研究版でPhotosの警告・編集不可になる理由をこのログだけでは確定できない。
+- HEVC AppXは現在ユーザーの列挙に出ていないが、他ユーザー／システムコンポーネント／HEVC機能全般の不存在までは証明しない。
+
+**原因仮説の更新（優先順位）**：前ターンのCIから生じた「純正HEIFが実機でも初期化失敗してフォトを止めた」という仮説は棄却。次はWindows10上の**実際のHEIC画素処理／エンコーダー選択**とPhotosの編集ボタン判定に着目。旧版0x15／研究版0x0CのWIC能力申告、公式HEIF形式GUIDと自作HEIC形式GUIDが異なる事実はCI検証済みだが、ボタン無効化との因果はまだ未確定。誤ったSameEncoder/埋込みサムネイルの申告を戻さない。旧v1.1.18も回転後画像破損や保存エラーがある**不具合版**であり、正常版扱い禁止。
+
+**次回の対照試験の設計**：人工HEICのみ使用、ユーザー写真・原本を開かない。実機が今の旧WICのままでも安全に比較できる技術的ステップとして、Windows10側のMicrosoft純正／自作WICが合成HEICを本当に復号できるか（COM生成ではなく`Initialize/GetFrame/CopyPixels`）と、同一合成画像で選択されるエンコーダー情報を区別できる**単発の自動検証**を検討する。ただし同じMFT/COM診断の反復、レジストリ変更、新MSIの配布を行わない。GUI回転保存のP0未達、研究版Win10実機未検証、完成率45％は変更しない。
