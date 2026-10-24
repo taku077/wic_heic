@@ -30,6 +30,13 @@ if($code -ne 0 -or
   throw ('Synthetic HEIC WIC A/B incomplete, label='+$Label+' exit='+$code)
 }
 $full=$log -join [Environment]::NewLine
+# Stage-only diagnostics: no paths, filenames, EXIF, image bytes or user data.
+foreach($entry in $log){
+  if([string]$entry -match '^HEVC_SYNTHETIC_(WIC|AUTO|ENCODER) ' -and
+     [string]$entry -notmatch 'fnv64' -and [string]$entry -notmatch 'rgb24_fnv64'){
+    Write-Host ('WIC_AB_SYNTHETIC_STAGE label='+$Label+' '+[string]$entry)
+  }
+}
 $auto=[regex]::Match($full,'(?m)^HEVC_SYNTHETIC_AUTO stage=decoder_clsid hr=0x([0-9A-F]{8}) custom=([01]) microsoft=([01])$')
 if($auto.Success) {
   Write-Host ('WIC_PHOTOS_SYNTHETIC_AUTO_DECODER label='+$Label+' hr='+$auto.Groups[1].Value+
