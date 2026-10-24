@@ -256,6 +256,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__
 	}
 
 	HRESULT hr = pMetadataBlockReader->CreateQueryReader(ppIMetadataQueryReader);
+	// CreateQueryReaderFromBlockReader retains its own COM reference on
+	// success. Release our initial reference on both success and failure;
+	// otherwise every Photos metadata query leaks a block reader and handle.
+	pMetadataBlockReader->Release();
 	return hr;
 }
 
