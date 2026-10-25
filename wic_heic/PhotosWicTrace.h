@@ -60,6 +60,18 @@ inline bool TracePath(wchar_t (&out)[512]) {
 inline void Emit(const char* event,UINT width=0,UINT height=0,
                  BYTE transform=0,BYTE compression=0,
                  const char* source="none",HRESULT result=S_OK) {
+    // Pixel consumers (including Photos' WIC flip/rotate) can issue many
+    // thousands of one-scanline CopyPixels calls. Logging every one caused
+    // 15,000+ entries and exhausted the 2-MiB cap BEFORE the encoder commit,
+    // hiding precisely the save route that this diagnostic is meant to find.
+    // Retain the first four calls and then 1/512 per process. Never sample
+    // encoder, metadata, rejection, size, or commit events.
+    if(lstrcmpA(event,"DecoderCopyPixels")==0) {
+        static volatile LONG copyPixelsSequence=0;
+        const LONG sequence=InterlockedIncrement(&copyPixelsSequence);
+        if(sequence>4 && (static_cast<unsigned long>(sequence)%512UL)!=0UL)
+            return;
+    }
     wchar_t path[512]{};
     if(!TracePath(path))return;
     // APPEND only, never truncate or overwrite; do not auto-create folders.
