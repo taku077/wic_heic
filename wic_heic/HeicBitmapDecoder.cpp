@@ -307,7 +307,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 			handle.is_primary_image()
 		);
 
-		CHeicBitmapFrameDecode* decoder = new(std::nothrow) CHeicBitmapFrameDecode(this, handle);
+		CHeicBitmapFrameDecode* decoder = new(std::nothrow) CHeicBitmapFrameDecode(this, handle,index,static_cast<UINT>(ids.size()));
 		if (!decoder) {
 			return E_OUTOFMEMORY;
 		}
