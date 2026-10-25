@@ -248,6 +248,13 @@ inline void NormalizeExif(const Bytes& b,size_t start,size_t length,std::vector<
             if(oldAngle%2!=1)Bad("Ambiguous HEIF/EXIF rotation");
             changes.push_back({e+8,uint8_t(le?1:0)});
             changes.push_back({e+9,uint8_t(le?0:1)});
+        }else if(value==3){
+            // Verified primary irot=2 has already applied the 180-degree
+            // transform. EXIF3 is redundant and would double-rotate Photos.
+            // No-irot or other irot values are NOT permitted in this path.
+            if(oldAngle!=2)Bad("Ambiguous HEIF/EXIF half-turn");
+            changes.push_back({e+8,uint8_t(le?1:0)});
+            changes.push_back({e+9,uint8_t(le?0:1)});
         }else if(value!=1)Bad("Unsupported Exif Orientation");
     }
 }
