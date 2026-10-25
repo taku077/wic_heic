@@ -141,9 +141,11 @@ inline void VerifyOutput(IWICImagingFactory* factory,
 // Reproduce the real Windows 10 Photos 1.1.26 log using the untouched
 // checked-in HEIC whose hidden/unlinked second item is exposed by libheif
 // as a second top-level WIC frame. No real user photos, no file overwrite.
-inline void RunTwoFramePhotosSave(IWICImagingFactory* factory) {
+inline void RunTwoFramePhotosSave(IWICImagingFactory* factory,bool editPrimary=false) {
     const wchar_t* input=L"samples\\fixture-irot3-exif6-noaux.heic";
-    const wchar_t* output=L"samples\\out-photos-two-frame-cw90.heic";
+    const wchar_t* output=editPrimary?
+        L"samples\\out-photos-two-frame-one-pixel-edit.heic":
+        L"samples\\out-photos-two-frame-cw90.heic";
     CComPtr<IWICBitmapDecoder> decoder;
     Must(factory->CreateDecoderFromFilename(input,nullptr,GENERIC_READ,
         WICDecodeMetadataCacheOnDemand,&decoder),"two-frame source open");
@@ -161,6 +163,15 @@ inline void RunTwoFramePhotosSave(IWICImagingFactory* factory) {
     Must(rotator->Initialize(primary,WICBitmapTransformRotate90),"two-frame rotate initialize");
     CComPtr<IWICBitmap> opaque;
     Must(factory->CreateBitmapFromSource(rotator,WICBitmapCacheOnLoad,&opaque),"two-frame opaque");
+    if(editPrimary){
+        WICRect rect{0,0,1,1};
+        CComPtr<IWICBitmapLock> lock;
+        Must(opaque->Lock(&rect,WICBitmapLockWrite,&lock),"two-frame edit lock");
+        UINT len=0;BYTE* px=nullptr;
+        Must(lock->GetDataPointer(&len,&px),"two-frame edited data pointer");
+        if(len<3 || !px)throw std::runtime_error("two-frame edit no pixels");
+        px[0]^=1;
+    }
     CComPtr<IWICBitmapEncoder> encoder;
     Must(factory->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,&encoder),
         "two-frame HEIC encoder");
@@ -181,6 +192,14 @@ inline void RunTwoFramePhotosSave(IWICImagingFactory* factory) {
                                   static_cast<IWICBitmapSource*>(second.p),nullptr),
              "two-frame WriteSource (original auxiliary must not abort)");
         Must(dest->Commit(),"two-frame frame Commit");
+    }
+    if(editPrimary){
+        const HRESULT hr=encoder->Commit();
+        if(SUCCEEDED(hr))throw std::runtime_error("two-frame edited primary was wrongly accepted");
+        encoder.Release(); stream.Release();
+        if(!Read(output).empty())throw std::runtime_error("two-frame unsafe save wrote partial output");
+        printf("WIC_PHOTOS_TWO_FRAME_EDIT_FAIL_CLOSED_PASS hr=0x%08X\\n",(unsigned)hr);
+        return;
     }
     Must(encoder->Commit(),"two-frame encoder Commit");
     encoder.Release(); stream.Release();
@@ -211,5 +230,6 @@ inline void Run(){
     VerifyOutput(factory,L"samples\\out-photos-opaque-edited-cw0.heic",1080,1920);
     VerifyOutput(factory,L"samples\\out-photos-opaque-edited-cw90.heic",1920,1080);
     RunTwoFramePhotosSave(factory);
+    RunTwoFramePhotosSave(factory,true);
 }
 } // namespace WICPhotosOpaqueRotationProbe
