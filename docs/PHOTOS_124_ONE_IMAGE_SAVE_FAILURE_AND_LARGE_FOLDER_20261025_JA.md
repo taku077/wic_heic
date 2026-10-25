@@ -13,6 +13,12 @@
 - Embedded thumbnail 320×240; ICC profile. Apple HDR auxiliary gain map exists, with own grid, and `auxC = urn:com:apple:photo:2020:aux:hdrgainmap`. Related primary, thumbnail and gain-map `ipma` entries share same `irot` property.
 - Additional independent auxiliary Exif `cdsc` reference: metadata item 64 → gain map item 63. Primary Exif metadata item 65 → primary item 49. This is important and is not merely a heuristic based on file size.
 
+## Additional likely performance amplification at fallback saves
+- `wic_heic/HeicBitmapFrameDecode.cpp::GetThumbnail` **does** read HEIC embedded thumbnails when present (this failing image has 320×240).
+- `wic_heic/HeicBitmapFrameEncode.cpp::SetThumbnail` and `HeicBitmapEncoder.cpp::SetThumbnail` currently return `WINCODEC_ERR_UNSUPPORTEDOPERATION`, and the ordinary opaque-raster HEIC encoder produces a newly re-encoded primary item with no preserved embedded thumbnail. This is a potential **feedback loop**: rotate-save takes lossless fallback -> discards thumbnail -> thumbnail request now decodes much larger primary image.
+- Microsoft explicitly warns that without a thumbnail at container/frame level, WIC must decode the full image and scale it, with large performance cost. https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapframeencode
+- This **could** amplify CPU/RAM pressure in a folder with 1,894 HEIC images and repeated rotation/re-save, but no trace yet shows exactly how many thumbnails were invalidated or which PID does the work. Do not claim whole-folder re-decoding.
+
 ## Confirmed 1.1.24 source-level unsupported conditions, not yet final Photos save-failure cause
 In `wic_heic/HeicLosslessNative.h`:
 - `Transform` uses `LinkedVisualItems` to collect thumb/aux and then after `ExifIDs` explicitly rejects any `HasCdsc(exifId,relatedVisual)`: `Bad("Related image has independent Exif orientation")`. This supplied sample has exactly that situation (auxiliary gain-map Exif), so **the native metadata-only transform rejects it by design**.
