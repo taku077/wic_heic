@@ -41,3 +41,10 @@ MSIバージョン **1.1.24**。新バージョンの成功CIに基づく候補�
 - `set_lossy_quality(92)`は無再圧縮不成立時にHEVCサイズを大幅に増加させ得る。容量増大が完全に防げたという宣言はしない。
 - Exif/XMPが取得不能なラスタ再エンコードでは欠落が残る。全画像での情報完全保持は未完成。
 - 1.1.23→1.1.24や1.1.21→1.1.24のユーザーWindows10上書き導入／ロールバックは保証しない。過去Explorer黒画面問題を踏まえ復旧キットの適用条件を事前確認、明示的承認があるまでインストールしない。
+
+## 6. 1.1.24候補の再現可能な出荷ゲート（Windows CI）
+コード固定対象：`HeicBitmapFrameDecode.cpp`の境界・実寸検査、`PhotosPureRotationBridge.h`の90/180/270一致、`HeicBitmapEncoder.cpp`の正しい保存分岐、`wictest/WICDecoderRectProbe.h`と`wictest/WICPhotosOpaqueRotationProbe.h`の人工回帰。
+- Actions #40184176310 **SUCCESS**：回転画素範囲検査10例。
+- Actions #40184565711 **SUCCESS**：CW90/CW180/CW270が期待HEIF全10,597バイト一致、加工1画素は再圧縮、MSI登録状態復元。
+- Actions #40184899588 **SUCCESS**：1.1.24バージョンのx64 Release、WIC回帰、MSIインストール・アンインストール・登録状態復元。
+- 今回のコミットを明示的な`release(candidate)`として公開し、**再実行に成功した場合に限り**バイナリーMSI+SHA256をGitHub Actionsにアップロードする。実機フォトUIは未検証。
