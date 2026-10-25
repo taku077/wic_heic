@@ -184,7 +184,8 @@ inline void RunTwoFramePhotosSave(IWICImagingFactory* factory,bool editPrimary=f
         CComPtr<IWICBitmapFrameEncode> dest;
         Must(encoder->CreateNewFrame(&dest,nullptr),"two-frame new frame");
         Must(dest->Initialize(nullptr),"two-frame initialize frame");
-        Must(dest->SetSize(i==0?h:sw,i==0?w:sh),"two-frame set size");
+        Must(dest->SetSize(i==0?(unchangedPrimary?w:h):sw,
+                           i==0?(unchangedPrimary?h:w):sh),"two-frame set size");
         WICPixelFormatGUID fmt=GUID_WICPixelFormat24bppRGB;
         Must(dest->SetPixelFormat(&fmt),"two-frame set pixel format");
         if(!IsEqualGUID(fmt,GUID_WICPixelFormat24bppRGB))
