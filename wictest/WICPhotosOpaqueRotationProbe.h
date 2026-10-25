@@ -42,11 +42,12 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1
     UINT inW=0,inH=0;
     Must(source->GetSize(&inW,&inH),"get original geometry");
     if(preloadDifferentHEIC) {
-        // Windows Photos can prefetch an unrelated neighbor from a large
-        // folder. The active HEIC must remain independently matchable.
+        // Windows Photos can prefetch an unrelated neighboring HEIC from a
+        // folder. Use a distinct checked-in public sample, not another
+        // rotation of the same synthetic HEVC image. The active HEIC must remain independently matchable.
         CComPtr<IWICBitmapDecoder> neighborDecoder;
         Must(factory->CreateDecoderFromFilename(
-            L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+            L"samples\\04.heic",nullptr,GENERIC_READ,
             WICDecodeMetadataCacheOnDemand,&neighborDecoder),
             "decode synthetic preloaded neighbor");
         CComPtr<IWICBitmapFrameDecode> neighbor;
