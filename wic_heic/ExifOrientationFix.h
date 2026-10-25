@@ -21,11 +21,17 @@ inline uint32_t Get32(const std::vector<uint8_t>& b, size_t p, bool le) {
 // metadata reader strips; TIFF starts at byte 4 in the data returned by libheif.
 // Modify only Orientation=6 or 8, SHORT/count=1, in IFD0; preserve all other data.
 // This does NOT flatten pixels or affect the HEIC file or its embedded metadata.
-inline bool NormalizeExifForRotatedPixels(std::vector<uint8_t>& b, bool dimensionsSwapped) {
+// halfTurnApplied may only be true after the caller has authenticated a
+// primary HEIF item property irot=2 in the original compressed container.
+// The in-file metadata is NEVER modified, only this WIC query copy.
+inline bool NormalizeExifForRotatedPixels(std::vector<uint8_t>& b,
+                                           bool dimensionsSwapped,
+                                           bool halfTurnApplied=false) {
     // HEIF Exif begins with an unsigned big-endian TIFF offset. The offset
     // is relative to the bytes following the four-byte field: usually 0
     // for raw TIFF, or 6 for the "Exif\\0\\0" APP1 signature.
-    if (!dimensionsSwapped || b.size() < 12) return false;
+    if ((!dimensionsSwapped && !halfTurnApplied) || b.size() < 12) return false;
+    if (dimensionsSwapped && halfTurnApplied) return false;
     const uint32_t tiffOffset = (uint32_t(b[0]) << 24) |
         (uint32_t(b[1]) << 16) | (uint32_t(b[2]) << 8) | b[3];
     if (tiffOffset > b.size() - 4) return false;
@@ -48,7 +54,8 @@ inline bool NormalizeExifForRotatedPixels(std::vector<uint8_t>& b, bool dimensio
         if (Get16(b,entry,le)!=274) continue; // EXIF Orientation
         if (Get16(b,entry+2,le)!=3 || Get32(b,entry+4,le)!=1) return false;
         const uint16_t orientation=Get16(b,entry+8,le);
-        if (orientation!=6 && orientation!=8) return false;
+        if (halfTurnApplied ? (orientation!=3) :
+                              (orientation!=6 && orientation!=8)) return false;
         if (le) { b[entry+8]=1; b[entry+9]=0; }
         else { b[entry+8]=0; b[entry+9]=1; }
         return true;
