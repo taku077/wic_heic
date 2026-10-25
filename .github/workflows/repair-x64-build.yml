@@ -420,7 +420,7 @@ jobs:
           Get-FileHash 'WicHeic-HEIC-x64.msi' -Algorithm SHA256 |
             Format-List
 
-      - name: Confirm candidate MSI version is 1.1.21
+      - name: Confirm candidate MSI version is 1.1.22
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -438,7 +438,7 @@ jobs:
           }
           $version=ReadMsiProperty 'ProductVersion'
           $productName=ReadMsiProperty 'ProductName'
-          if($version -ne '1.1.21' -or $productName -ne 'WicHeic Repair Test') {
+          if($version -ne '1.1.22' -or $productName -ne 'WicHeic Repair Test') {
             throw "Candidate has unexpected identity: $productName $version"
           }
           Write-Host "MSI_RELEASE_VERSION_PASS version=$version"
@@ -518,7 +518,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/fix/photos-118-selfwic-incremental' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
         uses: actions/upload-artifact@v4
         with:
-          name: WicHeic-1.1.21-x64-Win10-Photos-UNVERIFIED-RC
+          name: WicHeic-1.1.22-x64-Win10-Photos-UNVERIFIED-RC
           path: |
             WicHeic-HEIC-x64.msi
             MSI_SHA256_AND_PROVENANCE.txt
