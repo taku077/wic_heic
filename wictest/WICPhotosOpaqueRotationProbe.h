@@ -91,17 +91,21 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel) {
                 "A deliberately edited raster was wrongly treated as lossless");
         printf("WIC_PHOTOS_OPAQUE_ONE_PIXEL_EDIT_SAFE_REENCODE_PASS\n");
     }
-    // Validate the emitted HEIF decodes with the expected geometry.
+
+}
+inline void VerifyOutput(IWICImagingFactory* factory,
+                         const wchar_t* path,UINT expectedW,UINT expectedH){
+    // Reopen after matching tests, so no new source is offered mid-sequence.
     CComPtr<IWICBitmapDecoder> outDecoder;
-    Must(factory->CreateDecoderFromFilename(outputPath,nullptr,GENERIC_READ,
+    Must(factory->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,
          WICDecodeMetadataCacheOnDemand,&outDecoder),
          "reopen newly written synthetic HEIC");
     CComPtr<IWICBitmapFrameDecode> saved;
     Must(outDecoder->GetFrame(0,&saved),"reopen synthetic HEIC primary frame");
     UINT sw=0,sh=0;
     Must(saved->GetSize(&sw,&sh),"validate final synthetic HEIC geometry");
-    if(sw!=ow || sh!=oh)
-        throw std::runtime_error("Written HEIC dimensions are incorrect");
+    if(sw!=expectedW || sh!=expectedH)
+        threxpectedW std::runtime_error("Written HEIC dimensions are incorrect");
 }
 inline void Run(){
     CComPtr<IWICImagingFactory> factory;
@@ -109,5 +113,7 @@ inline void Run(){
         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"WIC factory");
     RunOne(factory,false);
     RunOne(factory,true);
+    VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw90.heic",1920,1080);
+    VerifyOutput(factory,L"samples\\out-photos-opaque-edited-cw90.heic",1920,1080);
 }
 } // namespace WICPhotosOpaqueRotationProbe
