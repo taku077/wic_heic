@@ -302,6 +302,47 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::WriteSource(__RPC__in_opt IWIC
 		m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,sourceKind);
 
 
+
+    // Authenticated additional top-level source frame. In a multi-image HEIC
+    // Photos copies this unchanged while it rotates the primary bitmap.
+    // Store the original *entire* container and frame index without treating
+    // it as a separately encoded HEIF, which would otherwise lose metadata.
+    // Commit may use it ONLY after matching all frames to the same container.
+    if(pIBitmapSource && m_OptionsInitialized &&
+       m_BitmapTransform==0 && m_HeifCompressionMethod==0 &&
+       !m_LosslessReady && !m_HasPixels && !m_Created &&
+       !m_WrittenLines && m_AuxiliaryContainer.empty()) {
+        IHeicAuxiliaryContainerSource* aux=nullptr;
+        const HRESULT q=pIBitmapSource->QueryInterface(
+            IID_IHeicAuxiliaryContainerSource,
+            reinterpret_cast<void**>(&aux));
+        if(SUCCEEDED(q) && aux) {
+            UINT w=0,h=0,index=0,count=0;
+            HRESULT hr=pIBitmapSource->GetSize(&w,&h);
+            std::vector<uint8_t> original;
+            if(SUCCEEDED(hr) && w && h && w==m_Width && h==m_Height &&
+               (!prc || (prc->X==0 && prc->Y==0 &&
+                          prc->Width>0 && prc->Height>0 &&
+                          UINT(prc->Width)==w && UINT(prc->Height)==h)) &&
+               m_RasterICC.empty())
+                hr=aux->ReadContainerAndIndex(&original,&index,&count);
+            else if(SUCCEEDED(hr))hr=WINCODEC_ERR_UNSUPPORTEDOPERATION;
+            aux->Release();
+            if(FAILED(hr))return hr;
+            if(index==0 || index>=count || count>8 ||
+               original.size()<12 || original.size()>64u*1024u*1024u ||
+               original[4]!='f' || original[5]!='t' ||
+               original[6]!='y' || original[7]!='p')
+                return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+            m_AuxiliaryContainer.swap(original);
+            m_AuxiliaryIndex=index;
+            m_AuxiliaryCount=count;
+            WicHeicDiagnostic::Emit("WriteSourceAuxiliaryBound",
+                w,h,0,0,"same-heif-aux");
+            return S_OK;
+        }
+    }
+
 	// INCREMENTAL 1.1.18 FIX: ordinary WIC WriteSource receives an authentic
 	// decoder frame when simply saving an unchanged HEIC. The historical
 	// 1.1.18 path unnecessarily recompressed it into 8-bit RGB and stripped
@@ -502,6 +543,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameEncode::Commit(void)
 {
 	WicHeicDiagnostic::Emit("FrameCommit",m_Width,m_Height,m_BitmapTransform,m_HeifCompressionMethod,m_LosslessReady?"lossless":"raster");
 	if (m_LosslessReady && !m_LosslessBytes.empty()) return S_OK;
+	if (!m_AuxiliaryContainer.empty() && m_AuxiliaryIndex &&
+	    m_AuxiliaryIndex<m_AuxiliaryCount && !m_HasPixels &&
+	    !m_LosslessReady) return S_OK;
 	if (m_HeifCompressionMethod==1 || m_BitmapTransform!=0) return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 	if (!m_HasPixels || m_WrittenLines != m_Height) return WINCODEC_ERR_WRONGSTATE;
 	try
