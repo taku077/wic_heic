@@ -336,11 +336,11 @@ int main()
 
 	try
 	{
+		// Verify the Photos default opaque raster bridge before any other
+		// HEIC decoder in this WIC test process offers a competing source.
+		WICPhotosOpaqueRotationProbe::Run();
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
-		// Must run first, before other synthetic HEIC decodes can create
-		// an ambiguous in-process Photos source candidate.
-		WICPhotosOpaqueRotationProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		WICLosslessRotationProbe::Run();
