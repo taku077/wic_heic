@@ -21,14 +21,16 @@ inline std::vector<uint8_t> Read(const wchar_t* path) {
     return std::vector<uint8_t>(std::istreambuf_iterator<char>(in),
                                 std::istreambuf_iterator<char>());
 }
-inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1) {
-    const wchar_t* outputPath=editOnePixel?
+inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1, bool halfTurnFixture=false) {
+    const wchar_t* outputPath=halfTurnFixture?
+        L"samples\\out-photos-opaque-halfturn-exif3-cw90.heic":editOnePixel?
         L"samples\\out-photos-opaque-edited-cw90.heic":
         rotation==1 ? L"samples\\out-photos-opaque-pure-cw90.heic":
         rotation==2 ? L"samples\\out-photos-opaque-pure-cw180.heic":
                       L"samples\\out-photos-opaque-pure-cw270.heic";
     CComPtr<IWICBitmapDecoder> decoder;
     Must(factory->CreateDecoderFromFilename(
+        halfTurnFixture?L"samples\\fixture-irot2-exif3-noaux.heic":
         L"samples\\fixture-irot3-exif6-noaux.heic",
         nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),
         "decode original HEIC");
@@ -85,7 +87,8 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1
     Must(encoder->Commit(),"commit WIC HEIC file");
     dest.Release();encoder.Release();stream.Release();
     const auto bytes=Read(outputPath);
-    const auto expected=Read(rotation==1?
+    const auto expected=Read(halfTurnFixture?
+        L"samples\\fixture-lossless-cw180.heic":rotation==1?
         L"samples\\fixture-lossless-cw90.heic":rotation==2?
         L"samples\\fixture-lossless-cw180.heic":
         L"samples\\fixture-lossless-cw270.heic");
@@ -93,8 +96,8 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1
         if(bytes!=expected)
             throw std::runtime_error(
                 "Default Photos-style opaque CW90 missed bit-identical lossless route");
-        printf("WIC_PHOTOS_OPAQUE_CW%u_LOSSLESS_EQUAL_PASS bytes=%zu\n",
-               unsigned(rotation*90),bytes.size());
+        printf("WIC_PHOTOS_OPAQUE_%sCW%u_LOSSLESS_EQUAL_PASS bytes=%zu\n",
+               halfTurnFixture?"IROT2_EXIF3_":"",unsigned(rotation*90),bytes.size());
     } else {
         if(bytes==expected)
             throw std::runtime_error(
@@ -121,10 +124,13 @@ inline void Run(){
     CComPtr<IWICImagingFactory> factory;
     Must(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"WIC factory");
+    // Verify first, before a competing source enters the short-lived cache.
+    RunOne(factory,false,1,true);
     RunOne(factory,false,1);
     RunOne(factory,false,2);
     RunOne(factory,false,3);
     RunOne(factory,true,1);
+    VerifyOutput(factory,L"samples\\out-photos-opaque-halfturn-exif3-cw90.heic",1080,1920);
     VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw90.heic",1920,1080);
     VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw180.heic",1080,1920);
     VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw270.heic",1920,1080);
