@@ -35,3 +35,7 @@ GitHub Actions #40178280524 **SUCCESS**：
 - libheif source implementation and HEIC decoder: https://github.com/strukturag/libheif
 - libheif grid-image rotations: https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images
 - Exiv2 HEIF/Exif support: https://github.com/Exiv2/exiv2
+
+## 6. 期限前の最終コード差分（Explorer低負荷対策）
+実機環境はCore i5第7世代・GPUなし。Windows 10 ExplorerがHEICサムネイルを生成するたびに元のHEIF全バイトを二重読込しないよう、一次画像の一時保持は実行ホストのファイル名が`Microsoft.Photos.exe`、`Photos.exe`、`PhotosApp.exe`、`PhotoApp.exe`のいずれかの場合に限定。Windows CIの`wictest.exe`も人工試験のみ許可。これら以外は以前のWIC経路を使用する。Windows 10実機のPhotos実行ファイル名がこのいずれにも当てはまらない場合、無再圧縮の自動振分けは行われず通常保存となる（未確認事項）。
+コード：`wic_heic/PhotosPureRotationBridge.h`。Windows GitHub Actions #40178738765：**SUCCESS**（人工HEIC純粋回転バイト一致・1画素編集フォールバック・x64ビルド・隔離MSI導入削除）。
