@@ -98,7 +98,8 @@ inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
 // For 0 degrees return byte-identical HEIF; never encode a noop raster.
 inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                         const std::vector<uint8_t>& explicitICC,
-                        HeicLosslessNative::Bytes& output) {
+                        HeicLosslessNative::Bytes& output,
+                        const std::vector<uint8_t>* requiredContainer=nullptr) {
     output.clear();
     if(!width || !height || width>20000 || height>20000)return false;
     std::vector<Candidate> possible;
@@ -109,6 +110,7 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
         Prune(state,std::chrono::steady_clock::now());
         revision=state.revision;
         for(const auto& c:state.candidates){
+            if(requiredContainer && c.original!=*requiredContainer)continue;
             const bool swapped=(width==c.height && height==c.width);
             const bool normal=(width==c.width && height==c.height);
             if(swapped || normal)possible.push_back(c);
@@ -175,7 +177,7 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                 }
             }
         }
-        if(!matched)return false;
+        if(!matched || (requiredContainer && source!=*requiredContainer))return false;
         auto result=(confirmed==0)?source:
             HeicLosslessNative::Transform(source,confirmed);
         if(result.size()!=source.size())return false;
