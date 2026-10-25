@@ -12,3 +12,17 @@ struct IHeicRawSource : public IUnknown {
     virtual HRESULT STDMETHODCALLTYPE ReadFullContent(
         std::vector<uint8_t>* content) = 0;
 };
+
+
+// Separate internal COM contract for an authentic non-primary decoder frame.
+// Explicit frame index/count lets the encoder verify that a multi-image
+// HEIF container is being copied in full, not substituted for one bitmap.
+// The primary IHeicRawSource contract and its vtable remain unchanged.
+static const GUID IID_IHeicAuxiliaryContainerSource = {
+    0x7c143fa2,0x91a8,0x4dab,{0x80,0x38,0x78,0x72,0x1d,0x2f,0x4d,0x51}
+};
+struct IHeicAuxiliaryContainerSource : public IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE ReadContainerAndIndex(
+        std::vector<uint8_t>* container,UINT* topLevelIndex,
+        UINT* topLevelCount) = 0;
+};
