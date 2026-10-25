@@ -188,26 +188,44 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::CreateNewFrame(__RPC__deref_out_op
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 {
-	WicHeicDiagnostic::Emit("EncoderCommitEnter",0,0,0,0,m_Frames.size()==1?"one-frame":"many-frames");
+	// Each encoder Commit is a distinct operation. Record its duration and
+    // overlap with other encoder commits in this Photos process. This does
+    // not serialize the caller's saves or alter any stream/file operation.
+    static volatile LONG nextOperation=0;
+    static volatile LONG activeCommits=0;
+    const UINT operation=static_cast<UINT>(InterlockedIncrement(&nextOperation));
+    const ULONGLONG beginTick=GetTickCount64();
+    const LONG active=InterlockedIncrement(&activeCommits);
+    const auto Finish=[&](HRESULT result,const char* kind)->HRESULT {
+        WicHeicDiagnostic::Emit("EncoderCommitExit",0,0,0,0,
+            kind,result,operation,GetTickCount64()-beginTick);
+        InterlockedDecrement(&activeCommits);
+        return result;
+    };
+    WicHeicDiagnostic::Emit("EncoderCommitEnter",0,0,0,0,
+        m_Frames.size()==1?"one-frame":"many-frames",S_OK,operation);
+    if(active>1)
+        WicHeicDiagnostic::Emit("EncoderCommitOverlap",static_cast<UINT>(active),
+            0,0,0,"concurrent-commit",S_OK,operation);
 	try
 	{
 		// Reject existing output for both lossless and raster encodes.
 		// This does not undo truncation by the caller before Initialize.
-		if (!m_Stream) return WINCODEC_ERR_NOTINITIALIZED;
+		if (!m_Stream) return Finish(WINCODEC_ERR_NOTINITIALIZED,"not-initialized");
 		STATSTG stat{};
 		HRESULT hr=m_Stream->Stat(&stat,STATFLAG_NONAME);
 		if (FAILED(hr) || stat.cbSize.QuadPart!=0) {
 			WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,"nonempty-target",WINCODEC_ERR_UNSUPPORTEDOPERATION);
-			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+			return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"rejected");
 		}
 		LARGE_INTEGER zero{};
 		ULARGE_INTEGER pos{};
 		hr=m_Stream->Seek(zero,STREAM_SEEK_CUR,&pos);
 		if (FAILED(hr) || pos.QuadPart!=0) {
 			WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,"nonzero-position",WINCODEC_ERR_UNSUPPORTEDOPERATION);
-			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+			return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"rejected");
 		}
-		if (m_Frames.empty()) return WINCODEC_ERR_WRONGSTATE;
+		if (m_Frames.empty()) return Finish(WINCODEC_ERR_WRONGSTATE,"wrong-state");
         // Windows Photos 10 has been observed to pass an opaque raster and
         // default (transform=0, compression=0) options for pure CW90 rotations.
         // Reuse original HEIF ONLY if the in-process source is unambiguous,
@@ -235,17 +253,17 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 		if(m_Frames.size()==1 && m_Frames[0]->m_LosslessReady) {
 			const auto& bytes=m_Frames[0]->m_LosslessBytes;
 			if(bytes.empty()||bytes.size()>0xFFFFFFFFULL)
-				return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+				return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"rejected");
 			ULONG written=0;
 			hr=m_Stream->Write(bytes.data(),static_cast<ULONG>(bytes.size()),&written);
-			if(FAILED(hr)||written!=bytes.size())return STG_E_WRITEFAULT;
-			WicHeicDiagnostic::Emit("EncoderCommitLossless",m_Frames[0]->m_Width,m_Frames[0]->m_Height,m_Frames[0]->m_BitmapTransform,m_Frames[0]->m_HeifCompressionMethod,"heif-copied");
-			return S_OK;
+			if(FAILED(hr)||written!=bytes.size())return Finish(STG_E_WRITEFAULT,"short-write");
+			WicHeicDiagnostic::Emit("EncoderCommitLossless",m_Frames[0]->m_Width,m_Frames[0]->m_Height,m_Frames[0]->m_BitmapTransform,m_Frames[0]->m_HeifCompressionMethod,"heif-copied",S_OK,operation,GetTickCount64()-beginTick);
+			return Finish(S_OK,"lossless");
 		}
 		for(auto* frame:m_Frames){
 			if(frame->m_LosslessReady || !frame->m_HasPixels ||
 			   frame->m_WrittenLines!=frame->m_Height)
-				return WINCODEC_ERR_WRONGSTATE;
+				return Finish(WINCODEC_ERR_WRONGSTATE,"wrong-state");
 		}
 		heif::Encoder encoder(heif_compression_HEVC);
 		// Photos can hand an already-rotated WIC raster to WriteSource.
@@ -259,7 +277,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 		CHeifStreamWriter writer(m_Stream);
 
 		if (!m_Stream) {
-			return WINCODEC_ERR_NOTINITIALIZED;
+			return Finish(WINCODEC_ERR_NOTINITIALIZED,"not-initialized");
 		}
 
 		for (auto it = m_Frames.begin(); it != m_Frames.end(); ++it) {
@@ -274,25 +292,25 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 		}
 
 		m_Context.write(writer);
-		WicHeicDiagnostic::Emit("EncoderCommitRecompressed",0,0,0,0,"hevc-encoded");
+		WicHeicDiagnostic::Emit("EncoderCommitRecompressed",0,0,0,0,"hevc-encoded",S_OK,operation,GetTickCount64()-beginTick);
 	}
 	catch (const heif::Error& ex)
 	{
 		Log("Call to CHeicBitmapEncoder::Commit failed: %s", ex.get_message().c_str());
-		return WINCODEC_ERR_INVALIDPARAMETER;
+		return Finish(WINCODEC_ERR_INVALIDPARAMETER,"libheif-error");
 	}
 	catch (const std::exception& ex)
 	{
 		Log("Call to CHeicBitmapEncoder::Commit failed: %s", ex.what());
-		return WINCODEC_ERR_GENERIC_ERROR;
+		return Finish(WINCODEC_ERR_GENERIC_ERROR,"exception");
 	}
 	catch (...)
 	{
 		Log("Call to CHeicBitmapEncoder::Commit failed: Unknown exception");
-		return WINCODEC_ERR_GENERIC_ERROR;
+		return Finish(WINCODEC_ERR_GENERIC_ERROR,"exception");
 	}
 
-	return S_OK;
+	return Finish(S_OK,"recompressed");
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::GetMetadataQueryWriter(__RPC__deref_out_opt IWICMetadataQueryWriter **ppIMetadataQueryWriter)
