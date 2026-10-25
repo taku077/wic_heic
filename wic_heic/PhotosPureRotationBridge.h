@@ -4,9 +4,9 @@
 // No image data, file names, EXIF, or paths in trace output.
 //
 // A decoder may offer one short-lived original HEIF. EncoderCommit can use it
-// ONLY if ALL RGB pixels of the output are the clockwise 90-degree rotation
-// of that decoded HEIF. Other edits, 180/270 rotations, ambiguity, missing
-// metadata and unsupported aux structures all FALL BACK to normal raster encode.
+// ONLY if ALL RGB pixels match EXACTLY ONE 90/180/270 degree rotation of
+// that decoded HEIF. Other edits, ambiguity, missing metadata and unsupported
+// aux structures all FALL BACK to normal raster encode.
 // There is deliberately no external protocol, registry, or disk cache.
 #include "HeicLosslessNative.h"
 #include "PhotosWicTrace.h"
@@ -72,9 +72,12 @@ inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
     }
     state.at=now;
 }
-inline bool TryCW90(heif::Image& edited,UINT width,UINT height,
-                    const std::vector<uint8_t>& explicitICC,
-                    HeicLosslessNative::Bytes& output) {
+// Compare full decoded RGB pixel planes against the visible source image.
+// 1 = clockwise 90; 2 = 180; 3 = clockwise 270. No interpolation, crop,
+// colour adjustment or metadata edit is allowed in this shortcut.
+inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
+                        const std::vector<uint8_t>& explicitICC,
+                        HeicLosslessNative::Bytes& output) {
     output.clear();
     if(!width || !height || width>20000 || height>20000)return false;
     std::vector<uint8_t> source;
@@ -83,10 +86,15 @@ inline bool TryCW90(heif::Image& edited,UINT width,UINT height,
         auto& state=Current();
         std::lock_guard<std::mutex> lock(state.gate);
         if(state.ambiguous || state.original.empty() ||
-           std::chrono::steady_clock::now()-state.at>std::chrono::seconds(30) ||
-           state.width!=height || state.height!=width)return false;
-        source.swap(state.original); // one-shot, no stale source replay
+           std::chrono::steady_clock::now()-state.at>std::chrono::seconds(30))
+            return false;
         w=state.width;h=state.height;
+        const bool swapped=(width==h && height==w);
+        const bool normal=(width==w && height==h);
+        if(!swapped && !normal)return false;
+        // A failed preliminary save must not permanently use up the
+        // original HEIF before a later, valid rotated save can match it.
+        source=state.original;
     }
     try {
         heif::Context context;
@@ -94,7 +102,6 @@ inline bool TryCW90(heif::Image& edited,UINT width,UINT height,
         auto original=context.get_primary_image_handle();
         if(original.get_width()!=int(w) || original.get_height()!=int(h) ||
            original.has_alpha_channel())return false;
-        // An explicitly changed color profile is an edit, not a pure rotate.
         if(!explicitICC.empty()){
             const auto* raw=original.get_raw_image_handle();
             const auto n=heif_image_handle_get_raw_color_profile_size(raw);
@@ -111,27 +118,53 @@ inline bool TryCW90(heif::Image& edited,UINT width,UINT height,
         auto* after=edited.get_plane(heif_channel_interleaved,&targetStride);
         if(!before || !after || sourceStride<size_t(w)*3 ||
            targetStride<int(width)*3)return false;
-        // Exact full-frame comparison. A crop/brightness/extra edit cannot
-        // accidentally be discarded in favour of a metadata-only rotation.
-        for(UINT y=0;y<height;++y){
-            const uint8_t* outRow=after+size_t(y)*targetStride;
-            for(UINT x=0;x<width;++x){
-                const uint8_t* in=before+size_t(h-1-x)*sourceStride+
-                                  size_t(y)*3;
-                if(std::memcmp(in,outRow+size_t(x)*3,3)!=0)
-                    return false;
+
+        uint8_t confirmed=0;
+        for(uint8_t transform=1;transform<=3;transform++){
+            if((transform&1)?(width!=h || height!=w):
+                             (width!=w || height!=h))continue;
+            bool equal=true;
+            for(UINT y=0;y<height && equal;y++){
+                const uint8_t* outRow=after+size_t(y)*targetStride;
+                for(UINT x=0;x<width;x++){
+                    UINT sx=0,sy=0;
+                    if(transform==1){ sx=y; sy=h-1-x; }
+                    else if(transform==2){ sx=w-1-x; sy=h-1-y; }
+                    else { sx=w-1-y; sy=x; }
+                    const uint8_t* in=before+size_t(sy)*sourceStride+
+                                      size_t(sx)*3;
+                    if(std::memcmp(in,outRow+size_t(x)*3,3)!=0){
+                        equal=false;
+                        break;
+                    }
+                }
+            }
+            if(equal){
+                // Symmetrical images can match more than one angle; guessing
+                // which 90/180/270 transform the user requested is unsafe.
+                if(confirmed)return false;
+                confirmed=transform;
             }
         }
-        auto rotated=HeicLosslessNative::Transform(source,1);
+        if(!confirmed)return false;
+        auto rotated=HeicLosslessNative::Transform(source,confirmed);
         if(rotated.size()!=source.size())return false;
+        {
+            auto& state=Current();
+            std::lock_guard<std::mutex> lock(state.gate);
+            // Do not invalidate a different candidate installed while
+            // decode/compare was in progress.
+            if(!state.ambiguous && state.original==source)
+                state.original.clear();
+        }
         output.swap(rotated);
-        WicHeicDiagnostic::Emit("PhotosPureRotateLossless",width,height,
-                                 1,1,"exact-rgb-cw90");
+        WicHeicDiagnostic::Emit("PhotosPureRotateLossless",
+            width,height,confirmed,1,"exact-rgb-rotation");
         return true;
     } catch(...) {
-        // Unsupported HEIF, thumbnail, EXIF or HDR layout: no partial output.
         output.clear();
         return false;
     }
 }
+
 } // namespace PhotosPureRotationBridge
