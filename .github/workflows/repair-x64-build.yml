@@ -404,6 +404,26 @@ jobs:
               throw 'PS5.1 trace registry opt-in failed'
             }
           } finally { & $stop }
+          # Verify only the new read-only comparator against two checked-in
+          # public synthetic fixtures. Do not require FFprobe on CI runner.
+          $heicCompare=Join-Path $root 'HEIC_Compare_ReadOnly.ps1'
+          $syntheticBefore=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+          $syntheticAfter=(Resolve-Path -LiteralPath 'wictest/samples/fixture-irot3-exif6.heic').Path
+          $h1=(Get-FileHash -LiteralPath $syntheticBefore -Algorithm SHA256).Hash
+          $h2=(Get-FileHash -LiteralPath $syntheticAfter -Algorithm SHA256).Hash
+          & $heicCompare -Before $syntheticBefore -After $syntheticAfter
+          $report=Get-ChildItem -LiteralPath $root -Filter 'HEIC_Compare_ReadOnly_*.json' -File |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if(-not $report) { throw 'Read-only comparator produced no report' }
+          $meta=Get-Content -LiteralPath $report.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+          if($meta.Schema -ne 1 -or $meta.Before.Bytes -le 0 -or $meta.After.Bytes -le 0) {
+            throw 'Read-only comparator report is malformed'
+          }
+          if((Get-FileHash -LiteralPath $syntheticBefore -Algorithm SHA256).Hash -cne $h1 -or
+             (Get-FileHash -LiteralPath $syntheticAfter -Algorithm SHA256).Hash -cne $h2) {
+            throw 'Read-only comparator altered its input synthetic images'
+          }
+          Write-Host 'HEIC_COMPARE_READONLY_POWERSHELL_5_1_PASS'
           Write-Host 'WINDOWS_POWERSHELL_5_1_TOOLCHAIN_PASSED'
 
       - name: Build experimental replacement x64 MSI
