@@ -27,11 +27,29 @@ struct Candidate {
 };
 inline Candidate& Current() {static Candidate item;return item;}
 
+inline bool CaptureAllowedHost() {
+    // Avoid extra HEIC reads on every Explorer thumbnail request. Photos
+    // executable names vary between Win10/Win11 and legacy/modern packages.
+    // The artificial CI harness is also permitted, never Explorer.exe.
+    wchar_t name[MAX_PATH]{};
+    const DWORD n=GetModuleFileNameW(nullptr,name,MAX_PATH);
+    if(!n || n>=MAX_PATH)return false;
+    const wchar_t* base=wcsrchr(name,L'\\');
+    base=base?base+1:name;
+    return _wcsicmp(base,L"Microsoft.Photos.exe")==0 ||
+           _wcsicmp(base,L"Photos.exe")==0 ||
+           _wcsicmp(base,L"PhotosApp.exe")==0 ||
+           _wcsicmp(base,L"PhotoApp.exe")==0 ||
+           _wcsicmp(base,L"wictest.exe")==0;
+}
+
+
 inline bool IsValidHEIF(const std::vector<uint8_t>& bytes) {
     return bytes.size()>=12 && bytes.size()<=64u*1024u*1024u &&
         bytes[4]=='f' && bytes[5]=='t' && bytes[6]=='y' && bytes[7]=='p';
 }
 inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
+    if(!CaptureAllowedHost())return;
     if(!IsValidHEIF(bytes) || !w || !h || w>20000 || h>20000)return;
     auto& state=Current();
     std::lock_guard<std::mutex> lock(state.gate);
