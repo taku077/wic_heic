@@ -211,7 +211,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
         // Windows Photos 10 has been observed to pass an opaque raster and
         // default (transform=0, compression=0) options for pure CW90 rotations.
         // Reuse original HEIF ONLY if the in-process source is unambiguous,
-        // all rotated RGB bytes match exactly, ICC is not changed, and the
+        // all rotated RGB bytes match exactly one angle, ICC is not changed, and the
         // native HEIF metadata-only transformer accepts this file structure.
         // This path is one-shot; non-rotation edits fall through unchanged.
         if(m_Frames.size()==1) {
@@ -221,7 +221,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
                f->m_BitmapTransform==0 && f->m_HeifCompressionMethod==0 &&
                IsEqualGUID(f->m_PixelFormat,GUID_WICPixelFormat24bppRGB)) {
                 HeicLosslessNative::Bytes matched;
-                if(PhotosPureRotationBridge::TryCW90(
+                if(PhotosPureRotationBridge::TryRotation(
                         f->m_Frame,f->m_Width,f->m_Height,
                         f->m_RasterICC,matched)) {
                     f->m_LosslessBytes.swap(matched);
