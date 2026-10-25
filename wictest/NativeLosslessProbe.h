@@ -50,6 +50,47 @@ inline void Run() {
         catch(const std::runtime_error&) { rejected=true; }
         if(!rejected)throw std::runtime_error("Unsafe thumbnail/HDR rotation accepted");
     }
+    // In-memory synthetic HEIF reference graph: a thumbnail (item 50)
+    // references primary (item 49) and BOTH share exactly one irot property.
+    // This layout is safe: one irot change rotates both, with unchanged HEVC.
+    const HeicLosslessNative::Bytes refs={
+        0,0,0,0,                    // iref fullbox v0
+        0,0,0,14,'t','h','m','b',    // 14-byte reference box
+        0,50,0,1,0,49              // from 50 -> one target: primary 49
+    };
+    const HeicLosslessNative::Box iref{"iref",0,refs.size(),0};
+    const auto linked=HeicLosslessNative::LinkedVisualItems(refs,iref,49);
+    if(linked.size()!=1 || linked[0]!=50)
+        throw std::runtime_error("Synthetic linked HEIF thumbnail graph incorrect");
+    const std::vector<HeicLosslessNative::Box> properties={
+        {"irot",0,9,8}
+    };
+    const std::vector<HeicLosslessNative::Association> shared={
+        {49,{1}},{50,{1}}
+    };
+    HeicLosslessNative::ValidateSharedRotation(
+        refs,properties,shared,linked,49,1);
+    bool rejectedMissing=false;
+    try {
+        const std::vector<HeicLosslessNative::Association> missing={
+            {49,{1}},{50,{}}
+        };
+        HeicLosslessNative::ValidateSharedRotation(
+            refs,properties,missing,linked,49,1);
+    } catch(const std::runtime_error&) {rejectedMissing=true;}
+    if(!rejectedMissing)
+        throw std::runtime_error("Related HEIF thumbnail without irot accepted");
+    bool rejectedUnrelated=false;
+    try {
+        const std::vector<HeicLosslessNative::Association> unrelated={
+            {49,{1}},{50,{1}},{60,{1}}
+        };
+        HeicLosslessNative::ValidateSharedRotation(
+            refs,properties,unrelated,linked,49,1);
+    } catch(const std::runtime_error&) {rejectedUnrelated=true;}
+    if(!rejectedUnrelated)
+        throw std::runtime_error("Unrelated HEIF item sharing irot accepted");
+    printf("NATIVE_SHARED_IROT_RELATED_ONLY_SAFETY_PASS\n");
     printf("NATIVE_LOSSLESS_HEIF_MATCHES_PYTHON_AND_ROTATION_TEST_PASSED\n");
 }
 }
