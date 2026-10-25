@@ -59,7 +59,8 @@ inline bool TracePath(wchar_t (&out)[512]) {
 }
 inline void Emit(const char* event,UINT width=0,UINT height=0,
                  BYTE transform=0,BYTE compression=0,
-                 const char* source="none",HRESULT result=S_OK) {
+                 const char* source="none",HRESULT result=S_OK,
+                 UINT operation=0,ULONGLONG elapsedMs=0) {
     // Pixel consumers (including Photos' WIC flip/rotate) can issue many
     // thousands of one-scanline CopyPixels calls. Logging every one caused
     // 15,000+ entries and exhausted the 2-MiB cap BEFORE the encoder commit,
@@ -88,14 +89,26 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
         return;
     }
     char line[384]{};
+    // Keep legacy v1 fields intact; append correlation-only numeric fields.
+    // utc_filetime uses Windows UTC 100 ns units and aligns with the
+    // read-only FileSystemWatcher timestamps without storing file paths.
+    // operation is process-local (pair with pid), never a photo identifier.
+    FILETIME now{};
+    GetSystemTimeAsFileTime(&now);
+    const ULONGLONG utcFileTime=
+        (ULONGLONG(now.dwHighDateTime)<<32)|now.dwLowDateTime;
     // All string parameters MUST be trusted fixed literals from this DLL.
     const int n=sprintf_s(line,sizeof(line),
-        "WIC_HEIC_TRACE v1 tick=%llu pid=%lu event=%s width=%u height=%u transform=%u compression=%u source=%s hr=0x%08X\r\n",
+        "WIC_HEIC_TRACE v1 tick=%llu pid=%lu event=%s width=%u height=%u transform=%u compression=%u source=%s hr=0x%08X tid=%lu operation=%u elapsed_ms=%llu utc_filetime=%llu\r\n",
         static_cast<unsigned long long>(GetTickCount64()),
         static_cast<unsigned long>(GetCurrentProcessId()),event,
         static_cast<unsigned>(width),static_cast<unsigned>(height),
         static_cast<unsigned>(transform),static_cast<unsigned>(compression),
-        source,static_cast<unsigned>(result));
+        source,static_cast<unsigned>(result),
+        static_cast<unsigned long>(GetCurrentThreadId()),
+        static_cast<unsigned>(operation),
+        static_cast<unsigned long long>(elapsedMs),
+        static_cast<unsigned long long>(utcFileTime));
     LARGE_INTEGER length{},zero{};
     if(n>0 && n<int(sizeof(line)) &&
        GetFileSizeEx(h,&length) && length.QuadPart>=0 &&
