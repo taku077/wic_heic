@@ -4,7 +4,8 @@ import sys
 import tempfile
 
 sys.path.insert(0,str(Path(__file__).parent))
-from lossless_heic_rotate_experimental import UnsupportedHEIC, transform, write_new
+from lossless_heic_rotate_experimental import (UnsupportedHEIC, transform, write_new,
+    boxes, one, uint, exif_ids, exif_links, exif_extent, orientation)
 
 fixture=Path("wictest/samples/fixture-irot3-exif6-noaux.heic")
 before=fixture.read_bytes()
@@ -58,5 +59,31 @@ for label,contents in (("cw180",rotation180),("cw270",rotation270)):
     write_new(new_path,contents)
     print("LOSSLESS_HEIC_OUTPUT_READY_FOR_WIC="+str(new_path))
 print("LOSSLESS_HEIC_OUTPUT_READY_FOR_WIC="+str(fixtureOutput))
+# Construct a PUBLIC SYNTHETIC irot2 + Exif Orientation3 test fixture
+# from the existing artificially generated test HEIC. Do not use user photos.
+half_turn=bytearray(rotated)     # existing CW90 result: irot2, EXIF1
+top=boxes(half_turn,0,len(half_turn))
+meta=one(top,"meta")
+children=boxes(half_turn,meta[3]+4,meta[2])
+pitm=one(children,"pitm")
+primary=uint(half_turn,pitm[3]+4,2 if uint(half_turn,pitm[3],1)==0 else 4)
+exifs=exif_ids(half_turn,one(children,"iinf"))
+linked=exif_links(half_turn,one(children,"iref"),primary)
+target_exifs=[x for x in exifs if x in linked]
+assert len(target_exifs)==1, "Synthetic half-turn requires exactly one primary EXIF"
+idat=next((x for x in children if x[0]=="idat"),None)
+start,length=exif_extent(half_turn,one(children,"iloc"),target_exifs[0],idat)
+tag=orientation(half_turn,start,length)
+assert tag is not None and tag[1]==1
+pos,_,endian=tag
+half_turn[pos:pos+2]=(3).to_bytes(2,endian)
+half_turn_bytes=bytes(half_turn)
+# Deliberately no encoded-pixel changes: one EXIF byte only.
+assert len(half_turn_bytes)==len(rotated)
+assert sum(x!=y for x,y in zip(half_turn_bytes,rotated))==1
+original_half_turn=Path("wictest/samples/fixture-irot2-exif3-noaux.heic")
+assert not original_half_turn.exists(), "Never overwrite synthetic half-turn fixture"
+write_new(original_half_turn,half_turn_bytes)
+print("SYNTHETIC_IROT2_EXIF3_SOURCE_READY_FOR_WIC="+str(original_half_turn))
 print("LOSSLESS_HEIC_FOUR_ROTATION_TEST_PASSED",steps)
 print("LOSSLESS_HEIC_SOURCE_UNCHANGED SHA256="+h)
