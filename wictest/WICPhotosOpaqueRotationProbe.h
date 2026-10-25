@@ -138,6 +138,59 @@ inline void VerifyOutput(IWICImagingFactory* factory,
     if(sw!=expectedW || sh!=expectedH)
         throw std::runtime_error("Written HEIC dimensions are incorrect");
 }
+// Reproduce the real Windows 10 Photos 1.1.26 log using the untouched
+// checked-in HEIC whose hidden/unlinked second item is exposed by libheif
+// as a second top-level WIC frame. No real user photos, no file overwrite.
+inline void RunTwoFramePhotosSave(IWICImagingFactory* factory) {
+    const wchar_t* input=L"samples\\fixture-irot3-exif6-noaux.heic";
+    const wchar_t* output=L"samples\\out-photos-two-frame-cw90.heic";
+    CComPtr<IWICBitmapDecoder> decoder;
+    Must(factory->CreateDecoderFromFilename(input,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"two-frame source open");
+    UINT count=0;
+    Must(decoder->GetFrameCount(&count),"two-frame count");
+    if(count!=2) throw std::runtime_error("Two-frame regression fixture no longer has exactly 2 WIC frames");
+    CComPtr<IWICBitmapFrameDecode> primary,second;
+    Must(decoder->GetFrame(0,&primary),"two-frame primary");
+    Must(decoder->GetFrame(1,&second),"two-frame secondary");
+    UINT w=0,h=0,sw=0,sh=0;
+    Must(primary->GetSize(&w,&h),"two-frame primary geometry");
+    Must(second->GetSize(&sw,&sh),"two-frame secondary geometry");
+    CComPtr<IWICBitmapFlipRotator> rotator;
+    Must(factory->CreateBitmapFlipRotator(&rotator),"two-frame rotate");
+    Must(rotator->Initialize(primary,WICBitmapTransformRotate90),"two-frame rotate initialize");
+    CComPtr<IWICBitmap> opaque;
+    Must(factory->CreateBitmapFromSource(rotator,WICBitmapCacheOnLoad,&opaque),"two-frame opaque");
+    CComPtr<IWICBitmapEncoder> encoder;
+    Must(factory->CreateEncoder(GUID_ContainerFormatHEIC,&GUID_VendorPrsyahmi,&encoder),
+        "two-frame HEIC encoder");
+    CComPtr<IWICStream> stream;
+    Must(factory->CreateStream(&stream),"two-frame create stream");
+    Must(stream->InitializeFromFilename(output,GENERIC_WRITE),"two-frame new output stream");
+    Must(encoder->Initialize(stream,WICBitmapEncoderNoCache),"two-frame encoder initialize");
+    for(int i=0;i<2;++i){
+        CComPtr<IWICBitmapFrameEncode> dest;
+        Must(encoder->CreateNewFrame(&dest,nullptr),"two-frame new frame");
+        Must(dest->Initialize(nullptr),"two-frame initialize frame");
+        Must(dest->SetSize(i==0?h:sw,i==0?w:sh),"two-frame set size");
+        WICPixelFormatGUID fmt=GUID_WICPixelFormat24bppRGB;
+        Must(dest->SetPixelFormat(&fmt),"two-frame set pixel format");
+        if(!IsEqualGUID(fmt,GUID_WICPixelFormat24bppRGB))
+            throw std::runtime_error("two-frame pixel format changed");
+        Must(dest->WriteSource(i==0?static_cast<IWICBitmapSource*>(opaque.p):
+                                  static_cast<IWICBitmapSource*>(second.p),nullptr),
+             "two-frame WriteSource (original auxiliary must not abort)");
+        Must(dest->Commit(),"two-frame frame Commit");
+    }
+    Must(encoder->Commit(),"two-frame encoder Commit");
+    encoder.Release(); stream.Release();
+    const auto saved=Read(output);
+    const auto expect=Read(L"samples\\fixture-lossless-cw90.heic");
+    if(saved!=expect)
+        throw std::runtime_error("Two-frame Photos output differs from exact metadata-preserving HEIF rotation");
+    printf("WIC_PHOTOS_TWO_FRAME_ORIGINAL_HEIF_BYTE_EXACT_PASS bytes=%zu\n",saved.size());
+}
+
 inline void Run(){
     CComPtr<IWICImagingFactory> factory;
     Must(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -157,5 +210,6 @@ inline void Run(){
     VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw270.heic",1920,1080);
     VerifyOutput(factory,L"samples\\out-photos-opaque-edited-cw0.heic",1080,1920);
     VerifyOutput(factory,L"samples\\out-photos-opaque-edited-cw90.heic",1920,1080);
+    RunTwoFramePhotosSave(factory);
 }
 } // namespace WICPhotosOpaqueRotationProbe
