@@ -5,6 +5,7 @@
 #include "HeicFrameOptions.h"
 #include "HeifStreamWriter.h"
 #include "PhotosWicTrace.h"
+#include "PhotosPureRotationBridge.h"
 
 
 CHeicBitmapEncoder::CHeicBitmapEncoder()
@@ -207,6 +208,27 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 		}
 		if (m_Frames.empty()) return WINCODEC_ERR_WRONGSTATE;
+        // Windows Photos 10 has been observed to pass an opaque raster and
+        // default (transform=0, compression=0) options for pure CW90 rotations.
+        // Reuse original HEIF ONLY if the in-process source is unambiguous,
+        // all rotated RGB bytes match exactly, ICC is not changed, and the
+        // native HEIF metadata-only transformer accepts this file structure.
+        // This path is one-shot; non-rotation edits fall through unchanged.
+        if(m_Frames.size()==1) {
+            auto* f=m_Frames[0];
+            if(f->m_OptionsInitialized && !f->m_LosslessReady &&
+               f->m_HasPixels && f->m_WrittenLines==f->m_Height &&
+               f->m_BitmapTransform==0 && f->m_HeifCompressionMethod==0 &&
+               IsEqualGUID(f->m_PixelFormat,GUID_WICPixelFormat24bppRGB)) {
+                HeicLosslessNative::Bytes matched;
+                if(PhotosPureRotationBridge::TryCW90(
+                        f->m_Frame,f->m_Width,f->m_Height,
+                        f->m_RasterICC,matched)) {
+                    f->m_LosslessBytes.swap(matched);
+                    f->m_LosslessReady=true;
+                }
+            }
+        }
 		// A single-frame direct WIC rotation/copy can now retain the entire
 		// original HEIF file, including metadata, thumbnails and HDR assets.
 		// A pre-existing nonempty target stream is NEVER overwritten here.
