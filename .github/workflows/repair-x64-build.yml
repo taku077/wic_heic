@@ -158,9 +158,24 @@ jobs:
               }
               if (-not (Test-Path -LiteralPath $trace)) { throw 'WIC opt-in trace was not produced' }
               $events = Get-Content -LiteralPath $trace
-              foreach ($required in @('FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed','EncoderSetThumbnail','EncoderSetColorContexts','EncoderMetadataWriterUnavailable','WriteSourceOriginalExact')) {
+              foreach ($required in @('FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed','EncoderCommitExit','EncoderSetThumbnail','EncoderSetColorContexts','EncoderMetadataWriterUnavailable','WriteSourceOriginalExact')) {
                 if (-not ($events | Where-Object { $_ -like "*event=$required *" })) { throw "Missing expected diagnostic event: $required" }
               }
+              # A reliable timeline needs matched encoder Commit spans.
+              $starts = @($events | Where-Object { $_ -match '\bevent=EncoderCommitEnter ' })
+              $ends = @($events | Where-Object { $_ -match '\bevent=EncoderCommitExit ' })
+              if ($starts.Count -eq 0 -or $starts.Count -ne $ends.Count) {
+                throw 'WIC operation trace has unpaired encoder commits'
+              }
+              foreach ($line in ($starts + $ends)) {
+                if ($line -notmatch '\boperation=[1-9][0-9]*\b' -or
+                    $line -notmatch '\btid=[1-9][0-9]*\b' -or
+                    $line -notmatch '\butc_filetime=[1-9][0-9]*\b' -or
+                    $line -notmatch '\belapsed_ms=[0-9]+\b') {
+                  throw 'Missing numeric WIC save timing fields'
+                }
+              }
+              Write-Host "WIC_COMMIT_TIMING_SPANS_PASS count=$($ends.Count)"
               if ($events -match '(?i)\\samples\\|[A-Z]:\\|\.heic|\.jpg|\.png|GPS|EXIF|maker.?note') {
                 throw 'Sensitive file-identifying content leaked into WIC trace'
               }
