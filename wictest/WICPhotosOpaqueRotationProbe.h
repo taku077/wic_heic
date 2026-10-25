@@ -141,10 +141,11 @@ inline void VerifyOutput(IWICImagingFactory* factory,
 // Reproduce the real Windows 10 Photos 1.1.26 log using the untouched
 // checked-in HEIC whose hidden/unlinked second item is exposed by libheif
 // as a second top-level WIC frame. No real user photos, no file overwrite.
-inline void RunTwoFramePhotosSave(IWICImagingFactory* factory,bool editPrimary=false) {
+inline void RunTwoFramePhotosSave(IWICImagingFactory* factory,bool editPrimary=false,bool unchangedPrimary=false) {
     const wchar_t* input=L"samples\\fixture-irot3-exif6-noaux.heic";
     const wchar_t* output=editPrimary?
-        L"samples\\out-photos-two-frame-one-pixel-edit.heic":
+        L"samples\\out-photos-two-frame-one-pixel-edit.heic":unchangedPrimary?
+        L"samples\\out-photos-two-frame-unchanged.heic":
         L"samples\\out-photos-two-frame-cw90.heic";
     CComPtr<IWICBitmapDecoder> decoder;
     Must(factory->CreateDecoderFromFilename(input,nullptr,GENERIC_READ,
@@ -188,7 +189,9 @@ inline void RunTwoFramePhotosSave(IWICImagingFactory* factory,bool editPrimary=f
         Must(dest->SetPixelFormat(&fmt),"two-frame set pixel format");
         if(!IsEqualGUID(fmt,GUID_WICPixelFormat24bppRGB))
             throw std::runtime_error("two-frame pixel format changed");
-        Must(dest->WriteSource(i==0?static_cast<IWICBitmapSource*>(opaque.p):
+        Must(dest->WriteSource(i==0?(unchangedPrimary?
+                                    static_cast<IWICBitmapSource*>(primary.p):
+                                    static_cast<IWICBitmapSource*>(opaque.p)):
                                   static_cast<IWICBitmapSource*>(second.p),nullptr),
              "two-frame WriteSource (original auxiliary must not abort)");
         Must(dest->Commit(),"two-frame frame Commit");
@@ -204,7 +207,7 @@ inline void RunTwoFramePhotosSave(IWICImagingFactory* factory,bool editPrimary=f
     Must(encoder->Commit(),"two-frame encoder Commit");
     encoder.Release(); stream.Release();
     const auto saved=Read(output);
-    const auto expect=Read(L"samples\\fixture-lossless-cw90.heic");
+    const auto expect=Read(unchangedPrimary?input:L"samples\\fixture-lossless-cw90.heic");
     if(saved!=expect)
         throw std::runtime_error("Two-frame Photos output differs from exact metadata-preserving HEIF rotation");
     printf("WIC_PHOTOS_TWO_FRAME_ORIGINAL_HEIF_BYTE_EXACT_PASS bytes=%zu\n",saved.size());
@@ -231,5 +234,6 @@ inline void Run(){
     VerifyOutput(factory,L"samples\\out-photos-opaque-edited-cw90.heic",1920,1080);
     RunTwoFramePhotosSave(factory);
     RunTwoFramePhotosSave(factory,true);
+    RunTwoFramePhotosSave(factory,false,true);
 }
 } // namespace WICPhotosOpaqueRotationProbe
