@@ -21,7 +21,8 @@ inline std::vector<uint8_t> Read(const wchar_t* path) {
     return std::vector<uint8_t>(std::istreambuf_iterator<char>(in),
                                 std::istreambuf_iterator<char>());
 }
-inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1, bool halfTurnFixture=false) {
+inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1, bool halfTurnFixture=false,
+                   bool preloadDifferentHEIC=false) {
     const wchar_t* outputPath=halfTurnFixture?
         L"samples\\out-photos-opaque-halfturn-exif3-cw90.heic":editOnePixel?
         rotation==0?L"samples\\out-photos-opaque-edited-cw0.heic":
@@ -40,6 +41,18 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1
     Must(decoder->GetFrame(0,&source),"get original frame");
     UINT inW=0,inH=0;
     Must(source->GetSize(&inW,&inH),"get original geometry");
+    if(preloadDifferentHEIC) {
+        // Windows Photos can prefetch an unrelated neighbor from a large
+        // folder. The active HEIC must remain independently matchable.
+        CComPtr<IWICBitmapDecoder> neighborDecoder;
+        Must(factory->CreateDecoderFromFilename(
+            L"samples\\fixture-irot3-exif6-noaux.heic",nullptr,GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand,&neighborDecoder),
+            "decode synthetic preloaded neighbor");
+        CComPtr<IWICBitmapFrameDecode> neighbor;
+        Must(neighborDecoder->GetFrame(0,&neighbor),
+             "register second source in Photos-style preload");
+    }
     CComPtr<IWICBitmapFlipRotator> rotator;
     Must(factory->CreateBitmapFlipRotator(&rotator),"create 90 degree rotator");
     const WICBitmapTransformOptions transform=rotation==0?
@@ -129,7 +142,7 @@ inline void Run(){
     Must(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"WIC factory");
     // Verify first, before a competing source enters the short-lived cache.
-    RunOne(factory,false,1,true);
+    RunOne(factory,false,1,true,true);
     RunOne(factory,false,0);
     RunOne(factory,false,1);
     RunOne(factory,false,2);
