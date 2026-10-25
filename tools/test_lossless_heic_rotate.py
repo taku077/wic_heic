@@ -5,7 +5,8 @@ import tempfile
 
 sys.path.insert(0,str(Path(__file__).parent))
 from lossless_heic_rotate_experimental import (UnsupportedHEIC, transform, write_new,
-    boxes, one, uint, exif_ids, exif_links, exif_extent, orientation)
+    boxes, one, uint, exif_ids, exif_links, exif_extent, orientation,
+    props_for_primary)
 
 fixture=Path("wictest/samples/fixture-irot3-exif6-noaux.heic")
 before=fixture.read_bytes()
@@ -85,5 +86,21 @@ original_half_turn=Path("wictest/samples/fixture-irot2-exif3-noaux.heic")
 assert not original_half_turn.exists(), "Never overwrite synthetic half-turn fixture"
 write_new(original_half_turn,half_turn_bytes)
 print("SYNTHETIC_IROT2_EXIF3_SOURCE_READY_FOR_WIC="+str(original_half_turn))
+# Negative control: identical EXIF3 metadata, but HEIF explicitly declares
+# irot=0. WIC must NOT normalize orientation because no half-turn was applied.
+no_half=bytearray(half_turn_bytes)
+iprp=one(children,"iprp")
+sub=boxes(no_half,iprp[3],iprp[2])
+props=boxes(no_half,one(sub,"ipco")[3],one(sub,"ipco")[2])
+associations=props_for_primary(no_half,one(sub,"ipma"),primary)
+rotations=[props[i-1] for i in associations if props[i-1][0]=="irot"]
+assert len(rotations)==1 and uint(no_half,rotations[0][3],1)==2
+no_half[rotations[0][3]]=0
+assert sum(x!=y for x,y in zip(no_half,half_turn_bytes))==1
+no_half_path=Path("wictest/samples/fixture-irot0-exif3-noaux.heic")
+assert not no_half_path.exists(), "Never overwrite negative control"
+write_new(no_half_path,bytes(no_half))
+print("SYNTHETIC_IROT0_EXIF3_NEGATIVE_CONTROL_READY_FOR_WIC="+str(no_half_path))
+
 print("LOSSLESS_HEIC_FOUR_ROTATION_TEST_PASSED",steps)
 print("LOSSLESS_HEIC_SOURCE_UNCHANGED SHA256="+h)
