@@ -138,9 +138,10 @@ public:
     }
 };
 
-CHeicMetadataBlockReader::CHeicMetadataBlockReader(heif::ImageHandle handle)
+CHeicMetadataBlockReader::CHeicMetadataBlockReader(heif::ImageHandle handle, bool primaryIrot180Verified)
 	: m_Count(1)
 	, m_Handle(handle)
+	, m_PrimaryIrot180Verified(primaryIrot180Verified)
 {
 	m_MetadataBlock = m_Handle.get_list_of_metadata_block_IDs();
 }
@@ -255,7 +256,7 @@ HRESULT STDMETHODCALLTYPE CHeicMetadataBlockReader::GetReaderByIndex(UINT nIndex
 		const int rawH = m_Handle.get_ispe_height();
 		const bool swapped = rawW > 0 && rawH > 0 && rawW != rawH &&
 			m_Handle.get_width() == rawH && m_Handle.get_height() == rawW;
-		if (WicHeicOrientation::NormalizeExifForRotatedPixels(buffer, swapped)) {
+		if (WicHeicOrientation::NormalizeExifForRotatedPixels(buffer, swapped, m_PrimaryIrot180Verified)) {
 			DbgLog("WIC exposed EXIF Orientation=1 for already rotated HEIF pixels");
 		}
 	}
