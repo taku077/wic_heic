@@ -32,3 +32,14 @@
 - libheif二重回転の報告：https://github.com/strukturag/libheif/issues/227
 - Microsoft WIC metadata：https://learn.microsoft.com/en-us/windows/win32/wic/-wic-about-metadata
 - Microsoft WIC HEIFオプション：https://learn.microsoft.com/en-us/windows/win32/wic/heif-codec
+
+## 2026-10-25 実機での原因切り分け：Exif Orientationだけの修正で保存成功
+
+**ユーザーが報告した実機確認結果（新1.1.25 MSIの導入成功報告ではない）:**
+- IMG_3916の原本は未変更。原画像の複製でExif Orientation **3→1だけを1バイト変更**したHEICを、ユーザーのWindows 10標準フォトで開いて回転保存したところ、**正常に保存できた**。
+- 修正前後の HEIF `irot=2`、画像サイズ1,738,419バイト、HEVC圧縮データ、HDR補助画像、埋込サムネイル、その他Exif/ICCは変更していない。従来のIMG_3916は同じフォト環境で回転保存失敗と報告。
+- したがってExif Orientation 3の重複・不整合は**保存失敗の主要因である可能性がきわめて高い**。ただしこの成功試験のみで保存内部のWIC HRESULTや画素の完全保全を証明したとはしない。表示中の自動180度回転が消えたかは今回の報告には含まれない。
+- **追加添付** `HEIC_Rotation_MultiRotate_Diagnostic_v0_4(2).zip` を解析：2セッションとも、`reference/original-reference.heic`および`work/rotate-working.heic` は**修正前のIMG_3916（Exif Orientation=3、1,738,419バイト、同一SHA256）**だった。修正版Exif1はZIP内に存在しない。
+- 1セッションに診断JSONがあるが、チェックポイント後も原本/作業コピーのSHA256に変化なし、ファイル監視イベント0件、WICログの`EncoderCommitLossless`/`EncoderCommitRecompressed` 0件。両セッションで`EncoderSetThumbnail hr=0x88982F81`（未対応）と`MetadataWriterUnavailable hr=0x80004001`（未実装）を観測したが、**これらだけが回転保存UIエラーの直接原因と断定しない**。今回の診断ZIPはExif修正版の保存成功を機械的に追跡したログではない。
+- 特に**Exifだけ変えて正常保存した事実**と、今回の**修正前データの途中までしか記録していないログ**は混同しない。先行リリース1.1.24と提案候補1.1.25の動作実績も混同しない。
+- 次は本試験結果をもとに1.1.25の改善範囲を絞り、画像・自作HEIC Manager・Explorer設定やキャッシュを不用意に変更しない。締切は2026-10-27 20:00 JSTから延長しない。
