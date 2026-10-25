@@ -17,6 +17,39 @@ inline void Run() {
     const auto actual=HeicLosslessNative::Transform(initial,1);
     if(actual!=expected)
         throw std::runtime_error("Native lossless transform does not match Python reference");
+    // Independent synthetic HEIF half-turn sample carries BOTH primary
+    // irot=2 and TIFF Exif Orientation=3. The new lossless path must change
+    // only those metadata bytes and equal the existing CW180 reference.
+    const auto halfTurn=Read("samples\\fixture-irot2-exif3-noaux.heic");
+    if(!HeicLosslessNative::PrimaryHasIrot180(halfTurn))
+        throw std::runtime_error("Synthetic irot2 not authenticated");
+    const auto halfExpected=Read("samples\\fixture-lossless-cw180.heic");
+    const auto halfResult=HeicLosslessNative::Transform(halfTurn,1);
+    if(halfResult!=halfExpected || halfResult.size()!=halfTurn.size())
+        throw std::runtime_error("HEIF irot2 EXIF3 native rotation not byte-identical");
+    auto notHalf=halfTurn;
+    const auto oldBoxes=HeicLosslessNative::Children(notHalf,0,notHalf.size());
+    const auto meta=HeicLosslessNative::One(oldBoxes,"meta");
+    const auto sub=HeicLosslessNative::Children(notHalf,meta.data+4,meta.end);
+    const auto props=HeicLosslessNative::One(sub,"iprp");
+    const auto ps=HeicLosslessNative::Children(notHalf,props.data,props.end);
+    const auto co=HeicLosslessNative::One(ps,"ipco");
+    const auto allProps=HeicLosslessNative::Children(notHalf,co.data,co.end);
+    const auto associations=HeicLosslessNative::Associations(
+        notHalf,HeicLosslessNative::One(ps,"ipma"));
+    const auto primary=HeicLosslessNative::Primary(notHalf,meta);
+    for(const auto& e:associations)if(e.id==primary)
+        for(uint32_t idx:e.props)
+            if(idx>0 && idx<=allProps.size() && allProps[idx-1].type=="irot")
+                notHalf[allProps[idx-1].data]=0;
+    if(HeicLosslessNative::PrimaryHasIrot180(notHalf))
+        throw std::runtime_error("Non-180 HEIF incorrectly authenticated");
+    bool rejected=false;
+    try { auto unsafe=HeicLosslessNative::Transform(notHalf,1); (void)unsafe; }
+    catch(const std::runtime_error&) {rejected=true;}
+    if(!rejected)throw std::runtime_error("Exif3 without irot2 was accepted");
+    printf("NATIVE_IROT2_EXIF3_BYTE_EXACT_ROTATE_AND_FAILCLOSED_PASS\n");
+
     auto current=initial;
     for(int i=0;i<4;i++) {
         auto next=HeicLosslessNative::Transform(current,1);
