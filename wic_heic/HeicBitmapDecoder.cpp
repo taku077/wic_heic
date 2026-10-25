@@ -3,6 +3,7 @@
 #include "HeifStreamReader.h"
 #include "HeicBitmapDecoder.h"
 #include "PhotosWicTrace.h"
+#include "PhotosPureRotationBridge.h"
 #include "HeicBitmapFrameDecode.h"
 
 CHeicBitmapDecoder::CHeicBitmapDecoder()
@@ -311,6 +312,20 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 			return E_OUTOFMEMORY;
 		}
 
+        // Windows Photos may later pass only an opaque 90-degree-rotated
+        // raster to our encoder (no HEIF transform options). Keep at most
+        // one short-lived, in-process source candidate. Never persist bytes.
+        // A source read failure must NEVER fail ordinary HEIC decoding.
+        if(!m_OfferedRotationSource && handle.is_primary_image()) {
+            m_OfferedRotationSource=true;
+            try {
+                std::vector<uint8_t> source;
+                if(SUCCEEDED(CopyOriginalBytes(source)))
+                    PhotosPureRotationBridge::Offer(source,
+                        static_cast<UINT>(handle.get_width()),
+                        static_cast<UINT>(handle.get_height()));
+            } catch(...) {}
+        }
 		*ppIBitmapFrame = decoder;
 	}
 	catch (const heif::Error& ex)
