@@ -1,12 +1,13 @@
 #pragma once
 #include "HeicSourceAccess.h"
 
-class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IHeicRawSource
+class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IHeicRawSource, public IHeicAuxiliaryContainerSource
 {
 private:
 	std::atomic<uint32_t> m_Count;
 	CHeicBitmapDecoder* m_pDecoder;
 	heif::ImageHandle m_Handle;
+	UINT m_TopLevelIndex, m_TopLevelCount;
 	heif::Image m_Image;
 	heif_chroma m_chroma;
 	WICPixelFormatGUID m_PixelFormat;
@@ -16,7 +17,7 @@ private:
 	bool m_Decoded;
 
 public:
-	CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle);
+	CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle,UINT index,UINT count);
 	virtual ~CHeicBitmapFrameDecode();
 
 	virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject);
@@ -33,5 +34,6 @@ public:
 
 	void DecodeImage();
 	HRESULT STDMETHODCALLTYPE ReadFullContent(std::vector<uint8_t>* content) override;
+	HRESULT STDMETHODCALLTYPE ReadContainerAndIndex(std::vector<uint8_t>* content,UINT* index,UINT* count) override;
 };
 
