@@ -63,3 +63,15 @@ Independent external support: https://pillow-heif.readthedocs.io/en/stable/worka
 
 ## Release obligation
 10/27/2026 Tue 20:00 JST deadline unchanged. Previous 1.1.24 CI success is not proof that Windows 10 Photos rotation UI / save / thumbnail and HDR metadata problems are resolved.
+
+## Independent pixel-level proof on private experiment copies (2026-10-25)
+No uploaded HEIC, PNG image pixels or identifying EXIF bytes are committed into this repository.
+- Took a private `IMG_3916` extracted read-only original (1,738,419 bytes); separately cloned it in the analysis-only container. Main image HEIF irot=2 and TIFF Exif Orientation=3.
+- Changed **only** Exif 3→1 in one private clone (**one byte**, still same 1,738,419-byte HEIC). Independent libheif 1.19.8 decoding to PNG produced an image with exactly identical RGB pixels and 4032×3024 dimensions compared with the untouched source.
+- In another private clone changed **only** irot=2→1, keeping normalized Exif1. This changed one additional byte (two byte differences relative to source); all original HEVC compressed bits, thumbnail, gain-map image, XMP/ICC and file length were preserved.
+- Independently decoded the resulting HEIC into 3024×4032 RGB pixels using `heif-convert`. All decoded pixels were exactly equal to applying a clockwise 90° rotation to the original decoded RGB (Pillow exact RGB buffer comparison).
+- This proves that **this precise real-world source HEIC is suitable for metadata-only rotation** in principle. It does not prove Windows 10 Photos accepts such a save using self-WIC 1.1.24.
+- The observed image flips 180° after opening correlate with the **current WIC metadata normalization gap**: `ExifOrientationFix.h::NormalizeExifForRotatedPixels` is gated on width/height swapping and only corrects Exif 6/8. irot=2 leaves dimensions 4032×3024 unchanged, so EXIF=3 is exposed unchanged to Photos even though libheif already applies the irot to decoded pixels. Photos may then rotate those pixels again.
+- There are two **independent** WIC corrections required: (1) normalize EXIF3 only when an authenticated primary HEIF `irot=2` property is actually present (do **not** rewrite Exif-only/no-irot HEIC); (2) extend the strict native metadata-only HEIF `Transform` to safely accept old irot2 + Exif3 (preserving all linked XMP and HDR items) using the already proved two-byte normalization. Do not bypass source authenticity/fail-closed checks.
+- A failed Windows Photos save may still arise later in WIC raster/stream commit; the exact HRESULT from a failing trace is not available. Thus **the Save failure cause remains narrower than proven**: this unsupported lossless path alone does not prove no fallback save can succeed.
+
