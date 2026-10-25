@@ -4,7 +4,7 @@
 // No image data, file names, EXIF, or paths in trace output.
 //
 // A decoder may offer one short-lived original HEIF. EncoderCommit can use it
-// ONLY if ALL RGB pixels match EXACTLY ONE 90/180/270 degree rotation of
+// ONLY if ALL RGB pixels match EXACTLY ONE 0/90/180/270 degree rotation of
 // that decoded HEIF. Other edits, ambiguity, missing metadata and unsupported
 // aux structures all FALL BACK to normal raster encode.
 // There is deliberately no external protocol, registry, or disk cache.
@@ -73,8 +73,9 @@ inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
     state.at=now;
 }
 // Compare full decoded RGB pixel planes against the visible source image.
-// 1 = clockwise 90; 2 = 180; 3 = clockwise 270. No interpolation, crop,
-// colour adjustment or metadata edit is allowed in this shortcut.
+// 0 = unchanged after 360 degrees; 1 = clockwise 90; 2 = 180; 3 = CW270.
+// No interpolation, crop, colour adjustment or metadata edit is permitted.
+// For 0 degrees return byte-identical HEIF; never encode a noop raster.
 inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                         const std::vector<uint8_t>& explicitICC,
                         HeicLosslessNative::Bytes& output) {
@@ -119,8 +120,10 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
         if(!before || !after || sourceStride<size_t(w)*3 ||
            targetStride<int(width)*3)return false;
 
-        uint8_t confirmed=0;
-        for(uint8_t transform=1;transform<=3;transform++){
+        // 255 is an unmatched sentinel because transform 0 is a valid,
+        // strictly pixel-identical 360-degree result.
+        uint8_t confirmed=255;
+        for(uint8_t transform=0;transform<=3;transform++){
             if((transform&1)?(width!=h || height!=w):
                              (width!=w || height!=h))continue;
             bool equal=true;
@@ -128,7 +131,8 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                 const uint8_t* outRow=after+size_t(y)*targetStride;
                 for(UINT x=0;x<width;x++){
                     UINT sx=0,sy=0;
-                    if(transform==1){ sx=y; sy=h-1-x; }
+                    if(transform==0){ sx=x; sy=y; }
+                    else if(transform==1){ sx=y; sy=h-1-x; }
                     else if(transform==2){ sx=w-1-x; sy=h-1-y; }
                     else { sx=w-1-y; sy=x; }
                     const uint8_t* in=before+size_t(sy)*sourceStride+
@@ -140,14 +144,18 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                 }
             }
             if(equal){
-                // Symmetrical images can match more than one angle; guessing
-                // which 90/180/270 transform the user requested is unsafe.
-                if(confirmed)return false;
+                // Symmetrical images can match multiple transforms; do not
+                // guess whether a save requests 0/90/180/270 degrees.
+                if(confirmed!=255)return false;
                 confirmed=transform;
             }
         }
-        if(!confirmed)return false;
-        auto rotated=HeicLosslessNative::Transform(source,confirmed);
+        if(confirmed==255)return false;
+        // The zero-degree case must not pass through Transform: preserve
+        // the complete source HEIF, including original Exif/XMP, HDR,
+        // embedded thumbnails, ICC, and compressed HEVC bytes verbatim.
+        auto rotated=(confirmed==0)?source:
+            HeicLosslessNative::Transform(source,confirmed);
         if(rotated.size()!=source.size())return false;
         {
             auto& state=Current();
@@ -159,7 +167,7 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
         }
         output.swap(rotated);
         WicHeicDiagnostic::Emit("PhotosPureRotateLossless",
-            width,height,confirmed,1,"exact-rgb-rotation");
+            width,height,confirmed,1,confirmed==0?"exact-rgb-identity":"exact-rgb-rotation");
         return true;
     } catch(...) {
         output.clear();
