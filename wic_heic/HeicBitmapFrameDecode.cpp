@@ -183,62 +183,65 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPalette(__RPC__in_opt IWIC
 	return WINCODEC_ERR_PALETTEUNAVAILABLE;
 }
 
-HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(__RPC__in_opt const WICRect *prc, UINT cbStride, UINT cbBufferSize, __RPC__out_ecount_full(cbBufferSize) BYTE *pbBuffer)
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(
+    __RPC__in_opt const WICRect *prc, UINT cbStride, UINT cbBufferSize,
+    __RPC__out_ecount_full(cbBufferSize) BYTE *pbBuffer)
 {
-	WicHeicDiagnostic::Emit("DecoderCopyPixels",prc?UINT(prc->Width):UINT(m_Handle.get_width()),prc?UINT(prc->Height):UINT(m_Handle.get_height()),0,0,prc?"region":"full");
-	DbgLog("%s: (prc=%p, cbStride=%u, cbBufferSize=%u, pbBuffer=%p)", __FUNCTION__, prc, cbStride, cbBufferSize, pbBuffer);
-
-	try
-	{
-		DecodeImage();
-	}
-	catch (...)
-	{
-		DbgLog("%s: Exception", __FUNCTION__);
-		return WINCODEC_ERR_BADIMAGE;
-	}
-
-	if (!pbBuffer) {
-		DbgLog("%s: pbBuffer is null", __FUNCTION__);
-		return E_POINTER;
-	}
-
-	WICRect rc;
-	rc.X = 0;
-	rc.Y = 0;
-	rc.Width = m_Handle.get_width();
-	rc.Height = m_Handle.get_height();
-
-	if (prc) {
-		rc = *prc;
-	}
-
-	DbgLog("CopyPixels: (X=%d,Y=%d,W=%d,H=%d), outStride=%u, inStride=%d, bpp=%d",
-		rc.X, rc.Y, rc.Width, rc.Height,
-		cbStride, m_Stride, m_Bpp);
-
-	int bytesPerPixel = m_Bpp / 8;
-	UINT requiredSize = rc.Height * cbStride;
-	if (cbBufferSize < requiredSize) {
-		return E_INVALIDARG;
-	}
-
-	int offsetX = rc.X * bytesPerPixel;
-	int rowBytes = rc.Width * bytesPerPixel;
-
-	uint8_t* plane = m_PlaneInterleaved;
-	plane += (m_Stride * rc.Y) + offsetX;
-
-	uint8_t* out = pbBuffer;
-
-	for (int height = 0; height < rc.Height; height++)
-	{
-		memcpy_s(out, cbBufferSize - (height * cbStride), plane, rowBytes);
-		out += cbStride;
-		plane += m_Stride;
-	}
-
-	return S_OK;
+    // Validate all caller-controlled geometry BEFORE decoding and pointer
+    // arithmetic. A malformed WICRect used to read before/beyond the plane.
+    if (!pbBuffer) return E_POINTER;
+    const int imageW=m_Handle.get_width(), imageH=m_Handle.get_height();
+    if(imageW<=0 || imageH<=0 || imageW>20000 || imageH>20000)
+        return WINCODEC_ERR_BADIMAGE;
+    const WICRect full{0,0,imageW,imageH};
+    const WICRect& rc=prc?*prc:full;
+    if(rc.X<0 || rc.Y<0 || rc.Width<=0 || rc.Height<=0 ||
+       static_cast<uint64_t>(rc.X)+static_cast<uint64_t>(rc.Width)>static_cast<uint64_t>(imageW) ||
+       static_cast<uint64_t>(rc.Y)+static_cast<uint64_t>(rc.Height)>static_cast<uint64_t>(imageH)){
+        WicHeicDiagnostic::Emit("DecoderCopyPixelsRejected",0,0,0,0,"rectangle",E_INVALIDARG);
+        return E_INVALIDARG;
+    }
+    if(m_Bpp<=0 || (m_Bpp%8)!=0)return WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT;
+    const uint64_t bpp=static_cast<uint64_t>(m_Bpp/8);
+    const uint64_t rowBytes=static_cast<uint64_t>(rc.Width)*bpp;
+    // The final row needs only rowBytes, rather than a full padding stride.
+    const uint64_t needed=(static_cast<uint64_t>(rc.Height)-1)*cbStride+rowBytes;
+    if(cbStride<rowBytes || needed>cbBufferSize){
+        WicHeicDiagnostic::Emit("DecoderCopyPixelsRejected",
+            static_cast<UINT>(rc.Width),static_cast<UINT>(rc.Height),0,0,
+            "destination-stride",E_INVALIDARG);
+        return E_INVALIDARG;
+    }
+    try {
+        DecodeImage();
+    } catch (...) {
+        return WINCODEC_ERR_BADIMAGE;
+    }
+    // In HEIF, irot/grid transformations can change the visible dimensions.
+    // The plane we read must match the WIC-visible rectangle, NOT the raw
+    // HEVC tile dimensions. Never perform a speculative stride-based copy.
+    const int decodedW=m_Image.get_width(heif_channel_interleaved);
+    const int decodedH=m_Image.get_height(heif_channel_interleaved);
+    if(!m_PlaneInterleaved || decodedW!=imageW || decodedH!=imageH ||
+       m_Stride<static_cast<uint64_t>(imageW)*bpp){
+        WicHeicDiagnostic::Emit("DecoderCopyPixelsRejected",
+            static_cast<UINT>(imageW),static_cast<UINT>(imageH),0,0,
+            "decoded-geometry",WINCODEC_ERR_BADIMAGE);
+        return WINCODEC_ERR_BADIMAGE;
+    }
+    WicHeicDiagnostic::Emit("DecoderCopyPixels",
+        static_cast<UINT>(rc.Width),static_cast<UINT>(rc.Height),0,0,
+        prc?"region":"full");
+    const uint8_t* plane=m_PlaneInterleaved+
+        static_cast<size_t>(rc.Y)*m_Stride+
+        static_cast<size_t>(rc.X)*static_cast<size_t>(bpp);
+    BYTE* out=pbBuffer;
+    for(int y=0;y<rc.Height;y++){
+        memcpy(out,plane,static_cast<size_t>(rowBytes));
+        out+=cbStride;
+        plane+=m_Stride;
+    }
+    return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__deref_out_opt IWICMetadataQueryReader **ppIMetadataQueryReader)
