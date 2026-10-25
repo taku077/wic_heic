@@ -43,3 +43,26 @@
 - 1セッションに診断JSONがあるが、チェックポイント後も原本/作業コピーのSHA256に変化なし、ファイル監視イベント0件、WICログの`EncoderCommitLossless`/`EncoderCommitRecompressed` 0件。両セッションで`EncoderSetThumbnail hr=0x88982F81`（未対応）と`MetadataWriterUnavailable hr=0x80004001`（未実装）を観測したが、**これらだけが回転保存UIエラーの直接原因と断定しない**。今回の診断ZIPはExif修正版の保存成功を機械的に追跡したログではない。
 - 特に**Exifだけ変えて正常保存した事実**と、今回の**修正前データの途中までしか記録していないログ**は混同しない。先行リリース1.1.24と提案候補1.1.25の動作実績も混同しない。
 - 次は本試験結果をもとに1.1.25の改善範囲を絞り、画像・自作HEIC Manager・Explorer設定やキャッシュを不用意に変更しない。締切は2026-10-27 20:00 JSTから延長しない。
+
+## 2026-10-25 実機投入前の追加安全試験（画像処理実装変更なし）
+
+ユーザーは1.1.25 MSIを**まだダウンロード・インストールしていない**。現行インストールは1.1.24と報告。Exif3を1へ変えたIMG_3916コピーは1.1.24でも正常保存できたが、元のExif3のIMG_3916で1.1.25が正常動作するかは未確認。
+
+**判断:** 1.1.25を小さな空フォルダーの**元Exif3を持つIMG_3916の新規コピー**で試す価値が高い。新1.1.25は元HEIFを直接書換えるのではなく、WICのメタデータ公開と圧縮データに対する保存時の既存無再圧縮回転を修正。もう一枚、正常画像IMG_3923のコピーで回帰確認。実画像原本を絶対上書きしない。00_Check_Installed_WIC.cmdの正常判定と旧1.1.24 MSIの保全を導入前提とする。Microsoft Photosを閉じて旧版MSIの手動アンインストールをしない。
+
+安全なnegative-control回帰も追加：
+- 公開人工`irot=2+Exif Orientation3`と、その`irot`の1バイトだけを2→0へ変えた`irot=0+Exif Orientation3`を作成。写真本体のアップロードなし。
+- **後者ではWICがOrientation=3をそのまま公開**することを自動試験。Exif=3だけで無条件に1へ変更する実装ではない。
+- CI #40199504651 **SUCCESS**：
+  `WIC_HALF_TURN_IROT2_EXIF3_NORMALIZED_TO_1_PASS`、
+  `WIC_NO_HALF_TURN_EXIF3_PRESERVED_AS_3_PASS`、
+  `WIC_PHOTOS_OPAQUE_IROT2_EXIF3_CW90_LOSSLESS_EQUAL_PASS bytes=10597`、
+  `WIC_RESTORE_COMPARISON=PASS`。
+- **今回の2コミットはCI人工テストの追加のみ**で、先に発行した1.1.25 MSIのバイナリー本体は変更していない。GUI実機試験はユーザーが実施するまで未検証。
+
+引き続き未解決：Windows Photosの大量フォルダーでの数秒遅れの表示変形、Exif/XMPのラスタ再エンコード時欠落、品質92の再圧縮による容量増、連続回転の4回目における再エンコード、`.tmp`作成主体の未特定。これらはIMG_3916のExif3修正成功だけで解消済としない。
+
+参考：
+- WIC HEIF no-recompression options: https://learn.microsoft.com/en-us/windows/win32/wic/heif-codec
+- pillow-heif Exif orientation: https://pillow-heif.readthedocs.io/en/stable/workaround-orientation.html
+- Microsoft Photos Windows App SDK transition: https://blogs.windows.com/windowsdeveloper/2024/06/03/microsoft-photos-migrating-from-uwp-to-windows-app-sdk/
