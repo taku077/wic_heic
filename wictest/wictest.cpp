@@ -51,6 +51,20 @@ void CheckExifOrientationNormalization()
                         throw std::exception("EXIF regression: unrelated metadata altered");
                 }
             }
+            auto half=makeExif(le,3,app1Prefix);
+            auto unmodified=half;
+            if(WicHeicOrientation::NormalizeExifForRotatedPixels(half,false) ||
+               WicHeicOrientation::NormalizeExifForRotatedPixels(half,true) ||
+               half!=unmodified)
+                throw std::exception("EXIF regression: half-turn changed without irot proof");
+            if(!WicHeicOrientation::NormalizeExifForRotatedPixels(half,false,true))
+                throw std::exception("EXIF regression: verified half-turn not normalized");
+            if(WicHeicOrientation::Get16(half,valuePos,le)!=1)
+                throw std::exception("EXIF regression: half-turn Orientation != 1");
+            for(size_t k=0;k<half.size();++k){
+                if(k!=valuePos && k!=valuePos+1 && half[k]!=unmodified[k])
+                    throw std::exception("EXIF regression: half-turn corrupted unrelated metadata");
+            }
             auto normal=makeExif(le,1,app1Prefix);
             if (WicHeicOrientation::NormalizeExifForRotatedPixels(normal,true))
                 throw std::exception("EXIF regression: Orientation=1 changed");
@@ -128,6 +142,39 @@ void CheckRotatedExifFixture()
         throw std::exception("fixture: Exif reader died with its decoder frame");
     printf("WIC118_EXIF_QUERY_READER_LIFETIME_PASS\\n");
     printf("fixture: ROTATED_HEIC_METADATA_AND_PIXELS_PASSED\\n");
+}
+
+void CheckHalfTurnExifFixture()
+{
+    // This fixture is generated from a PUBLIC synthetic HEIC by changing
+    // just its EXIF Orientation 1->3 while irot stays at 2.
+    CComPtr<IWICImagingFactory> f;
+    CComPtr<IWICBitmapDecoder> dec;
+    CComPtr<IWICBitmapFrameDecode> frame;
+    CComPtr<IWICMetadataQueryReader> meta;
+    HRESULT hr=CoCreateInstance(CLSID_WICImagingFactory,nullptr,
+        CLSCTX_INPROC_SERVER,IID_IWICImagingFactory,(void**)&f);
+    if(FAILED(hr))throw std::exception("HALF_TURN: WIC factory");
+    hr=f->CreateDecoderFromFilename(
+        L"samples\\fixture-irot2-exif3-noaux.heic",
+        nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&dec);
+    if(FAILED(hr))throw std::exception("HALF_TURN: generated HEIC not readable");
+    hr=dec->GetFrame(0,&frame);
+    if(FAILED(hr))throw std::exception("HALF_TURN: frame unavailable");
+    UINT w=0,h=0;
+    hr=frame->GetSize(&w,&h);
+    if(FAILED(hr) || w!=1920 || h!=1080)
+        throw std::exception("HALF_TURN: irot2 dimensions invalid");
+    hr=frame->GetMetadataQueryReader(&meta);
+    if(FAILED(hr))throw std::exception("HALF_TURN: metadata unavailable");
+    PROPVARIANT v{};
+    PropVariantInit(&v);
+    hr=meta->GetMetadataByName(L"/app1/ifd/{ushort=274}",&v);
+    const unsigned x=(v.vt==VT_UI2)?v.uiVal:(v.vt==VT_UI4?v.ulVal:9999);
+    PropVariantClear(&v);
+    if(FAILED(hr) || x!=1)
+        throw std::exception("HALF_TURN: EXIF3 double rotation still exposed to Photos");
+    printf("WIC_HALF_TURN_IROT2_EXIF3_NORMALIZED_TO_1_PASS\n");
 }
 
 void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bool rotate90 = false)
@@ -342,6 +389,7 @@ int main()
 		WICPhotosOpaqueRotationProbe::Run();
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
+		CheckHalfTurnExifFixture();
 		WICDecoderRectProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
