@@ -251,6 +251,36 @@ inline void NormalizeExif(const Bytes& b,size_t start,size_t length,std::vector<
         }else if(value!=1)Bad("Unsupported Exif Orientation");
     }
 }
+// Read only the primary HEIF item's container rotation property. This does
+// not infer rotation from the unchanged width/height of a 180-degree image.
+// Ambiguous/malformed HEIF never authorizes altering WIC-visible EXIF.
+inline bool PrimaryHasIrot180(const Bytes& input) {
+    const auto top=Children(input,0,input.size());
+    const auto meta=One(top,"meta");
+    const auto m=Children(input,meta.data+4,meta.end);
+    const uint32_t id=Primary(input,meta);
+    const auto iprp=One(m,"iprp");
+    const auto p=Children(input,iprp.data,iprp.end);
+    const auto ipco=One(p,"ipco");
+    const auto properties=Children(input,ipco.data,ipco.end);
+    const auto entries=Associations(input,One(p,"ipma"));
+    size_t count=0;
+    uint32_t orientation=0;
+    for(const auto& entry:entries)if(entry.id==id){
+        for(uint32_t index:entry.props){
+            if(index<1 || index>properties.size())
+                Bad("Invalid primary property association");
+            const auto& item=properties[index-1];
+            if(item.type=="imir" || item.type=="clap")return false;
+            if(item.type=="irot"){
+                if(++count>1 || item.end-item.data!=1)
+                    Bad("Ambiguous HEIF primary rotation");
+                orientation=uint32_t(Read(input,item.data,1));
+            }
+        }
+    }
+    return count==1 && orientation==2;
+}
 // transform: 0 identity, 1 CW90, 2 CW180, 3 CCW90.
 inline Bytes Transform(const Bytes& original,uint8_t transform) {
     if(transform>3)Bad("Unsupported HEIF transform option");
