@@ -226,6 +226,75 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 			return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"rejected");
 		}
 		if (m_Frames.empty()) return Finish(WINCODEC_ERR_WRONGSTATE,"wrong-state");
+
+        // Photos real-world two-frame path: first frame is a rotated opaque
+        // primary RGB raster; second is an unchanged authentic frame from
+        // the exact same source HEIF. Never encode these as two independent
+        // pictures (would strip HEIF item relationships, EXIF and HDR).
+        // This narrow bridge does not synthesize or discard any source item.
+        if(m_Frames.size()==2 && !m_Frames[1]->m_AuxiliaryContainer.empty()) {
+            auto* primary=m_Frames[0];
+            auto* aux=m_Frames[1];
+            const auto& original=aux->m_AuxiliaryContainer;
+            if(aux->m_AuxiliaryIndex!=1 || aux->m_AuxiliaryCount!=2 ||
+               !aux->m_OptionsInitialized || aux->m_HasPixels ||
+               aux->m_LosslessReady || aux->m_BitmapTransform ||
+               aux->m_HeifCompressionMethod ||
+               !primary->m_OptionsInitialized || primary->m_BitmapTransform ||
+               primary->m_HeifCompressionMethod)
+                return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-unsafe");
+            try {
+                heif::Context input;
+                input.read_from_memory(original.data(),original.size());
+                const auto ids=input.get_list_of_top_level_image_IDs();
+                if(input.get_number_of_top_level_images()!=2 ||
+                   ids.size()!=2)return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-count");
+                auto image0=input.get_image_handle(ids[0]);
+                auto image1=input.get_image_handle(ids[1]);
+                if(!image0.is_primary_image() || image1.is_primary_image() ||
+                   image1.get_width()!=int(aux->m_Width) ||
+                   image1.get_height()!=int(aux->m_Height))
+                    return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-identity");
+                const UINT sourceW=static_cast<UINT>(image0.get_width());
+                const UINT sourceH=static_cast<UINT>(image0.get_height());
+                if(!(primary->m_Width==sourceW && primary->m_Height==sourceH) &&
+                   !(primary->m_Width==sourceH && primary->m_Height==sourceW))
+                    return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-geometry");
+                HeicLosslessNative::Bytes complete;
+                if(primary->m_LosslessReady && !primary->m_HasPixels &&
+                   primary->m_LosslessBytes==original) {
+                    // Unedited two-frame copy; preserve every HEIF byte.
+                    complete=original;
+                } else if(!primary->m_LosslessReady &&
+                          primary->m_HasPixels &&
+                          primary->m_WrittenLines==primary->m_Height &&
+                          IsEqualGUID(primary->m_PixelFormat,GUID_WICPixelFormat24bppRGB)) {
+                    // Only an exact full-pixel 0/90/180/270 match of the
+                    // specific original supplied by the second frame qualifies.
+                    if(!PhotosPureRotationBridge::TryRotation(
+                            primary->m_Frame,primary->m_Width,primary->m_Height,
+                            primary->m_RasterICC,complete,&original))
+                        return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-pixel-mismatch");
+                } else {
+                    return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-edited");
+                }
+                if(complete.empty() || complete.size()!=original.size() ||
+                   complete.size()>0xFFFFFFFFULL)
+                    return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-size");
+                ULONG written=0;
+                hr=m_Stream->Write(complete.data(),
+                                   static_cast<ULONG>(complete.size()),&written);
+                if(FAILED(hr)||written!=complete.size())
+                    return Finish(STG_E_WRITEFAULT,"two-frame-short-write");
+                WicHeicDiagnostic::Emit("EncoderCommitLossless",
+                    primary->m_Width,primary->m_Height,0,0,
+                    "multi-frame-heif",S_OK,operation,GetTickCount64()-beginTick);
+                return Finish(S_OK,"two-frame-lossless");
+            } catch(...) {
+                return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-invalid-heif");
+            }
+        }
+
         // Windows Photos 10 has been observed to pass an opaque raster and
         // default (transform=0, compression=0) options for pure CW90 rotations.
         // Reuse original HEIF ONLY if the in-process source is unambiguous,
