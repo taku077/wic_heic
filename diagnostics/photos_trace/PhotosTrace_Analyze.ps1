@@ -27,7 +27,8 @@ foreach ($line in $lines) {
 }
 $names=@('DecoderOpen','DecoderGetFrame','DecoderFrameGetSize','DecoderCopyPixels',
          'EncoderInitialize','CreateNewFrame','FrameInitializeEnter','FrameInitializeOptions',
-         'WriteSourceEnter','WriteSourceLossless','WriteSourceRaster','WriteSourceRejected',
+         'WriteSourceEnter','WriteSourceInputClass','WriteSourceOriginalExact',
+         'WriteSourceLossless','WriteSourceRaster','WriteSourceRejected',
          'WritePixelsEnter','SetColorContexts','SetThumbnail','MetadataWriterUnavailable',
          'EncoderSetColorContexts','EncoderSetThumbnail','EncoderSetPreview','EncoderMetadataWriterUnavailable',
          'EncoderCommitLossless','EncoderCommitRecompressed','EncoderCommitRejected')
@@ -43,6 +44,23 @@ $linesOut.Add('Process IDs (not proof of application identity):')
 foreach($group in ($events | Group-Object PID)) {
     $linesOut.Add(('  pid={0} events={1}' -f $group.Name,$group.Count))
 }
+# Narrow root-cause report: link each WIC source kind to the save branch
+# within the same process. Does NOT assume that any PID is Windows Photos.
+$linesOut.Add('ENCODE PATHS BY PID (correlate PID with Photos separately):')
+foreach($group in ($events | Group-Object PID)) {
+    $kinds=@($group.Group | Where-Object {$_.Event -eq 'WriteSourceInputClass'} |
+        ForEach-Object {$_.Source} | Select-Object -Unique)
+    $losslessN=@($group.Group | Where-Object {$_.Event -eq 'EncoderCommitLossless'}).Count
+    $rasterN=@($group.Group | Where-Object {$_.Event -eq 'EncoderCommitRecompressed'}).Count
+    if($losslessN -eq 0 -and $rasterN -eq 0 -and $kinds.Count -eq 0) {continue}
+    $choice='NO_COMPLETED_SAVE'
+    if($losslessN -gt 0 -and $rasterN -gt 0) {$choice='MIXED_SEPARATE_SAVES'}
+    elseif($losslessN -gt 0) {$choice='LOSSLESS_HEIF_SOURCE_PRESERVED'}
+    elseif($rasterN -gt 0) {$choice='REENCODED_RASTER_HEVC'}
+    $linesOut.Add(('  pid={0} decision={1} losslessCommits={2} rasterCommits={3} sourceKinds={4}' -f
+        $group.Name,$choice,$losslessN,$rasterN,($kinds -join ',')))
+}
+$linesOut.Add('An empty or unrelated PID is INCONCLUSIVE, not proof that Photos bypassed WIC.')
 $decoded=@($events | Where-Object { $_.Event -eq 'DecoderOpen' }).Count
 $encoding=@($events | Where-Object { $_.Event -eq 'EncoderInitialize' }).Count
 $lossless=@($events | Where-Object { $_.Event -eq 'EncoderCommitLossless' }).Count
