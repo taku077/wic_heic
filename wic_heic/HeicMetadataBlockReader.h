@@ -6,9 +6,10 @@ private:
 	std::atomic<uint32_t> m_Count;
 	heif::ImageHandle m_Handle;
 	std::vector<heif_item_id> m_MetadataBlock;
+	bool m_PrimaryIrot180Verified;
 
 public:
-	CHeicMetadataBlockReader(heif::ImageHandle handle);
+	CHeicMetadataBlockReader(heif::ImageHandle handle, bool primaryIrot180Verified=false);
 	virtual ~CHeicMetadataBlockReader();
 
 	virtual HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject);
