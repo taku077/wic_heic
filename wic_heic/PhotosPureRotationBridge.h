@@ -54,7 +54,7 @@ inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
     }
     state.at=now;
 }
-inline bool TryCW90(const heif::Image& edited,UINT width,UINT height,
+inline bool TryCW90(heif::Image& edited,UINT width,UINT height,
                     const std::vector<uint8_t>& explicitICC,
                     HeicLosslessNative::Bytes& output) {
     output.clear();
@@ -89,9 +89,7 @@ inline bool TryCW90(const heif::Image& edited,UINT width,UINT height,
                                        heif_chroma_interleaved_RGB);
         int sourceStride=0,targetStride=0;
         auto* before=rgb.get_plane2(heif_channel_interleaved,&sourceStride);
-        // const_cast only accesses the existing pixel plane; never writes it.
-        auto& target=const_cast<heif::Image&>(edited);
-        auto* after=target.get_plane(heif_channel_interleaved,&targetStride);
+        auto* after=edited.get_plane(heif_channel_interleaved,&targetStride);
         if(!before || !after || sourceStride<int(w)*3 ||
            targetStride<int(width)*3)return false;
         // Exact full-frame comparison. A crop/brightness/extra edit cannot
