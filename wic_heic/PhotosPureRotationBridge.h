@@ -87,10 +87,11 @@ inline bool TryCW90(heif::Image& edited,UINT width,UINT height,
         }
         auto rgb=original.decode_image(heif_colorspace_RGB,
                                        heif_chroma_interleaved_RGB);
-        int sourceStride=0,targetStride=0;
+        size_t sourceStride=0;
+        int targetStride=0;
         auto* before=rgb.get_plane2(heif_channel_interleaved,&sourceStride);
         auto* after=edited.get_plane(heif_channel_interleaved,&targetStride);
-        if(!before || !after || sourceStride<int(w)*3 ||
+        if(!before || !after || sourceStride<size_t(w)*3 ||
            targetStride<int(width)*3)return false;
         // Exact full-frame comparison. A crop/brightness/extra edit cannot
         // accidentally be discarded in favour of a metadata-only rotation.
