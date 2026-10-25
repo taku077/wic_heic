@@ -5,6 +5,8 @@
 #include "HeicBitmapFrameDecode.h"
 #include "HeicMetadataBlockReader.h"
 #include "PhotosWicTrace.h"
+#include "ExifOrientationFix.h"
+#include "HeicLosslessNative.h"
 
 CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle)
 	: m_Count(1)
@@ -253,7 +255,39 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetMetadataQueryReader(__RPC__
 		return E_POINTER;
 	}
 
-	CHeicMetadataBlockReader* pMetadataBlockReader = new(std::nothrow) CHeicMetadataBlockReader(this->m_Handle);
+	// Before exposing a duplicate 180-degree Exif orientation, authenticate
+    // the compressed PRIMARY HEIF item's actual irot=2 (half-turn). Checking
+    // visible width/height alone is invalid: 180° swaps neither dimension.
+    // In the common case without Exif Orientation=3, DO NOT reread the HEIC.
+    bool primaryIrot180Verified=false;
+    if(m_pDecoder && m_Handle.is_primary_image()){
+        try {
+            const auto ids=m_Handle.get_list_of_metadata_block_IDs();
+            bool hasExif3=false;
+            for(heif_item_id id:ids){
+                if(m_Handle.get_metadata_type(id)!="Exif")continue;
+                auto metadata=m_Handle.get_metadata(id);
+                if(WicHeicOrientation::NormalizeExifForRotatedPixels(
+                        metadata,false,true)){
+                    hasExif3=true;
+                    break;
+                }
+            }
+            if(hasExif3){
+                std::vector<uint8_t> raw;
+                if(SUCCEEDED(m_pDecoder->CopyOriginalBytes(raw)) &&
+                   raw.size()<=64u*1024u*1024u)
+                    primaryIrot180Verified=HeicLosslessNative::PrimaryHasIrot180(raw);
+            }
+        } catch(...) {
+            // WIC query continues unchanged on malformed HEIF/Exif. Never
+            // pretend that 180-degree container rotation was authenticated.
+            primaryIrot180Verified=false;
+        }
+    }
+    CHeicMetadataBlockReader* pMetadataBlockReader =
+        new(std::nothrow) CHeicMetadataBlockReader(
+            this->m_Handle,primaryIrot180Verified);
 	if (!pMetadataBlockReader) {
 		return E_OUTOFMEMORY;
 	}
