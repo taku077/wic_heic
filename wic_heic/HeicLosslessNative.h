@@ -1,9 +1,10 @@
 #pragma once
 // Narrow, fail-closed ISO-BMFF/HEIF lossless clockwise rotation engine.
 // NO file I/O and NO HEVC decode/re-encode. Never edits caller's input.
-// Supports existing primary irot, simple primary EXIF, and no other geometric
-// transforms. Rejects layouts where modifying a shared property might harm
-// other pictures. Not yet connected to Windows Photos.
+// Supports existing primary irot and simple primary EXIF. A shared irot
+// may rotate related thumbnails/HDR auxiliary images ONLY when all those
+// images explicitly share the same property and no ambiguity is detected.
+// Never guesses source geometry or original HEVC bytes from edited WIC rasters.
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -114,28 +115,71 @@ inline bool HasCdsc(const Bytes& b,const Box& iref,uint32_t exifId,uint32_t prim
     }
     return false;
 }
-// A preserved but unrotated thumbnail or HDR auxiliary picture could render
-// in a different orientation than the transformed primary image. Fail closed
-// until all related image properties can be changed coherently.
-inline bool HasUnadjustedLinkedVisualImage(
+// Related visual items (thumbnail, HDR/auxiliary) must rotate in exactly
+// the same transform as the primary. HEIF permits a SINGLE irot property
+// to be associated with multiple items, in which case changing its one-byte
+// value coherently rotates primary + thumbnail + aux without re-encoding.
+// It is UNSAFE when a related visual lacks that exact shared association.
+inline std::vector<uint32_t> LinkedVisualItems(
     const Bytes& b,const Box& iref,uint32_t primary)
 {
     const uint32_t version=uint32_t(Read(b,iref.data,1));
     if(version>1)Bad("Unsupported iref version");
     const size_t width=version?4:2;
+    std::vector<uint32_t> linked;
     for(const auto& e:Children(b,iref.data+4,iref.end)){
         if(e.type!="thmb" && e.type!="auxl")continue;
         size_t p=e.data;
-        uint32_t from=uint32_t(Read(b,p,width));p+=width;
-        uint32_t count=uint32_t(Read(b,p,2));p+=2;
-        if(p+uint64_t(count)*width!=e.end)Bad("Invalid thumbnail/auxiliary references");
-        if(from==primary)return true;
-        for(uint32_t i=0;i<count;i++)
-            if(Read(b,p+i*width,width)==primary)return true;
+        const uint32_t from=uint32_t(Read(b,p,width));p+=width;
+        const uint32_t count=uint32_t(Read(b,p,2));p+=2;
+        if(p+uint64_t(count)*width!=e.end)
+            Bad("Invalid thumbnail/auxiliary references");
+        for(uint32_t i=0;i<count;i++){
+            const uint32_t to=uint32_t(Read(b,p+i*width,width));
+            uint32_t related=0;
+            if(from==primary)related=to;
+            else if(to==primary)related=from;
+            if(related==primary)Bad("Self-referencing visual image");
+            if(related &&
+                std::find(linked.begin(),linked.end(),related)==linked.end())
+                linked.push_back(related);
+        }
     }
-    return false;
+    return linked;
 }
-
+inline void ValidateSharedRotation(
+    const Bytes& b,const std::vector<Box>& properties,
+    const std::vector<Association>& associations,
+    const std::vector<uint32_t>& linked,
+    uint32_t primary,uint32_t irotIndex)
+{
+    // Each associated item may be listed exactly once; duplicate ipma
+    // entries or a separate transform are too ambiguous to patch in place.
+    for(const auto& item:linked){
+        uint32_t found=0;bool sameAngle=false;
+        for(const auto& entry:associations)if(entry.id==item){
+            ++found;
+            for(uint32_t idx:entry.props){
+                if(idx<1||idx>properties.size())
+                    Bad("Invalid related image property index");
+                const auto& q=properties[idx-1];
+                if(q.type=="imir"||q.type=="clap")
+                    Bad("Related image has unsupported compound transform");
+                if(q.type=="irot" && idx!=irotIndex)
+                    Bad("Related visual has separate irot property");
+                if(idx==irotIndex)sameAngle=true;
+            }
+        }
+        if(found!=1||!sameAngle)
+            Bad("Related visual does not share primary irot property");
+    }
+    for(const auto& entry:associations)if(entry.id!=primary){
+        if(std::find(entry.props.begin(),entry.props.end(),irotIndex)==entry.props.end())
+            continue;
+        if(std::find(linked.begin(),linked.end(),entry.id)==linked.end())
+            Bad("Rotation property shared by unrelated item");
+    }
+}
 inline std::pair<size_t,size_t> ExifRange(const Bytes& b,const Box& iloc,const Box* idat,uint32_t wanted) {
     size_t p=iloc.data;
     uint32_t version=uint32_t(Read(b,p,1));
@@ -244,19 +288,21 @@ inline Bytes Transform(const Bytes& original,uint8_t transform) {
         }
     }
     if(!irotIndex)Bad("Primary image lacks irot property");
-    for(const auto& entry:associations)if(entry.id!=primary)
-        if(std::find(entry.props.begin(),entry.props.end(),irotIndex)!=entry.props.end())
-            Bad("Rotation property shared by other image");
+    const Box iref=One(m,"iref");
+    const auto linked=LinkedVisualItems(original,iref,primary);
+    ValidateSharedRotation(original,list,associations,linked,primary,irotIndex);
     const auto& irot=list[irotIndex-1];
     if(irot.end-irot.data!=1)Bad("Unsupported irot box");
     uint32_t old=uint32_t(Read(original,irot.data,1));
     if(old>3)Bad("Malformed irot value");
     out[irot.data]=uint8_t((old+4-transform)%4);
     std::vector<Patch> exifPatches;
-    Box iinf=One(m,"iinf"),iref=One(m,"iref"),iloc=One(m,"iloc");
-    if(HasUnadjustedLinkedVisualImage(original,iref,primary))
-        Bad("Thumbnail/HDR auxiliary image rotation not yet supported");
+    Box iinf=One(m,"iinf"),iloc=One(m,"iloc");
     const auto exifs=ExifIDs(original,iinf);
+    for(uint32_t exifId:exifs)
+        for(uint32_t related:linked)
+            if(HasCdsc(original,iref,exifId,related))
+                Bad("Related image has independent Exif orientation");
     uint32_t exifId=0;
     for(uint32_t id:exifs)if(HasCdsc(original,iref,id,primary)){
         if(exifId)Bad("Multiple primary Exif items");
