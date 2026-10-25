@@ -66,3 +66,33 @@
 - WIC HEIF no-recompression options: https://learn.microsoft.com/en-us/windows/win32/wic/heif-codec
 - pillow-heif Exif orientation: https://pillow-heif.readthedocs.io/en/stable/workaround-orientation.html
 - Microsoft Photos Windows App SDK transition: https://blogs.windows.com/windowsdeveloper/2024/06/03/microsoft-photos-migrating-from-uwp-to-windows-app-sdk/
+
+## 2026-10-25 実機フォローアップ：WicHeic 1.1.25の回転保存成功（利用者報告）
+
+- 利用者は **WicHeic 1.1.25**でIMG_3916をWindows 10標準フォトから回転保存でき、他の画像も引き続き回転保存可能だったと確認。**1.1.25は実機未導入**とする以前の記録は今回の報告で更新。
+- これで **IMG_3916の回転保存不能**は利用者環境で改善確認済み。今回、画素全数比較・Exif/XMP/ICC/HDR全フィールドの保存前後比較は未報告なので、全HEIC完全保全・他の画像の無再圧縮を意味しない。
+- **表示の引き伸ばし・見切れは未解決。** 1.1.25の表示バグ修正済み宣言は禁止。
+- 利用者は「回転からサムネイル向き反映まで時間がかかり、その間に連続回転すると表示崩れが起きる可能性」と所見を提示。**サムネイル更新と物理的なファイル置換は別イベントであるため、サムネイル向き更新を保存完了の証拠として使用しない。**
+- 過去のWindows実機セッションBでは、チェックポイント後約4.6秒に別のファイル置換イベントが発生。WIC Encoder Commitの終了とPhotos側のストリームクローズ／ファイル置換・Shellサムネイル更新を個別に評価し、重複保存の有無を検証する。
+
+### 実装済み・未導入の次版診断（1.1.25バイナリーには含まれない）
+
+- PhotosWicTrace.h: 既存のオプトイン・2MiB上限・20分失効・画像ファイル識別子なしを維持し、utc_filetime・tid・operation・elapsed_msを数値で追記。
+- HeicBitmapEncoder.cpp: 各Encoder Commitにプロセスローカルの操作番号を採番、開始／正常・異常終了と処理時間を記録し、同一プロセスでの並行CommitをEncoderCommitOverlapで検知。**Photosへロックや待機を追加しない。**
+- PhotosTrace_Analyze.ps1: Windows PowerShell 5.1対応、古いログも受理し、PID別のCommit開始/終了・並行数・所要時間を集計。WIC完了＝ファイル保存・サムネイル更新の完了とはみなさない。
+- CIはイベントの対および数値フォーマットを自動チェックするよう更新。**Windows CI合格および次版MSI実機動作は別途判定が必要。**
+
+### 次に区別するタイムライン
+
+1. 回転ボタン押下の画面時刻（利用者の目視記録でありWIC内からは取得できない）。
+2. WICのEncoderCommitEnter/Exit（コーデック内部の終了のみ）。
+3. ファイル監視のHEIC更新・置換・一時ファイルイベント（FileSystemWatcherが重複発火し得ることに注意）。
+4. サムネイル向きが変化した画面時刻（表示・キャッシュ更新でありディスク状態と同一視しない）。
+
+既存の診断ログを優先し、同じユーザー写真の再提出や反復診断を先に求めない。元画像・HEIC Manager・Explorer設定・キャッシュは変更しない。締切は**2026-10-27 20:00 JST**のまま。
+
+### 独立参照
+- Microsoft WIC Encoder Commit: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapencoder
+- Microsoft Shell 変更通知: https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify
+- libheifのgridと回転後ジオメトリー: https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images
+- ExifToolのHEIC構造変更注意: https://exiftool.org/forum/index.php?topic=17169.15
