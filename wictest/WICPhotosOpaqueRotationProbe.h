@@ -24,7 +24,9 @@ inline std::vector<uint8_t> Read(const wchar_t* path) {
 inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1, bool halfTurnFixture=false) {
     const wchar_t* outputPath=halfTurnFixture?
         L"samples\\out-photos-opaque-halfturn-exif3-cw90.heic":editOnePixel?
-        L"samples\\out-photos-opaque-edited-cw90.heic":
+        rotation==0?L"samples\\out-photos-opaque-edited-cw0.heic":
+                    L"samples\\out-photos-opaque-edited-cw90.heic":
+        rotation==0 ? L"samples\\out-photos-opaque-pure-cw0.heic":
         rotation==1 ? L"samples\\out-photos-opaque-pure-cw90.heic":
         rotation==2 ? L"samples\\out-photos-opaque-pure-cw180.heic":
                       L"samples\\out-photos-opaque-pure-cw270.heic";
@@ -40,7 +42,8 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1
     Must(source->GetSize(&inW,&inH),"get original geometry");
     CComPtr<IWICBitmapFlipRotator> rotator;
     Must(factory->CreateBitmapFlipRotator(&rotator),"create 90 degree rotator");
-    const WICBitmapTransformOptions transform=rotation==1?
+    const WICBitmapTransformOptions transform=rotation==0?
+        WICBitmapTransformRotate0:rotation==1?
         WICBitmapTransformRotate90:(rotation==2?
         WICBitmapTransformRotate180:WICBitmapTransformRotate270);
     Must(rotator->Initialize(source,transform),
@@ -88,7 +91,8 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1
     dest.Release();encoder.Release();stream.Release();
     const auto bytes=Read(outputPath);
     const auto expected=Read(halfTurnFixture?
-        L"samples\\fixture-lossless-cw180.heic":rotation==1?
+        L"samples\\fixture-lossless-cw180.heic":rotation==0?
+        L"samples\\fixture-irot3-exif6-noaux.heic":rotation==1?
         L"samples\\fixture-lossless-cw90.heic":rotation==2?
         L"samples\\fixture-lossless-cw180.heic":
         L"samples\\fixture-lossless-cw270.heic");
@@ -126,14 +130,18 @@ inline void Run(){
         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"WIC factory");
     // Verify first, before a competing source enters the short-lived cache.
     RunOne(factory,false,1,true);
+    RunOne(factory,false,0);
     RunOne(factory,false,1);
     RunOne(factory,false,2);
     RunOne(factory,false,3);
+    RunOne(factory,true,0);
     RunOne(factory,true,1);
     VerifyOutput(factory,L"samples\\out-photos-opaque-halfturn-exif3-cw90.heic",1080,1920);
+    VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw0.heic",1080,1920);
     VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw90.heic",1920,1080);
     VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw180.heic",1080,1920);
     VerifyOutput(factory,L"samples\\out-photos-opaque-pure-cw270.heic",1920,1080);
+    VerifyOutput(factory,L"samples\\out-photos-opaque-edited-cw0.heic",1080,1920);
     VerifyOutput(factory,L"samples\\out-photos-opaque-edited-cw90.heic",1920,1080);
 }
 } // namespace WICPhotosOpaqueRotationProbe
