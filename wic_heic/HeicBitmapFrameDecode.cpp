@@ -371,7 +371,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetThumbnail(__RPC__deref_out_
 			thumbHandle.is_primary_image()
 		);
 
-		CHeicBitmapFrameDecode* decoder = new(std::nothrow) CHeicBitmapFrameDecode(m_pDecoder, thumbHandle);
+		CHeicBitmapFrameDecode* decoder = new(std::nothrow) CHeicBitmapFrameDecode(m_pDecoder, thumbHandle,0,1);
 		if (!decoder) {
 			return E_OUTOFMEMORY;
 		}
