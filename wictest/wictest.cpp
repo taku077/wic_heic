@@ -13,6 +13,7 @@
 #include "NativeLosslessProbe.h"
 #include "WICDirectLosslessProbe.h"
 #include "WICPhotosOpaqueRotationProbe.h"
+#include "WICDecoderRectProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -341,6 +342,7 @@ int main()
 		WICPhotosOpaqueRotationProbe::Run();
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
+		WICDecoderRectProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		WICLosslessRotationProbe::Run();
