@@ -105,7 +105,7 @@ inline void VerifyOutput(IWICImagingFactory* factory,
     UINT sw=0,sh=0;
     Must(saved->GetSize(&sw,&sh),"validate final synthetic HEIC geometry");
     if(sw!=expectedW || sh!=expectedH)
-        threxpectedW std::runtime_error("Written HEIC dimensions are incorrect");
+        throw std::runtime_error("Written HEIC dimensions are incorrect");
 }
 inline void Run(){
     CComPtr<IWICImagingFactory> factory;
