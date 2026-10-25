@@ -12,6 +12,7 @@
 #include "WICHeifOptionsProbe.h"
 #include "NativeLosslessProbe.h"
 #include "WICDirectLosslessProbe.h"
+#include "WICPhotosOpaqueRotationProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -337,6 +338,9 @@ int main()
 	{
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
+		// Must run first, before other synthetic HEIC decodes can create
+		// an ambiguous in-process Photos source candidate.
+		WICPhotosOpaqueRotationProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		WICLosslessRotationProbe::Run();
