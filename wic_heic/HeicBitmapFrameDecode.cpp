@@ -8,10 +8,12 @@
 #include "ExifOrientationFix.h"
 #include "HeicLosslessNative.h"
 
-CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle)
+CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle,UINT index,UINT count)
 	: m_Count(1)
 	, m_pDecoder(decoder)
 	, m_Handle(handle)
+	, m_TopLevelIndex(index)
+	, m_TopLevelCount(count)
 	, m_Bpp(0)
 	, m_PlaneInterleaved(nullptr)
 	, m_Stride(0)
@@ -103,6 +105,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::QueryInterface(REFIID riid, vo
 		*ppvObject = static_cast<IUnknown*>(static_cast<IWICBitmapFrameDecode*>(this));
 	} else if (IsEqualGUID(riid, IID_IHeicRawSource)) {
 		*ppvObject = static_cast<IHeicRawSource*>(this);
+	} else if (IsEqualGUID(riid, IID_IHeicAuxiliaryContainerSource) &&
+	           !m_Handle.is_primary_image() && m_TopLevelIndex>0 &&
+	           m_TopLevelIndex<m_TopLevelCount) {
+		*ppvObject = static_cast<IHeicAuxiliaryContainerSource*>(this);
 	} else if (IsEqualGUID(riid, IID_IWICBitmapSource)) {
 		*ppvObject = static_cast<IWICBitmapSource*>(this);
 	} else if (IsEqualGUID(riid, IID_IWICBitmapFrameDecode)) {
@@ -426,4 +432,20 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::ReadFullContent(
     if(!m_pDecoder || m_Handle.empty())return WINCODEC_ERR_WRONGSTATE;
     if(!m_Handle.is_primary_image())return WINCODEC_ERR_UNSUPPORTEDOPERATION;
     return m_pDecoder->CopyOriginalBytes(*content);
+}
+
+
+HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::ReadContainerAndIndex(
+    std::vector<uint8_t>* content,UINT* index,UINT* count)
+{
+    WicHeicDiagnostic::Emit("DecoderAuxContainerRequested");
+    if(!content || !index || !count)return E_POINTER;
+    if(!m_pDecoder || m_Handle.empty() || m_Handle.is_primary_image() ||
+       !m_TopLevelIndex || m_TopLevelIndex>=m_TopLevelCount ||
+       m_TopLevelCount>8)return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+    // Only return the original verified HEIF bytes, no decoded pixels or paths.
+    const HRESULT hr=m_pDecoder->CopyOriginalBytes(*content);
+    if(FAILED(hr))return hr;
+    *index=m_TopLevelIndex;*count=m_TopLevelCount;
+    return S_OK;
 }
