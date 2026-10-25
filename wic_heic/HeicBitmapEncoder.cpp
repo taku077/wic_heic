@@ -226,6 +226,14 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
 				return WINCODEC_ERR_WRONGSTATE;
 		}
 		heif::Encoder encoder(heif_compression_HEVC);
+		// Photos can hand an already-rotated WIC raster to WriteSource.
+		// That path MUST be re-encoded (there is no authenticated original
+		// compressed frame to rotate). The codec previously left the encoder's
+		// quality at its default, causing a visibly large generational loss.
+		// Use explicit high-quality encoding for that unavoidable raster path.
+		// This is NOT HEIF lossless rotation and cannot recover 10/12-bit input
+		// already reduced by the decoder to 8-bit RGB.
+		encoder.set_lossy_quality(92);
 		CHeifStreamWriter writer(m_Stream);
 
 		if (!m_Stream) {
