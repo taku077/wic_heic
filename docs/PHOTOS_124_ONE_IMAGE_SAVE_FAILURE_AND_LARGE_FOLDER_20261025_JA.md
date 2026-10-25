@@ -11,7 +11,7 @@
 - Independent libheif 1.19.8 `heif-info` and `heif-convert` both decode primary image successfully. View geometry 4032×3024, HEVC tiles 512×512 grid 8×6, 8-bit.
 - HEIF primary `irot=2` (180° CCW), **TIFF Exif Orientation=3** (180°). Both present: double-transform is a compatibility risk; which interpretation Photos uses must be measured, not assumed.
 - Embedded thumbnail 320×240; ICC profile. Apple HDR auxiliary gain map exists, with own grid, and `auxC = urn:com:apple:photo:2020:aux:hdrgainmap`. Related primary, thumbnail and gain-map `ipma` entries share same `irot` property.
-- Additional independent auxiliary Exif `cdsc` reference: metadata item 64 → gain map item 63. Primary Exif metadata item 65 → primary item 49. This is important and is not merely a heuristic based on file size.
+- **Correction based on direct MIME/type parser**: metadata item 64 → gain-map item 63 is **XMP (`mime`, application/rdf+xml)**, **not auxiliary Exif**. Primary Exif metadata item 65 → primary item 49. There is **no independent auxiliary Exif** in this file. Earlier claim about auxiliary Exif was false.
 
 ## Additional likely performance amplification at fallback saves
 - `wic_heic/HeicBitmapFrameDecode.cpp::GetThumbnail` **does** read HEIC embedded thumbnails when present (this failing image has 320×240).
@@ -21,10 +21,31 @@
 
 ## Confirmed 1.1.24 source-level unsupported conditions, not yet final Photos save-failure cause
 In `wic_heic/HeicLosslessNative.h`:
-- `Transform` uses `LinkedVisualItems` to collect thumb/aux and then after `ExifIDs` explicitly rejects any `HasCdsc(exifId,relatedVisual)`: `Bad("Related image has independent Exif orientation")`. This supplied sample has exactly that situation (auxiliary gain-map Exif), so **the native metadata-only transform rejects it by design**.
-- `NormalizeExif` also rejects TIFF Orientation 3: only 1 or 6/8 when old HEIF irot angle is odd are accepted. This sample has HEIF `irot=2` and EXIF=3. Even without gain map independent metadata, present code would reject Orientation=3.
+- `Transform` checks associated thumbnail/HDR item property reuse. This supplied file has both thumb(item 50) and HDR gain map(item 63) sharing primary `irot` index 4; the related metadata is XMP, not Exif. Consequently **the auxiliary-Exif rejection does NOT apply to the supplied sample**, contrary to our earlier interpretation.
+- `HeicLosslessNative::NormalizeExif` does **explicitly reject TIFF Orientation 3** (`Bad("Unsupported Exif Orientation")`), because its only accepted values are 1 or conditional 6/8. This supplied file has irot 2 + Exif 3 and **therefore its metadata-only Transform path is rejected**. Independently, `ExifOrientationFix.h::NormalizeExifForRotatedPixels` only normalizes 6/8 when dimensions are swapped; a 180° irot does not swap dimensions, so WIC currently exposes Exif 3 to the Windows Photos reader, potentially causing **180° double rotation**.
 - Thus current lossless path cannot rotate this file. **However this does not by itself prove why Photos' entire save fails**, since default raster re-encoding is supposed to be a fallback. Need the specific HRESULT/final `EncoderCommit` from failing save.
-- Preserve fail-closed logic until gain-map Exif and primary Exif can both be updated without corrupting geometry, colors, metadata; do not replace user file or strip HDR just to get green tests.
+- Preserve fail-closed behavior while implementing **targeted irot=2 + Exif Orientation=3** handling for decoder-visible metadata and lossless save; leave the related gain-map XMP, ICC, thumbnails, and all compressed bitstreams intact. Do not rewrite or remove the user source file.
+
+## Comparison with the user-provided successfully saved HEIC (2026-10-25)
+The user submitted IMG_3923.HEIC; independent `heif-info -d` plus direct TIFF/Exif parsing on a private read-only extracted copy showed:
+
+| Source HEIC | Failure IMG_3916 | Success IMG_3923 |
+|---|---|---|
+| Bytes | 1,738,419 | 2,068,851 |
+| Display geometry | 4032×3024 | 3024×4032 |
+| Primary HEIF irot | 2 (180° CCW) | 3 (270° CCW) |
+| Primary Exif Orientation | **3 (180°)** | **1 (normal)** |
+| `grid` primary tiles | 8×6 | 6×8 |
+| Embedded thumbnail | 320×240 | none |
+| HDR gain map | present (aux item 63) | **present** (aux item 64) |
+| Gain-map associated metadata | XMP item 64 | XMP item 65 |
+| Main Exif | item 65 | item 50 |
+| Main XMP | none separately | item 51 |
+| Shared primary/aux irot | yes, property index 4 | yes, property index 5 |
+
+**Do not claim HDR gain map, auxiliary independent Exif, irot presence, or shared irot alone distinguishes the failure.** No independent gain-map Exif exists in either sample. Only 3916 has the duplicate half-turn metadata pair (irot2 + Exif3); 3923 has irot3 + Exif1. IMG_3916 native strict Transform fails by code due to Exif3, but raster fallback should exist: its entire Windows Photos `回転を保存できませんでした` error remains unproven without failing WIC trace/HRESULT.
+
+Independent external support: https://pillow-heif.readthedocs.io/en/stable/workaround-orientation.html , https://github.com/strukturag/libheif/issues/227 , https://aomedia.googlesource.com/libavif/+/f4948db213b7cd0ff7488b1ac5567f29cdd01539/src/exif.c
 
 ## Concrete discriminating test, no new MSI or personal-photo GitHub upload
 1. Create a **new file with a new name** in a small empty folder from a disposable copy of the failed HEIC. Do not modify original. Use Windows Photos 1.1.24 to try exactly one 90° rotate-save. Record precise Photos error message or screenshot **without private photo content** (crop screenshot to message). This checks whether save failure follows the file structure or 1894-file folder context.
