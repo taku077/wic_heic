@@ -18,6 +18,10 @@ private:
 	bool m_OptionsInitialized;
 	bool m_LosslessReady;
 	std::vector<uint8_t> m_LosslessBytes;
+	// Bound, unedited non-primary source from this WIC decoder only.
+	// Never treat these bytes as an independent one-frame lossless save.
+	std::vector<uint8_t> m_AuxiliaryContainer;
+	UINT m_AuxiliaryIndex=0, m_AuxiliaryCount=0;
 	// Explicit WIC ICC profile for raster edits; never silently discard it.
 	std::vector<uint8_t> m_RasterICC;
 	WICPixelFormatGUID m_PixelFormat;
