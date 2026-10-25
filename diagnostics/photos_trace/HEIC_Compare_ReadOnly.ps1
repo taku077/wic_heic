@@ -1,4 +1,4 @@
-# Compare two ALREADY EXISTING HEIC files WITHOUT modifying them.
+﻿# Compare two ALREADY EXISTING HEIC files WITHOUT modifying them.
 # Windows PowerShell 5.1; FFprobe already installed in the user's environment.
 # Only size and selected video-stream fields are exported. No file names,
 # paths, EXIF, GPS, timestamps, source bytes, or pixel data are exported.
