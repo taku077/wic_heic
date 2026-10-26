@@ -67,3 +67,12 @@
 - 結果: https://github.com/taku077/wic_heic/actions/runs/40356131847
 - Microsoft CreateBitmapFromSource: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicimagingfactory-createbitmapfromsource
 - Microsoft LockFileEx: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex
+
+## 診断ログ上限の改修結果（CI確定）
+
+- Windows Actions [#40357301514](https://github.com/taku077/wic_heic/actions/runs/40357301514) **SUCCESS**。通常負荷シナリオではCommitEnter/Exit = **192/192**件、総ログ1,631,988バイト、硬い上限2,097,152バイトを超えなかった。
+- **意図的な飽和条件:** 1,572,824バイトの匿名ダミーファイルを先に置き、通常イベント用の1.5MiB枠をほぼ消費させてから50回の人工同一パス保存を実行。保存開始/終了ログが**50/50**件記録され、総ログ1,605,097バイトに収まり成功（WIC_TRACE_RESERVED_COMMIT_50_PASS）。元の人工画像と各世代のバックアップも保全。
+- 保存処理の結果ログを含め**残り512KiBの保存優先枠**を確保しても、ユーザーの画像データ・パス・EXIFは記録しない。記録を延々と続けて最終的な2MiB上限までCommitが埋まる場合は無限の保証はないため、実際の監視は20分期限・2MiB上限を維持し、長時間実機ログでは上限到達を明示する。
+- 関連するCIがChocolateyのNASM一時的504で失敗したため、依存バイナリの既存キャッシュがある場合に外部パッケージ取得を**回避**するCI修正も追加。機能・画像処理には影響しない。
+
+この状態は**CI検証済みの開発ブランチ**であり、実機の1.1.27に反映されたわけではない。新MSI配布や端末の設定変更はまだ不要。
