@@ -15,6 +15,7 @@
 #include "WICPhotosOpaqueRotationProbe.h"
 #include "WICDecoderRectProbe.h"
 #include "WICDecoderConcurrentProbe.h"
+#include "WICPhotosScaleMatrixProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -384,13 +385,26 @@ void ConvertToHeic(const std::wstring& srcFile, const std::wstring& destFile, bo
 	printf("File converted and WIC readback verified\n");
 }
 
-int main()
+int main(int argc,char** argv)
 {
 	int ret = 0;
 	CoInitialize(nullptr);
 
 	try
 	{
+        // Run the expensive artificial HEIC stress suites ONCE per CI job.
+        if(argc==2 && std::strcmp(argv[1],"--stress50")==0){
+            CComPtr<IWICImagingFactory> factory;
+            WICPhotosOpaqueRotationProbe::Must(
+                CoCreateInstance(CLSID_WICImagingFactory,nullptr,
+                    CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),
+                "50-turn WIC factory");
+            WICPhotosOpaqueRotationProbe::RunTwoFrameRotationSequence(factory,50);
+        } else if(argc==2 && std::strcmp(argv[1],"--scale-matrix")==0){
+            WICPhotosScaleMatrixProbe::Run();
+        } else if(argc!=1){
+            throw std::runtime_error("Unknown synthetic WIC test mode");
+        } else {
 		// Verify the Photos default opaque raster bridge before any other
 		// HEIC decoder in this WIC test process offers a competing source.
 		WICPhotosOpaqueRotationProbe::Run();
@@ -415,6 +429,7 @@ int main()
 		ConvertToHeic(L"samples\\08.gif", L"samples\\out-08.heic");
 		// 90-degree rotation of an existing HEIC, analogous to Photos rotate-save.
 		ConvertToHeic(L"samples\\03.heic", L"samples\\rotated-03.heic", true);
+        }
 	}
 	catch (const std::exception& ex)
 	{
