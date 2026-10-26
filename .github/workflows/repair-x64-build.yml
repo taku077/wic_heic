@@ -169,11 +169,18 @@ jobs:
                 # path replacements without ever writing to the pinned source.
                 & $testExe --replace50
                 if ($LASTEXITCODE -ne 0) { throw "Fifty same-path synthetic ReplaceFile saves failed: $LASTEXITCODE" }
-                # Identical public artificial displayed pixels, separately
-                # written as Windows native JPEG/PNG comparators. Show stage
-                # costs without flaky time-based pass/fail thresholds.
-                & $testExe --perf-compare
-                if ($LASTEXITCODE -ne 0) { throw "HEIC/PNG/JPEG WIC stage benchmark failed: $LASTEXITCODE" }
+                # Identical artificial pixels, Windows native JPEG/PNG.
+                # Disable WIC tracing ONLY during performance comparison;
+                # otherwise HEIC pays trace file locks while JPEG/PNG do not,
+                # making the measured ratio unfair. Restore afterward.
+                $previousTrace=$env:WIC_HEIC_TRACE_FILE
+                Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+                try {
+                  & $testExe --perf-compare
+                  if ($LASTEXITCODE -ne 0) { throw "HEIC/PNG/JPEG WIC stage benchmark failed: $LASTEXITCODE" }
+                } finally {
+                  $env:WIC_HEIC_TRACE_FILE=$previousTrace
+                }
               }
               finally {
                 Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
