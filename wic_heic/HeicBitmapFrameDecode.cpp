@@ -399,13 +399,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetThumbnail(__RPC__deref_out_
 
 void CHeicBitmapFrameDecode::DecodeImage()
 {
-    // COM frame objects may receive simultaneous CopyPixels calls from
-    // Photos workers. Check AND publish m_Decoded under the same mutex.
-    // The decoded image/stride are never modified after publication.
+    // Warm path: published RGB plane is immutable and does not need a mutex.
+    // This matters when FlipRotator asks for thousands of pixel rows.
+    if (m_Decoded.load(std::memory_order_acquire)) return;
+    // Cold path: only one worker runs libheif for this COM frame.
     std::lock_guard<std::mutex> guard(m_DecodeMutex);
+    if (m_Decoded.load(std::memory_order_relaxed)) return;
 	DbgLog("%s", __FUNCTION__);
-
-	if (m_Decoded) return;
 
 	if (m_Handle.empty()) {
 		throw std::exception("Bad image handle");
@@ -422,7 +422,7 @@ void CHeicBitmapFrameDecode::DecodeImage()
 		throw std::exception("Unable to get plane");
 	}
 
-	m_Decoded = true;
+	m_Decoded.store(true,std::memory_order_release);
 }
 
 
