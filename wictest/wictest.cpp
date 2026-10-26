@@ -18,6 +18,7 @@
 #include "WICPhotosScaleMatrixProbe.h"
 #include "WICPhotosBurst50Probe.h"
 #include "WICPhotosReplace50Probe.h"
+#include "WICPhotosExifOnlyProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -414,6 +415,7 @@ int main(int argc,char** argv)
 		// Verify the Photos default opaque raster bridge before any other
 		// HEIC decoder in this WIC test process offers a competing source.
 		WICPhotosOpaqueRotationProbe::Run();
+        WICPhotosExifOnlyProbe::Run();
 		CheckExifOrientationNormalization();
 		CheckRotatedExifFixture();
 		CheckHalfTurnExifFixture();
