@@ -67,10 +67,13 @@ inline void ProbeOne(IWICImagingFactory* factory,
     Need(factory->CreateDecoderFromFilename(path.c_str(),nullptr,
          GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),
          "latency cold new decoder");
+    const auto tDecoder=Now();
     CComPtr<IWICBitmapFrameDecode> frame;
     Need(decoder->GetFrame(0,&frame),"latency cold new frame");
+    const auto tFrame=Now();
     UINT w=0,h=0;
     Need(frame->GetSize(&w,&h),"latency source dimensions");
+    const auto tSize=Now();
     if(w!=1080 || h!=1920)throw std::runtime_error(
         "Comparator rendered geometry not portrait 1080x1920");
     CComPtr<IWICBitmapSource> rgb;
@@ -115,11 +118,16 @@ inline void ProbeOne(IWICImagingFactory* factory,
          "latency rotated pixels");
     const auto t5=Now();
     printf("WIC_FORMAT_LATENCY format=%s pixels=%ux%u open_ms=%.3f "
+           "create_decoder_ms=%.3f get_frame_ms=%.3f "
+           "get_size_ms=%.3f bgr_converter_init_ms=%.3f "
            "first_full_copy_ms=%.3f warm_full_copy_avg_ms=%.3f "
            "scale_quarter_fant_ms=%.3f rotate_90_ms=%.3f "
            "timing=QPC fixture=artificial_only\n",
-           format,w,h,Millis(t0,t1),Millis(t1,t2),
-           Millis(t2,t3)/3.0,Millis(t3,t4),Millis(t4,t5));
+           format,w,h,Millis(t0,t1),
+           Millis(t0,tDecoder),Millis(tDecoder,tFrame),
+           Millis(tFrame,tSize),Millis(tSize,t1),
+           Millis(t1,t2),Millis(t2,t3)/3.0,
+           Millis(t3,t4),Millis(t4,t5));
 }
 inline void Run() {
     const wchar_t* original=L"samples\\fixture-irot3-exif6-noaux.heic";
