@@ -15,7 +15,8 @@ private:
 	int m_Bpp;
 	size_t m_Stride;
 	uint8_t* m_PlaneInterleaved;
-	bool m_Decoded;
+	// Release/acquire publishes the immutable RGB plane after first decode.
+	std::atomic<bool> m_Decoded;
 	// Protect one-time lazy libheif decode when Photos issues concurrent
 	// CopyPixels on the SAME COM frame. The decoded RGB plane is immutable
 	// after publication; lock only the first-decode path, not every row copy.
