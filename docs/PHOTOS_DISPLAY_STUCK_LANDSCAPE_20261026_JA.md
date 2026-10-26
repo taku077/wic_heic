@@ -152,3 +152,34 @@ Microsoft根拠: https://learn.microsoft.com/en-us/dotnet/api/system.io.filesyst
 - WIC FlipRotator とバッファリング: https://learn.microsoft.com/en-us/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapfliprotator
 - WICのフレームデコード: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nn-wincodec-iwicbitmapframedecode
 - FileSystemWatcherの重複・取りこぼし: https://learn.microsoft.com/en-us/dotnet/api/system.io.filesystemwatcher
+
+
+## 2026-10-27 00:34–00:37 JST：v0.5.1＋OBS第2回録画の匿名化照合
+
+**使用版:** 実機WicHeic 1.1.27、HEIC_SaveTiming Portable v0.5.1。ユーザーが公開人工2フレームHEICで録画・状態監視を実施。**個人情報、元録画、診断ZIP、画像キャプチャ、Photos PID、ローカルフォルダ名はGitHubに転載しない。**
+
+### 監視記録と保全
+
+- 監視開始 00:33:56.96 JST、停止 00:37:25.55 JST（約208.6秒）。200秒の録画ファイル名「00-34-08」による推定開始／終了は約00:34:08–00:37:28。映像の最後約3秒だけ監視範囲外。MP4内部に絶対開始日時メタデータはないため、相関は**概算**。
+- 状態CSVは初期＋10回の変更＝計11状態。HEICの11状態はすべて10,597バイトで、公開人工原本の**irotバイト（offset567）とExif Orientationバイト（offset10589）だけの変更**で各SHA-256を**完全再現**。改変／再圧縮／付属画像消失の兆候なし。
+- \`irot\`（初期→最終）=\`3,2,1,0,1,0,3,2,1,0,1\`、Exif Orientation初期6→以後1。
+- 停止時スナップショットのSHA256=\`8DC7DC76D5A27BFA13FAAAC40E45A9CAD52DA183FB3989A87B33130BA4CC370A\`。ZIP同梱のwork/synthetic-working.heicと全バイト一致。停止時\`irot=1, Exif=1\`。referenceのSHA=\`D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95\`、保全確認。v0.5で起きた同梱人工HEIC参照パスエラーはv0.5.1で解消して実機ログ生成に成功。
+- 操作マーカーは0件。Photosのプロセス検出は実装依存。FileSystemWatcherイベントは12件。イベント数≠保存処理回数。
+
+### 直接映像で確認できた異常
+
+- 録画経過約25.5〜31.0秒と34.0〜41.0秒（0.5秒間隔で人工グラデーション領域の可視性を解析）に、**Photosのボタン・画像情報・ズーム率が残るのに、中央画像だけ消えて真っ黒**となる状態を記録。代表画像：30秒はUIの1920×1080／倍率20%表示、38秒も1920×1080／40%表示。最後のPhotosウィンドウ消失後の黒画面（約186〜200秒）は画像描画異常に数えない。
+- 約50秒の1920×1080表示は横長画像が画面の上に偏っており、同じ中央倍率でも91秒の縦長画像は中央付近。ただし、拡大・縮小のカーソルアンカー／スクロール仕様が原因である可能性もあるため、**上寄りだけで不具合確定しない**。
+- 画像の表示形状は録画の約90秒台などで横長／縦長に切り替わる。ファイルの\`irot=0\`が約00:35:16.44～00:36:08.78の約52.3秒間変わらない区間と重なるため、**Photosプレビューの方向切替と物理HEIFの更新は1操作1保存で同期しているとはいえない**。ただし動画開始時刻をファイル名から推定しており、個々の操作と保存の正確な対応は未証明。
+- 本事例で\`irot\`が正しく保持されたことは、描画エラーがWICに無関係と証明するものではない。Photos表示キャッシュ、UIレイアウト更新、WIC GetSize/CopyPixelsの順序、描画用サーフェス、ファイル置換後の同期、Zoom anchorなどを引き続き比較する。
+
+### 開発への具体的示唆
+
+1. 保存コーデックの無再圧縮回転をむやみに再修正しない。今回の11状態のHEVCデータは保持されている。
+2. Windows 10標準Photosで「**倍率変更と回転の途中で画像だけ数秒間非表示になる**」ことを新しい必須再現条件とする。WIC直接の回転50回試験で検出されない**UIの保持フレームと描画状態の問題**を対象に分ける。
+3. 独立診断の画像ファイル監視は既に使用可能。次のバージョンで必要なら「動画の開始時刻をOS時計に結びつけるタイムシンク機能」を優先。ユーザーにクリックごとのマーカーを強制せず、プレビューの連打を妨げない。
+4. Photosの画面消失と監視プロセス0を混同しない。WIC/MSIの更新を伴わず、人工HEIC・録画・ログの時系列から引き続き調べる。
+
+参照:
+- https://learn.microsoft.com/en-us/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapfliprotator
+- https://learn.microsoft.com/en-us/dotnet/api/system.io.filesystemwatcher
