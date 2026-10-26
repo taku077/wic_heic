@@ -101,3 +101,12 @@
 - libde265 公式SIMDとマルチスレッド: https://github.com/strukturag/libde265
 - Microsoft WICのTransformインターフェイス: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapsourcetransform
 - Microsoft WICサムネイル未提供時のフルデコードコスト: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapframeencode
+
+## 2026-10-27: 不要な元ファイル再読込を排除・再現性のある性能計測へ
+
+- `wic_heic/HeicBitmapDecoder.cpp`のGetFrame()では、Photos専用の無再圧縮回転ソース候補としてIStreamからHEIFファイル全体を読み直してから、対象プロセスかどうかを調べる旧経路があった。この処理はPhotosとCIハーネス以外（Explorerその他）では結局候補不採用になるため、**事前にCaptureAllowedHost()を判定して対象外ホストでは元ファイル再読込を省略**した。Photos側の候補選択と安全な回転保存は変更しない。初回表示全体・復号そのものを10％改善したという意味ではなく、効果は未測定。
+- `CHeicBitmapDecoder::Initialize`内の`pIStream->Stat(STATFLAG_DEFAULT)`は、実際のパーサーでは使用しないファイル名を余分に取得し、割り当てたSTATSTG.pwcsNameの開放もなかった。すでにCHeifStreamReaderが`STATFLAG_NONAME`を使ってサイズを取得するため、**重複Statを排除**。コンテナー解析時間の`DecoderContainerParsed`イベントを既存のオプトイン匿名診断へ追加。パス・EXIF・画像内容は記録しない。これも速度改善率未測定。
+- 1回測定の性能揺らぎを減らすため、人工HEIC/PNG/JPEGの`--perf-compare`を**各5回、新しいWICデコーダーで交互に実行し中央値を出す**よう変更。全画素取得と90°回転、デコーダー準備を別々に報告する。
+- Windows Actions [#40372545516](https://github.com/taku077/wic_heic/actions/runs/40372545516) と [#40372659287](https://github.com/taku077/wic_heic/actions/runs/40372659287) は中央値計測・既存機能テスト・MSI登録復旧をすべて通過。人工HEICの初回全画素取得の中央値は約51ms／53ms。ただし**以前の約59ms（別CI・1回測定）との差を改良の効果と断定できない**。同じテスト群でもコンテナーオープン準備は以前の約4.8msから別の5回中央値約138msへ変動した。実行環境／コーデック初期化／診断設定の影響をさらに分離して比較する必要がある。
+- 最優先の判断は**正しいファイルを壊さず、同じWindows 10・同じ人工HEIC・同じ操作経路で改善すること**。初回画素取得10〜20％短縮は検証すべき努力目標であって、CIの別ランナーの一測定で達成認定しない。改善が小さい案は不用意に統合しない。
+
