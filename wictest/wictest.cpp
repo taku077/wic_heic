@@ -14,6 +14,7 @@
 #include "WICDirectLosslessProbe.h"
 #include "WICPhotosOpaqueRotationProbe.h"
 #include "WICDecoderRectProbe.h"
+#include "WICDecoderConcurrentProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -397,6 +398,7 @@ int main()
 		CheckRotatedExifFixture();
 		CheckHalfTurnExifFixture();
 		WICDecoderRectProbe::Run();
+		WICDecoderConcurrentProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		WICLosslessRotationProbe::Run();
