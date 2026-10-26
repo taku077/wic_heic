@@ -9,6 +9,7 @@
 #include <atlbase.h>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <cstdio>
 #include <stdexcept>
 #include <limits>
@@ -60,7 +61,10 @@ inline void WriteComparable(IWICImagingFactory* factory,
     Need(dst->Commit(),"comparator frame commit");
     Need(enc->Commit(),"comparator encoder commit");
 }
-inline void ProbeOne(IWICImagingFactory* factory,
+struct Timings {
+    double prepareMs=0.0,firstPixelsMs=0.0,rotateMs=0.0;
+};
+inline Timings ProbeOne(IWICImagingFactory* factory,
                      const char* format,const std::wstring& path) {
     const auto t0=Now();
     CComPtr<IWICBitmapDecoder> decoder;
@@ -128,6 +132,7 @@ inline void ProbeOne(IWICImagingFactory* factory,
            Millis(tFrame,tSize),Millis(tSize,t1),
            Millis(t1,t2),Millis(t2,t3)/3.0,
            Millis(t3,t4),Millis(t4,t5));
+    return {Millis(t0,t1),Millis(t1,t2),Millis(t4,t5)};
 }
 inline void Run() {
     const wchar_t* original=L"samples\\fixture-irot3-exif6-noaux.heic";
@@ -159,9 +164,37 @@ inline void Run() {
     // PNG and JPEG are raster equivalents of its primary displayed image.
     // PNG is lossless; JPEG may differ slightly because its compression is
     // lossy. CI timing is guidance only, not a user's actual PC benchmark.
-    ProbeOne(factory,"HEIC",original);
-    ProbeOne(factory,"PNG",png);
-    ProbeOne(factory,"JPEG",jpg);
+    // Five fresh decoder/frame instances per format, interleaved to
+    // reduce warmed file-cache and short-lived CI CPU scheduling bias.
+    // A median is less misleading than the previous one-shot metric.
+    const char* labels[]={"HEIC","PNG","JPEG"};
+    const wchar_t* paths[]={original,png.c_str(),jpg.c_str()};
+    std::vector<Timings> readings[3];
+    for(int pass=0;pass<5;pass++) {
+        for(int slot=0;slot<3;slot++) {
+            const int format=(pass+slot)%3;
+            readings[format].push_back(ProbeOne(
+                factory,labels[format],paths[format]));
+        }
+    }
+    const auto median=[](std::vector<double> values)->double {
+        std::sort(values.begin(),values.end());
+        return values[values.size()/2];
+    };
+    for(int format=0;format<3;format++) {
+        std::vector<double> open,first,rotate;
+        for(const auto& sample:readings[format]) {
+            open.push_back(sample.prepareMs);
+            first.push_back(sample.firstPixelsMs);
+            rotate.push_back(sample.rotateMs);
+        }
+        printf("WIC_FORMAT_MEDIAN format=%s samples=5 "
+               "open_ms=%.3f first_full_copy_ms=%.3f "
+               "rotate_90_ms=%.3f warmup=interleaved "
+               "timing=QPC fixture=artificial_only\n",
+               labels[format],median(open),median(first),
+               median(rotate));
+    }
     printf("WIC_THREE_FORMAT_STAGE_LATENCY_COMPARISON_PASS "
            "synthetic_only=1 visual_dims=1080x1920\n");
 }
