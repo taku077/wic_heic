@@ -376,6 +376,27 @@ jobs:
               $length=(Get-Item -LiteralPath $cap).Length
               if($length -gt 2*1024*1024) { throw "Trace exceeded 2MiB ($length bytes)" }
               Write-Host "TRACE_CAP_PASS length=$length"
+              # Saturate the ordinary-event quota before a 50-Commit burst:
+              # each save still needs a complete Enter+Exit pair and result.
+              # Never touch any original image or trace from the user.
+              $reserve=Join-Path (Get-Location).Path 'WIC_TracePriority_CI.txt'
+              [IO.File]::WriteAllBytes($reserve,(New-Object byte[] ((3*512*1024)-40)))
+              $env:WIC_HEIC_TRACE_FILE=$reserve
+              try {
+                & $exe --replace50
+                if($LASTEXITCODE -ne 0) { throw 'Trace priority artificial same-path 50 probe failed' }
+              } finally {
+                Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+              }
+              $sizePriority=(Get-Item -LiteralPath $reserve).Length
+              if($sizePriority -gt 2*1024*1024) { throw 'Priority trace exceeded 2MiB' }
+              $textPriority=[IO.File]::ReadAllText($reserve)
+              $priorityStarts=[regex]::Matches($textPriority,'event=EncoderCommitEnter ')
+              $priorityEnds=[regex]::Matches($textPriority,'event=EncoderCommitExit ')
+              if($priorityStarts.Count -ne 50 -or $priorityEnds.Count -ne 50) {
+                throw "Reserved quota lost Commit boundaries: starts=$($priorityStarts.Count) ends=$($priorityEnds.Count)"
+              }
+              Write-Host "WIC_TRACE_RESERVED_COMMIT_50_PASS starts=$($priorityStarts.Count) ends=$($priorityEnds.Count) bytes=$sizePriority"
             } finally { Pop-Location }
           } finally {
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
