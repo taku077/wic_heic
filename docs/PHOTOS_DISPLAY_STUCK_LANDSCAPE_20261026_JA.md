@@ -64,3 +64,22 @@
 - Microsoft IWICBitmapDecoder::Initialize: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapdecoder-initialize
 - Microsoft WIC decoder implementation: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder
 - Microsoft SHChangeNotify: https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify
+
+## 2026-10-26: 保持中の旧WICビットマップと最新デコーダーの対照試験
+
+Microsoft公式のIWICImagingFactory::CreateBitmapFromSource仕様では、WICBitmapCacheOnLoadは呼び出し時点のビットマップをメモリへ複製する。元ファイルが変更されたらそのコピーも自動で更新されるという仕様ではない。
+https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicimagingfactory-createbitmapfromsource
+
+- wictest/WICPhotosReplace50Probe.hに否定対照を追加。公開人工HEICのメモリスナップショットから古いWICデコーダー／キャッシュ済みビットマップを作り、テスト終了まで保持。旧WICビットマップの入力はメモリストリームとし、古いファイルハンドルがWindowsのReplaceFileWを妨げる条件を排除。
+- 別の人工試験専用フォルダーのsynthetic-working.heicを、WICで90度回転し新しい候補ファイルに保存、バックアップを残してReplaceFileWで同一パスへ置換、再度新規WICデコーダーで読み込む試験を50回実行。
+- 結果：50回すべて、最新ファイルの再オープンは新しい寸法・内容を返す一方、保持中の旧メモリビットマップは最初の1080×1920の寸法とRGB画素から変化しない。
+- Windows Actions #40299312212 SUCCESS。ログ WIC_PHOTOS_HELD_VIEWER_BITMAP_STAYS_OLD_FRESH_DECODER_UPDATES_PASS old_dims=1080x1920 new_decoder_checked=50 を確認。既存の11回転、Exif-only、50回逐次／並列、縮小回転、MSI隔離導入・削除・登録復元も合格。
+- 重要：これはWICの正常なメモリキャッシュ動作を模倣した人工実験であり、Photosが内部で同じ方式のキャッシュを使用している証拠ではない。Photosのセッション表示更新不良という仮説を技術的に説明できるが、原因断定ではない。WIC DLLから他アプリの既存メモリビットマップを強制更新する改造は行わない。
+
+## 独立型HEIC SaveTiming Portable v0.4（Windows 10実機は未検証）
+
+- v0.3の専用人工HEIC（ハッシュ・容量・irot・Exif）監視に加え、Photosと一致するプロセス名に限定したPID件数とMainWindowHandle有無を約1秒ごとに観察し、変化時だけHEIC_SaveTiming_PhotosProcesses.csvへ保存する。
+- 追加マーカー：F=横長に固着、C=Photosを閉じた、O=再度開いた、V=縦長に復旧。R/Tは従来どおり。操作者が監視コンソールを前面にしてキーを押した時刻であり、アプリの操作そのものを正確に示す時刻ではない。
+- Windows 10のPhotosプロセス名は版によって異なり、対象PID=0やMainWindowHandle=0でもアプリが存在しないとは断定しない。PID以外のユーザー情報、写真、パス、window titleは収集しない。
+- インストール／再起動／レジストリ変更不要。毎回新しい人工画像の作業コピーだけを記録。ZIP CRC、同梱人工HEICのSHA256一致は確認済み。PowerShell 5.1実機での動作は未確認。
+- 次の切り分けでは、横長に固着したあとPhotosを終了させず別の人工画像に移動して戻った場合と、Photosを閉じて開き直した場合を比較し、表示の再生成条件を調べる。
