@@ -40,3 +40,10 @@
 - pillow-heifのExifとirot差分: https://pillow-heif.readthedocs.io/en/latest/workaround-orientation.html
 - PhotoPrismのExif OrientationとHEIF Rotation: https://docs.photoprism.app/developer-guide/metadata/orientation/
 - ExifToolタグ表: https://exiftool.org/TagNames/
+
+## Windows CIの最新検証結果
+
+- **Actions [#40277179361](https://github.com/taku077/wic_heic/actions/runs/40277179361) SUCCESS** （コミット `912870131ca660fdc236a5c99b9e67560c0f36c5`）。ログ中の人工HEIC `irot`11状態をWIC直接呼び出しで再現し、縦横がすべて一致：`WIC_PHOTOS_OBSERVED_11_IROT_STATES_MATCH_GEOMETRY_PASS last_irot=3 last_dims=1080x1920`。
+- Exifだけ`6→1`へ変えた場合はWICの画像寸法・RGBとも変更なし：`WIC_PHOTOS_EXIF_ONLY_NOT_ACTUAL_90_ROTATION_PASS`。
+- 50回の同名人工作業ファイル入替、8並行×50件、縮小回転試験、MSI隔離導入・削除・登録復旧も回帰試験合格。ユーザー実機のPhotos GUIは未検証。
+- これにより**独立デコーダーlibheifと、WIC直接呼び出しはこの11状態について正しい縦横を返す**と確認。異常がPhotosのアプリ内表示キャッシュ/再読込経路にある可能性が上がる。ただしPhotosが読み出す実経路・古いWICフレームを保持する経路・更新通知の障害は未確認なので、Photos固有と断言しない。
