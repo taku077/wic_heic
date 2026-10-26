@@ -35,22 +35,22 @@ int64_t CHeifStreamReader::get_position() const
 
 int CHeifStreamReader::read(void* data, size_t size)
 {
-	ULARGE_INTEGER uli;
-	ULONG nRead;
-	HRESULT hr = m_Stream->Read(data, static_cast<ULONG>(size), &nRead);
-	if (hr != S_OK) {
-		return -1;
-	}
-
-	hr = m_Stream->Seek({ 0 }, STREAM_SEEK_CUR, &uli);
-	if (hr == S_OK) {
-		m_LastPos = static_cast<int64_t>(uli.QuadPart);
-	} else {
-		m_LastPos += nRead;
-	}
-	DbgLog("CHeifStreamReader::read(readSize=%zu) -> totalRead=%zu, lastPos=%zu", size, nRead, m_LastPos);
-
-	return 0;
+    // ISequentialStream::Read MUST advance the seek pointer by precisely
+    // pcbRead bytes. Our seek() also maintains m_LastPos, so a second COM
+    // Seek(STREAM_SEEK_CUR,0) after EVERY libheif read is redundant.
+    // Avoiding that call is particularly useful for metadata parsing through
+    // the WIC-provided IStream, which often performs many small reads.
+    // No speculative read-ahead, file caching or stream ownership changes.
+    if (size > static_cast<size_t>(0xFFFFFFFFu)) return -1;
+    ULONG nRead=0;
+    const HRESULT hr=m_Stream->Read(data,static_cast<ULONG>(size),&nRead);
+    if (hr != S_OK) return -1;
+    // Strictly match Read's actual byte count, not the requested amount.
+    m_LastPos += static_cast<int64_t>(nRead);
+    DbgLog("CHeifStreamReader::read(readSize=%zu) -> totalRead=%lu, lastPos=%lld",
+           size,static_cast<unsigned long>(nRead),
+           static_cast<long long>(m_LastPos));
+    return 0;
 }
 
 int CHeifStreamReader::seek(int64_t position)
