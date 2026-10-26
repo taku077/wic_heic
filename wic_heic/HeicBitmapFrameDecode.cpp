@@ -399,6 +399,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetThumbnail(__RPC__deref_out_
 
 void CHeicBitmapFrameDecode::DecodeImage()
 {
+    // COM frame objects may receive simultaneous CopyPixels calls from
+    // Photos workers. Check AND publish m_Decoded under the same mutex.
+    // The decoded image/stride are never modified after publication.
+    std::lock_guard<std::mutex> guard(m_DecodeMutex);
 	DbgLog("%s", __FUNCTION__);
 
 	if (m_Decoded) return;
