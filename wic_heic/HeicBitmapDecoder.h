@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 
 class CHeicBitmapDecoder : public IWICBitmapDecoder
 {
@@ -6,6 +7,9 @@ private:
 	std::atomic<uint32_t> m_Count;
 	heif::Context m_Context;
 	CHeifStreamReader* m_Reader;
+    // HEIF context is immutable after Initialize; reuse stable top-level
+    // ids instead of allocating/enumerating the same list on every GetFrame.
+    std::vector<heif_item_id> m_TopLevelIds;
 	bool m_OfferedRotationSource=false;
 
 public:
