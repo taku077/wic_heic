@@ -142,3 +142,9 @@
 - Microsoft IStream::Seek: https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-istream-seek
 - libheif: https://github.com/strukturag/libheif
 - Microsoft WIC transforms: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapsourcetransform
+
+### 累積最適化の安全性CIと追加項目
+
+- 現行作業ブランチの累積変更のうち、HEIF ReaderのRead→Seek(CUR,0)削減、画像IDリストの保持、300回列挙RGB検証は **Actions #40376025882 SUCCESS**。人工2フレームを300回取得し`WIC_HEIF_IMMUTABLE_ENUMERATION_300_PASS`、各50回保存、画像・Exif・ICC・登録復元を合格。
+- プロセスの実行ファイル名は生存中不変であるため、`PhotosPureRotationBridge::CaptureAllowedHost()`の判定を**初回1回だけ評価してキャッシュ**した。従来はGetFrameとOfferでGetModuleFileNameW／複数の名前比較を実行していた。初回の許可結果と対象ホストは一切変更しない。コード変更コミット`d884da814fee`。これも速度効果はまだ未計測、WindowsCIは結果に従って更新する。
+- 小改善の価値は各パッチの削減作業量だけでなく、実際のPhotos表示の時間と原本保全を基準に判定する。変更同士が同じボトルネックを取り除く場合、削減率を単純加算しない。
