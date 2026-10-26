@@ -16,6 +16,7 @@
 #include "WICDecoderRectProbe.h"
 #include "WICDecoderConcurrentProbe.h"
 #include "WICPhotosScaleMatrixProbe.h"
+#include "WICPhotosBurst50Probe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -400,6 +401,8 @@ int main(int argc,char** argv)
                     CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),
                 "50-turn WIC factory");
             WICPhotosOpaqueRotationProbe::RunTwoFrameRotationSequence(factory,50);
+        } else if(argc==2 && std::strcmp(argv[1],"--burst50")==0){
+            WICPhotosBurst50Probe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--scale-matrix")==0){
             WICPhotosScaleMatrixProbe::Run();
         } else if(argc!=1){
