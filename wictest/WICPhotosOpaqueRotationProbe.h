@@ -214,6 +214,105 @@ inline void RunTwoFramePhotosSave(IWICImagingFactory* factory,bool editPrimary=f
     printf("WIC_PHOTOS_TWO_FRAME_ORIGINAL_HEIF_BYTE_EXACT_PASS bytes=%zu\n",saved.size());
 }
 
+// Four successive Photos-style WIC saves on the very same artificial
+// two-frame HEIF. Each pass reads PREVIOUS output from a NEW path, rotates
+// primary RGB 90 deg, forwards unchanged second frame, and saves whole HEIF.
+// Validate every HEIF against native metadata-only transform and the fourth
+// decoded RGB frame against the original. Never overwrite sources.
+inline void RunFourSuccessiveTwoFrameRotations(IWICImagingFactory* factory) {
+    const wchar_t* inputs[5]={
+        L"samples\\fixture-irot3-exif6-noaux.heic",
+        L"samples\\out-photos-two-frame-four-turn-1.heic",
+        L"samples\\out-photos-two-frame-four-turn-2.heic",
+        L"samples\\out-photos-two-frame-four-turn-3.heic",
+        L"samples\\out-photos-two-frame-four-turn-4.heic"
+    };
+    UINT initialW=0,initialH=0;
+    std::vector<BYTE> initialRGB;
+    for(int turn=1;turn<=4;turn++){
+        CComPtr<IWICBitmapDecoder> decoder;
+        Must(factory->CreateDecoderFromFilename(inputs[turn-1],nullptr,
+            GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),
+            "four-turn open previous HEIF");
+        UINT count=0;
+        Must(decoder->GetFrameCount(&count),"four-turn source frame count");
+        if(count!=2)throw std::runtime_error("Four-turn HEIF lost a frame");
+        CComPtr<IWICBitmapFrameDecode> first,second;
+        Must(decoder->GetFrame(0,&first),"four-turn get primary");
+        Must(decoder->GetFrame(1,&second),"four-turn get auxiliary");
+        UINT w=0,h=0,aw=0,ah=0;
+        Must(first->GetSize(&w,&h),"four-turn primary dimensions");
+        Must(second->GetSize(&aw,&ah),"four-turn additional dimensions");
+        if(turn==1){
+            initialW=w;initialH=h;
+            initialRGB.resize(size_t(w)*h*3);
+            Must(first->CopyPixels(nullptr,w*3,UINT(initialRGB.size()),
+                 initialRGB.data()),"four-turn original pixels");
+        }
+        CComPtr<IWICBitmapFlipRotator> rotator;
+        Must(factory->CreateBitmapFlipRotator(&rotator),"four-turn rotator");
+        Must(rotator->Initialize(first,WICBitmapTransformRotate90),
+             "four-turn clockwise rotate");
+        CComPtr<IWICBitmap> opaque;
+        Must(factory->CreateBitmapFromSource(rotator,
+             WICBitmapCacheOnLoad,&opaque),"four-turn cache RGB");
+        CComPtr<IWICBitmapEncoder> encoder;
+        Must(factory->CreateEncoder(GUID_ContainerFormatHEIC,
+             &GUID_VendorPrsyahmi,&encoder),"four-turn HEIC encoder");
+        CComPtr<IWICStream> stream;
+        Must(factory->CreateStream(&stream),"four-turn create stream");
+        Must(stream->InitializeFromFilename(inputs[turn],GENERIC_WRITE),
+             "four-turn create NEW output file");
+        Must(encoder->Initialize(stream,WICBitmapEncoderNoCache),
+             "four-turn initialize HEIC");
+        for(int i=0;i<2;i++){
+            CComPtr<IWICBitmapFrameEncode> dest;
+            Must(encoder->CreateNewFrame(&dest,nullptr),"four-turn create frame");
+            Must(dest->Initialize(nullptr),"four-turn frame initialize");
+            Must(dest->SetSize(i==0?h:aw,i==0?w:ah),
+                 "four-turn frame geometry");
+            WICPixelFormatGUID format=GUID_WICPixelFormat24bppRGB;
+            Must(dest->SetPixelFormat(&format),"four-turn frame RGB");
+            if(!IsEqualGUID(format,GUID_WICPixelFormat24bppRGB))
+                throw std::runtime_error("Four-turn pixel format changed");
+            Must(dest->WriteSource(i==0?static_cast<IWICBitmapSource*>(opaque.p):
+                                       static_cast<IWICBitmapSource*>(second.p),
+                                   nullptr),"four-turn WriteSource");
+            Must(dest->Commit(),"four-turn frame Commit");
+        }
+        Must(encoder->Commit(),"four-turn HEIF Commit");
+        encoder.Release();stream.Release();
+
+        const auto previous=Read(inputs[turn-1]);
+        const auto saved=Read(inputs[turn]);
+        const auto expected=HeicLosslessNative::Transform(previous,1);
+        if(saved!=expected || saved.size()!=previous.size())
+            throw std::runtime_error("Four-turn saved HEIF was recompressed or metadata lost");
+        CComPtr<IWICBitmapDecoder> readback;
+        Must(factory->CreateDecoderFromFilename(inputs[turn],nullptr,
+             GENERIC_READ,WICDecodeMetadataCacheOnDemand,&readback),
+             "four-turn reopen saved");
+        CComPtr<IWICBitmapFrameDecode> verified;
+        Must(readback->GetFrame(0,&verified),"four-turn saved primary");
+        UINT rw=0,rh=0;
+        Must(verified->GetSize(&rw,&rh),"four-turn saved geometry");
+        if(rw!=h || rh!=w)
+            throw std::runtime_error("Four-turn saved geometry did not swap");
+        if(turn==4){
+            if(rw!=initialW || rh!=initialH)
+                throw std::runtime_error("Four turns did not restore original dimensions");
+            std::vector<BYTE> finalRGB(size_t(rw)*rh*3);
+            Must(verified->CopyPixels(nullptr,rw*3,UINT(finalRGB.size()),
+                 finalRGB.data()),"four-turn final pixels");
+            if(finalRGB!=initialRGB)
+                throw std::runtime_error("Four turns did not restore original RGB pixels");
+        }
+        printf("WIC_PHOTOS_TWO_FRAME_SEQUENCE_TURN_%d_BYTE_EXACT_PASS bytes=%zu\n",
+               turn,saved.size());
+    }
+    printf("WIC_PHOTOS_TWO_FRAME_FOUR_TURNS_ORIGINAL_RGB_RESTORED_PASS\n");
+}
+
 inline void Run(){
     CComPtr<IWICImagingFactory> factory;
     Must(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
@@ -236,5 +335,6 @@ inline void Run(){
     RunTwoFramePhotosSave(factory);
     RunTwoFramePhotosSave(factory,true);
     RunTwoFramePhotosSave(factory,false,true);
+    RunFourSuccessiveTwoFrameRotations(factory);
 }
 } // namespace WICPhotosOpaqueRotationProbe
