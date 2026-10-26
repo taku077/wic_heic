@@ -82,9 +82,18 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
         FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL,nullptr);
     if(h==INVALID_HANDLE_VALUE)return;
+    // During burst saves the file-lock best-effort strategy can drop the
+    // critical EncoderCommitEnter or EncoderCommitExit event while the
+    // corresponding other boundary is logged. That makes elapsed-time and
+    // overlap diagnostics unreliable. Serialize ONLY Commit boundaries;
+    // continue to skip optional high-volume events rather than stall Photos.
+    const bool commitBoundary=
+        lstrcmpA(event,"EncoderCommitEnter")==0 ||
+        lstrcmpA(event,"EncoderCommitExit")==0;
+    const DWORD lockFlags=LOCKFILE_EXCLUSIVE_LOCK |
+        (commitBoundary?0:LOCKFILE_FAIL_IMMEDIATELY);
     OVERLAPPED lock{};
-    if(!LockFileEx(h,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,
-                   0,MAXDWORD,MAXDWORD,&lock)){
+    if(!LockFileEx(h,lockFlags,0,MAXDWORD,MAXDWORD,&lock)){
         CloseHandle(h);
         return;
     }
