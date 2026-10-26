@@ -90,6 +90,15 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
     const bool commitBoundary=
         lstrcmpA(event,"EncoderCommitEnter")==0 ||
         lstrcmpA(event,"EncoderCommitExit")==0;
+    // A busy Photos session can reach the 2 MiB hard cap and truncate a
+    // Commit pair right between its Enter and Exit. Preserve a 512 KiB
+    // reserve for numeric save boundaries and final outcomes without
+    // increasing the cap, writing any user metadata, or slowing down the
+    // high-frequency optional trace path.
+    const bool savePriority=commitBoundary ||
+        lstrcmpA(event,"EncoderCommitLossless")==0 ||
+        lstrcmpA(event,"EncoderCommitRecompressed")==0 ||
+        lstrcmpA(event,"EncoderCommitRejected")==0;
     const DWORD lockFlags=LOCKFILE_EXCLUSIVE_LOCK |
         (commitBoundary?0:LOCKFILE_FAIL_IMMEDIATELY);
     OVERLAPPED lock{};
@@ -121,7 +130,8 @@ inline void Emit(const char* event,UINT width=0,UINT height=0,
     LARGE_INTEGER length{},zero{};
     if(n>0 && n<int(sizeof(line)) &&
        GetFileSizeEx(h,&length) && length.QuadPart>=0 &&
-       static_cast<ULONGLONG>(length.QuadPart)+static_cast<ULONGLONG>(n)<=2ULL*1024*1024 &&
+       static_cast<ULONGLONG>(length.QuadPart)+static_cast<ULONGLONG>(n)<=
+          (savePriority?2ULL*1024*1024:3ULL*512*1024) &&
        SetFilePointerEx(h,zero,nullptr,FILE_END)){
         DWORD written=0;
         WriteFile(h,line,static_cast<DWORD>(n),&written,nullptr);
