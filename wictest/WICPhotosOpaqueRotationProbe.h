@@ -262,6 +262,28 @@ inline void RunTwoFrameRotationSequence(IWICImagingFactory* factory,int turns=4)
             Must(first->CopyPixels(nullptr,w*3,UINT(initialRGB.size()),
                  initialRGB.data()),"four-turn original pixels");
         }
+        if(turns==50) {
+            // Distinguish shrinking the VIEW from resizing saved HEIC pixels.
+            // CopyPixels on a temporary WIC scaler must not alter source
+            // orientation, HEIF data, width or height before a full-size save.
+            CComPtr<IWICBitmapScaler> view;
+            Must(factory->CreateBitmapScaler(&view),"stress50 viewport scaler");
+            const UINT vw=w/2,vh=h/2;
+            Must(view->Initialize(first,vw,vh,WICBitmapInterpolationModeFant),
+                 "stress50 shrink temporary viewport");
+            UINT checkW=0,checkH=0;
+            Must(view->GetSize(&checkW,&checkH),"stress50 view dimensions");
+            if(checkW!=vw || checkH!=vh)
+                throw std::runtime_error("Viewport downsize wrong geometry");
+            std::vector<BYTE> displayed(size_t(vw)*vh*3);
+            Must(view->CopyPixels(nullptr,vw*3,UINT(displayed.size()),
+                displayed.data()),"stress50 viewport-only downscale");
+            UINT unchangedW=0,unchangedH=0;
+            Must(first->GetSize(&unchangedW,&unchangedH),
+                 "stress50 original after viewport downscale");
+            if(unchangedW!=w || unchangedH!=h)
+                throw std::runtime_error("Viewing zoom altered original geometry");
+        }
         CComPtr<IWICBitmapFlipRotator> rotator;
         Must(factory->CreateBitmapFlipRotator(&rotator),"four-turn rotator");
         Must(rotator->Initialize(first,WICBitmapTransformRotate90),
