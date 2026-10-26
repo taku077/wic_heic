@@ -316,15 +316,22 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
         // raster to our encoder (no HEIF transform options). Keep at most
         // one short-lived, in-process source candidate. Never persist bytes.
         // A source read failure must NEVER fail ordinary HEIC decoding.
+        // Only Photos and the controlled CI harness can use the lossless
+        // source bridge. Previously we read and copied the WHOLE original
+        // HEIF (potentially several MiB) on EVERY primary GetFrame in all
+        // other consumers, including Explorer, only for Offer() to reject it.
+        // Avoid that redundant IStream read without changing Photos saves.
         if(!m_OfferedRotationSource && handle.is_primary_image()) {
             m_OfferedRotationSource=true;
-            try {
-                std::vector<uint8_t> source;
-                if(SUCCEEDED(CopyOriginalBytes(source)))
-                    PhotosPureRotationBridge::Offer(source,
-                        static_cast<UINT>(handle.get_width()),
-                        static_cast<UINT>(handle.get_height()));
-            } catch(...) {}
+            if(PhotosPureRotationBridge::CaptureAllowedHost()) {
+                try {
+                    std::vector<uint8_t> source;
+                    if(SUCCEEDED(CopyOriginalBytes(source)))
+                        PhotosPureRotationBridge::Offer(source,
+                            static_cast<UINT>(handle.get_width()),
+                            static_cast<UINT>(handle.get_height()));
+                } catch(...) {}
+            }
         }
 		*ppIBitmapFrame = decoder;
 	}
