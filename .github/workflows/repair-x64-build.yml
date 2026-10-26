@@ -186,6 +186,10 @@ jobs:
               # A reliable timeline needs matched encoder Commit spans.
               $starts = @($events | Where-Object { $_ -match '\bevent=EncoderCommitEnter ' })
               $ends = @($events | Where-Object { $_ -match '\bevent=EncoderCommitExit ' })
+              $traceBytes=(Get-Item -LiteralPath $trace).Length
+              # Event-only counts; diagnostic output contains no filenames,
+              # original pixels, user data or file-system paths.
+              Write-Host "WIC_TRACE_PAIR_COUNTS starts=$($starts.Count) ends=$($ends.Count) size_bytes=$traceBytes cap_bytes=2097152"
               if ($starts.Count -eq 0 -or $starts.Count -ne $ends.Count) {
                 throw 'WIC operation trace has unpaired encoder commits'
               }
