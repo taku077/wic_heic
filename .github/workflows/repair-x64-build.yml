@@ -169,13 +169,18 @@ jobs:
                 # path replacements without ever writing to the pinned source.
                 & $testExe --replace50
                 if ($LASTEXITCODE -ne 0) { throw "Fifty same-path synthetic ReplaceFile saves failed: $LASTEXITCODE" }
+                # Identical public artificial displayed pixels, separately
+                # written as Windows native JPEG/PNG comparators. Show stage
+                # costs without flaky time-based pass/fail thresholds.
+                & $testExe --perf-compare
+                if ($LASTEXITCODE -ne 0) { throw "HEIC/PNG/JPEG WIC stage benchmark failed: $LASTEXITCODE" }
               }
               finally {
                 Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
               }
               if (-not (Test-Path -LiteralPath $trace)) { throw 'WIC opt-in trace was not produced' }
               $events = Get-Content -LiteralPath $trace
-              foreach ($required in @('FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed','EncoderCommitExit','EncoderSetThumbnail','EncoderSetColorContexts','EncoderMetadataWriterUnavailable','WriteSourceOriginalExact')) {
+              foreach ($required in @('DecoderFullDecode','FrameInitializeOptions','WriteSourceLossless','EncoderCommitLossless','WriteSourceRejected','EncoderCommitRecompressed','EncoderCommitExit','EncoderSetThumbnail','EncoderSetColorContexts','EncoderMetadataWriterUnavailable','WriteSourceOriginalExact')) {
                 if (-not ($events | Where-Object { $_ -like "*event=$required *" })) { throw "Missing expected diagnostic event: $required" }
               }
               # A reliable timeline needs matched encoder Commit spans.
