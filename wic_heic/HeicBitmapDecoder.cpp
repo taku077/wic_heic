@@ -95,12 +95,15 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
 			return E_INVALIDARG;
 		}
 
-		STATSTG stat;
-		pIStream->Stat(&stat, STATFLAG_DEFAULT);
-		DbgLog("%s: filename=%ws", __FUNCTION__, stat.pwcsName);
-
+        // The HEIF reader already queries stream size with STATFLAG_NONAME.
+        // This duplicate STATFLAG_DEFAULT query only allocated a filename
+        // string (previously unfreed), did NOT feed the decoder, and could
+        // incur extra filesystem/COM work. Never request/log image paths.
+        const ULONGLONG parseStarted=GetTickCount64();
 		m_Reader = new CHeifStreamReader(pIStream);
 		m_Context.read_from_reader(*m_Reader);
+        WicHeicDiagnostic::Emit("DecoderContainerParsed",0,0,0,0,
+            "heif-container",S_OK,0,GetTickCount64()-parseStarted);
 	}
 	catch (const heif::Error& ex)
 	{
