@@ -41,6 +41,57 @@ inline std::vector<BYTE> DecodedRGB(IWICImagingFactory* factory,
           "Exif-only WIC RGB CopyPixels");
     return result;
 }
+// Regression based on the user's 2026-10-26 *artificial* v0.3 trace.
+// Observed irot transitions: 3,2,3,2,1,0,3,2,1,0,3 with Exif normalized
+// to 1 after first save. Verify the WIC decoder never returns stale geometry
+// when reopened for each state, even when a rotation appears to go backward.
+// Does not use the user's Photos logs or real images in CI.
+inline void RunObservedIrotSequence() {
+    const auto original=WICPhotosOpaqueRotationProbe::Read(
+        L"samples\\fixture-irot3-exif6-noaux.heic");
+    constexpr size_t irotAt=567, exifAt=10589;
+    if(original.size()!=10597 || original[irotAt]!=3 || original[exifAt]!=6)
+        throw std::runtime_error("Public synthetic irot fixture changed");
+    constexpr BYTE trace[]={3,2,3,2,1,0,3,2,1,0,3};
+    const std::wstring root=L"samples\\artificial_logged_irot_"+
+        std::to_wstring(GetCurrentProcessId())+L"_"+
+        std::to_wstring(GetTickCount64());
+    if(!CreateDirectoryW(root.c_str(),nullptr))
+        throw std::runtime_error("Could not create fresh irot-sequence folder");
+    CComPtr<IWICImagingFactory> factory;
+    Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
+          IID_PPV_ARGS(&factory)),"irot sequence WIC factory");
+    for(size_t i=0;i<sizeof(trace);++i) {
+        auto content=original;
+        content[irotAt]=trace[i];
+        if(i>0)content[exifAt]=1;
+        const std::wstring path=root+L"\\state-"+std::to_wstring(i)+L".heic";
+        HANDLE out=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,
+            CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(out==INVALID_HANDLE_VALUE)
+            throw std::runtime_error("Refused to overwrite synthetic state");
+        DWORD written=0;
+        BOOL ok=WriteFile(out,content.data(),DWORD(content.size()),&written,
+                          nullptr);
+        CloseHandle(out);
+        if(!ok || written!=content.size())
+            throw std::runtime_error("Synthetic irot state write failed");
+        UINT w=0,h=0;
+        DecodedRGB(factory,path.c_str(),&w,&h);
+        const bool portrait=(trace[i]&1)!=0;
+        if(w!=(portrait?1080u:1920u) ||
+           h!=(portrait?1920u:1080u)) {
+            printf("WIC_IROT_SEQUENCE_STALE_GEOMETRY state=%zu irot=%u "
+                   "actual=%ux%u\n",i,UINT(trace[i]),w,h);
+            throw std::runtime_error("WIC returned stale or stretched geometry");
+        }
+        if(i && WICPhotosOpaqueRotationProbe::Read(path.c_str())!=content)
+            throw std::runtime_error("Source artificial metadata altered");
+    }
+    printf("WIC_PHOTOS_OBSERVED_11_IROT_STATES_MATCH_GEOMETRY_PASS "
+           "last_irot=3 last_dims=1080x1920\n");
+}
+
 inline void Run() {
     const auto source=WICPhotosOpaqueRotationProbe::Read(
         L"samples\\fixture-irot3-exif6-noaux.heic");
@@ -78,5 +129,6 @@ inline void Run() {
     printf("WIC_PHOTOS_EXIF_ONLY_NOT_ACTUAL_90_ROTATION_PASS "
            "size=%zu irot=3 exif=6_to_1 same_geometry=1 same_WIC_RGB=1\n",
            source.size());
+    RunObservedIrotSequence();
 }
 } // namespace WICPhotosExifOnlyProbe
