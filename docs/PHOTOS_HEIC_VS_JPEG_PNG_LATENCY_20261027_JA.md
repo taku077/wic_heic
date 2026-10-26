@@ -40,3 +40,30 @@
 - Microsoft: WIC bitmap cache https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicimagingfactory-createbitmapfromsource
 - libheif project & codecs https://github.com/strukturag/libheif
 - libheif community performance case https://github.com/strukturag/libheif/issues/1787
+
+## Windows CIでの段階別実測（2026-10-27、人工1080×1920のみ）
+
+**Windows Actions #40356131847 SUCCESS**、既存テストとMSI隔離導入・復旧も合格。単発測定、同一人工画素をPNG/JPEGへ別名新規変換。下記数値はGitHub-hosted Windows Serverの一測定例であり、ユーザーのCore i5 Windows10に直接当てはめない。JPEGは非可逆である。
+
+| 処理段階（ms） | HEIC | PNG | JPEG |
+|---|---:|---:|---:|
+| 新規デコーダー／フレーム準備 | 4.830 | 0.145 | 0.127 |
+| うちCreateDecoderFromFilename | 4.789 | 0.136 | 0.121 |
+| うちGetFrame(0) | 0.018 | 0.005 | 0.003 |
+| うちGetSize | 0.004 | 約0.000 | 約0.000 |
+| 初回の全画素CopyPixels | 59.344 | 13.140 | 6.661 |
+| 同一フレームのwarm CopyPixels平均 | 2.290 | 12.259 | 4.917 |
+| 1/4 Fant縮小 | 2.614 | 18.110 | 2.311 |
+| 90度FlipRotator | 32.306 | 18.708 | 9.216 |
+
+**結論:** WICの同一フレームRGBキャッシュは有効で、同一フレームの後続画素要求はHEICが速い例もある。実機で特に影響しそうな段階は**デコーダー作り直し／初回HEVC復号／回転レンダリング**。Photosの連続表示更新と直接つなげる因果は未確定。縮小がHEIC最速だった測定例もあり、「全工程が常にHEICだけ重い」と一般化できない。
+
+**重要な計測の落とし穴:** 以前のCIでWIC内部診断ログをONにした場合、HEIC新規オープンが約144msと非常に遅く出たが、ログOFFでは4.830msになった。WICの診断器はWindowsのCreateFile/LockFileExを多数回呼び、HEICだけに追加のログI/Oコストが乗る。診断ONの数字をJPEG/PNGと同列に比べて性能回帰と扱わない。比較実験中は内部WIC診断をOFF、診断イベントの機能テストは別工程とする。
+
+**診断ログの信頼性:** 既存の上限2MiBに到達してCommitEnter/CommitExitが欠けるCI事例を確認。#40356131847は偶然一致したが、上限到達間際で不安定。WICコードを変更して、**1.5MiB以降は通常イベントを抑止し、最後の512KiBを重要なCommit開始/終了/結果用に予約**。総上限2MiBは変更しない。さらにCIで普通イベント枠を埋めてから人工50回保存し、ペアが消えないテストを追加。結果が未確認の段階ではこれを完成と扱わない。
+
+この診断追加コードは**GitHubの開発ブランチのみ**で、ユーザー実機のWicHeic v1.1.27にはまだ導入していない。新MSIをむやみに配布しない。
+
+- 結果: https://github.com/taku077/wic_heic/actions/runs/40356131847
+- Microsoft CreateBitmapFromSource: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicimagingfactory-createbitmapfromsource
+- Microsoft LockFileEx: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex
