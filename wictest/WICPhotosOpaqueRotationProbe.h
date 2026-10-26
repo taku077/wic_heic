@@ -6,6 +6,7 @@
 #include <iterator>
 #include <vector>
 #include <stdexcept>
+#include <string>
 
 namespace WICPhotosOpaqueRotationProbe {
 inline void Must(HRESULT hr,const char* label) {
@@ -219,19 +220,31 @@ inline void RunTwoFramePhotosSave(IWICImagingFactory* factory,bool editPrimary=f
 // primary RGB 90 deg, forwards unchanged second frame, and saves whole HEIF.
 // Validate every HEIF against native metadata-only transform and the fourth
 // decoded RGB frame against the original. Never overwrite sources.
-inline void RunFourSuccessiveTwoFrameRotations(IWICImagingFactory* factory) {
-    const wchar_t* inputs[5]={
-        L"samples\\fixture-irot3-exif6-noaux.heic",
-        L"samples\\out-photos-two-frame-four-turn-1.heic",
-        L"samples\\out-photos-two-frame-four-turn-2.heic",
-        L"samples\\out-photos-two-frame-four-turn-3.heic",
-        L"samples\\out-photos-two-frame-four-turn-4.heic"
-    };
+inline void RunTwoFrameRotationSequence(IWICImagingFactory* factory,int turns=4) {
+    if(turns!=4 && turns!=50) throw std::runtime_error("Only fixed four/fifty-turn regression is supported");
+    // Stress 50 performs NO sleeps and uses a new, unique directory for
+    // every WIC output. Input HEIF remains read-only and cannot be overwritten.
+    std::vector<std::wstring> paths(size_t(turns)+1);
+    paths[0]=L"samples\\fixture-irot3-exif6-noaux.heic";
+    std::wstring root;
+    if(turns==50) {
+        root=L"samples\\synthetic_stress50_"+std::to_wstring(GetCurrentProcessId())+
+            L"_"+std::to_wstring(GetTickCount64());
+        if(!CreateDirectoryW(root.c_str(),nullptr))
+            throw std::runtime_error("Cannot create a fresh stress-test folder");
+    }
+    for(int t=1;t<=turns;t++) {
+        paths[t]=(turns==50 ? root+L"\\turn-" :
+                  std::wstring(L"samples\\out-photos-two-frame-four-turn-"))+
+            std::to_wstring(t)+L".heic";
+        if(turns==50 && GetFileAttributesW(paths[t].c_str())!=INVALID_FILE_ATTRIBUTES)
+            throw std::runtime_error("Unexpected pre-existing stress output");
+    }
     UINT initialW=0,initialH=0;
     std::vector<BYTE> initialRGB;
-    for(int turn=1;turn<=4;turn++){
+    for(int turn=1;turn<=turns;turn++){
         CComPtr<IWICBitmapDecoder> decoder;
-        Must(factory->CreateDecoderFromFilename(inputs[turn-1],nullptr,
+        Must(factory->CreateDecoderFromFilename(paths[turn-1].c_str(),nullptr,
             GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder),
             "four-turn open previous HEIF");
         UINT count=0;
@@ -261,7 +274,7 @@ inline void RunFourSuccessiveTwoFrameRotations(IWICImagingFactory* factory) {
              &GUID_VendorPrsyahmi,&encoder),"four-turn HEIC encoder");
         CComPtr<IWICStream> stream;
         Must(factory->CreateStream(&stream),"four-turn create stream");
-        Must(stream->InitializeFromFilename(inputs[turn],GENERIC_WRITE),
+        Must(stream->InitializeFromFilename(paths[turn].c_str(),GENERIC_WRITE),
              "four-turn create NEW output file");
         Must(encoder->Initialize(stream,WICBitmapEncoderNoCache),
              "four-turn initialize HEIC");
@@ -283,13 +296,13 @@ inline void RunFourSuccessiveTwoFrameRotations(IWICImagingFactory* factory) {
         Must(encoder->Commit(),"four-turn HEIF Commit");
         encoder.Release();stream.Release();
 
-        const auto previous=Read(inputs[turn-1]);
-        const auto saved=Read(inputs[turn]);
+        const auto previous=Read(paths[turn-1].c_str());
+        const auto saved=Read(paths[turn].c_str());
         const auto expected=HeicLosslessNative::Transform(previous,1);
         if(saved!=expected || saved.size()!=previous.size())
             throw std::runtime_error("Four-turn saved HEIF was recompressed or metadata lost");
         CComPtr<IWICBitmapDecoder> readback;
-        Must(factory->CreateDecoderFromFilename(inputs[turn],nullptr,
+        Must(factory->CreateDecoderFromFilename(paths[turn].c_str(),nullptr,
              GENERIC_READ,WICDecodeMetadataCacheOnDemand,&readback),
              "four-turn reopen saved");
         CComPtr<IWICBitmapFrameDecode> verified;
@@ -298,7 +311,7 @@ inline void RunFourSuccessiveTwoFrameRotations(IWICImagingFactory* factory) {
         Must(verified->GetSize(&rw,&rh),"four-turn saved geometry");
         if(rw!=h || rh!=w)
             throw std::runtime_error("Four-turn saved geometry did not swap");
-        if(turn==4){
+        if(turn%4==0){
             if(rw!=initialW || rh!=initialH)
                 throw std::runtime_error("Four turns did not restore original dimensions");
             std::vector<BYTE> finalRGB(size_t(rw)*rh*3);
@@ -307,10 +320,36 @@ inline void RunFourSuccessiveTwoFrameRotations(IWICImagingFactory* factory) {
             if(finalRGB!=initialRGB)
                 throw std::runtime_error("Four turns did not restore original RGB pixels");
         }
-        printf("WIC_PHOTOS_TWO_FRAME_SEQUENCE_TURN_%d_BYTE_EXACT_PASS bytes=%zu\n",
+        if(turns==4 || turn==1 || turn%10==0)
+            printf("WIC_PHOTOS_TWO_FRAME_SEQUENCE_TURN_%d_BYTE_EXACT_PASS bytes=%zu\n",
                turn,saved.size());
     }
-    printf("WIC_PHOTOS_TWO_FRAME_FOUR_TURNS_ORIGINAL_RGB_RESTORED_PASS\n");
+    if(turns==50) {
+        // 50 clockwise quarter-turns = a 180-degree orientation.
+        // Check decoded RGB, not just metadata or file byte counts.
+        CComPtr<IWICBitmapDecoder> endDecoder;
+        Must(factory->CreateDecoderFromFilename(paths[50].c_str(),nullptr,
+            GENERIC_READ,WICDecodeMetadataCacheOnDemand,&endDecoder),
+            "fifty-turn final reopen");
+        CComPtr<IWICBitmapFrameDecode> endFrame;
+        Must(endDecoder->GetFrame(0,&endFrame),"fifty-turn final frame");
+        UINT ew=0,eh=0;
+        Must(endFrame->GetSize(&ew,&eh),"fifty-turn final geometry");
+        if(ew!=initialW || eh!=initialH)
+            throw std::runtime_error("Fifty turns stretched source dimensions");
+        std::vector<BYTE> rgb(size_t(ew)*eh*3);
+        Must(endFrame->CopyPixels(nullptr,ew*3,UINT(rgb.size()),rgb.data()),
+            "fifty-turn final RGB");
+        for(UINT y=0;y<eh;y++)for(UINT x=0;x<ew;x++) {
+            const size_t out=(size_t(y)*ew+x)*3;
+            const size_t src=(size_t(eh-1-y)*ew+(ew-1-x))*3;
+            if(std::memcmp(rgb.data()+out,initialRGB.data()+src,3)!=0)
+                throw std::runtime_error("Fifty turns returned incorrect 180 degree pixels");
+        }
+        printf("WIC_PHOTOS_TWO_FRAME_FIFTY_RAPID_TURNS_EXACT_180_RGB_PASS total=50\n");
+    } else {
+        printf("WIC_PHOTOS_TWO_FRAME_FOUR_TURNS_ORIGINAL_RGB_RESTORED_PASS\n");
+    }
 }
 
 inline void Run(){
@@ -335,6 +374,6 @@ inline void Run(){
     RunTwoFramePhotosSave(factory);
     RunTwoFramePhotosSave(factory,true);
     RunTwoFramePhotosSave(factory,false,true);
-    RunFourSuccessiveTwoFrameRotations(factory);
+    RunTwoFrameRotationSequence(factory);
 }
 } // namespace WICPhotosOpaqueRotationProbe
