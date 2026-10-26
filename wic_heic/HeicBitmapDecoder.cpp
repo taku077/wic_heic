@@ -102,6 +102,15 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
         const ULONGLONG parseStarted=GetTickCount64();
 		m_Reader = new CHeifStreamReader(pIStream);
 		m_Context.read_from_reader(*m_Reader);
+        // Snapshot the published top-level image list exactly once.
+        // The context is never mutated after Initialize; this reduces
+        // repeated libheif metadata work and avoids fresh vector allocations
+        // during Photos' frequent GetFrameCount/GetFrame calls.
+        m_TopLevelIds=m_Context.get_list_of_top_level_image_IDs();
+        const int declaredCount=m_Context.get_number_of_top_level_images();
+        if (declaredCount<0 ||
+            m_TopLevelIds.size()!=static_cast<size_t>(declaredCount))
+            return WINCODEC_ERR_BADIMAGE;
         WicHeicDiagnostic::Emit("DecoderContainerParsed",0,0,0,0,
             "heif-container",S_OK,0,GetTickCount64()-parseStarted);
 	}
@@ -270,12 +279,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrameCount(__RPC__out UINT *pCo
 		return E_POINTER;
 	}
 
-	DbgLog("GetFrameCount %d %d",
-		m_Context.get_number_of_top_level_images(),
-		m_Context.get_list_of_top_level_image_IDs().size());
-
-
-	*pCount = static_cast<UINT>(m_Context.get_number_of_top_level_images());
+    // Immutable after Initialize; no libheif re-enumeration or allocation.
+    *pCount=static_cast<UINT>(m_TopLevelIds.size());
 	return S_OK;
 }
 
@@ -286,17 +291,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 	{
 		DbgLog("GetFrame: %d", index);
 
-		if (index >= (UINT)m_Context.get_number_of_top_level_images()) {
-			return WINCODEC_ERR_FRAMEMISSING;
-		}
+        if(index>=m_TopLevelIds.size())return WINCODEC_ERR_FRAMEMISSING;
 
 		if (!ppIBitmapFrame) {
 			return E_POINTER;
 		}
 
-		std::vector<heif_item_id> ids = m_Context.get_list_of_top_level_image_IDs();
-
-		heif::ImageHandle handle = m_Context.get_image_handle(ids[index]);
+        heif::ImageHandle handle=m_Context.get_image_handle(m_TopLevelIds[index]);
 		if (handle.empty()) {
 			return WINCODEC_ERR_FRAMEMISSING;
 		}
@@ -310,7 +311,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 			handle.is_primary_image()
 		);
 
-		CHeicBitmapFrameDecode* decoder = new(std::nothrow) CHeicBitmapFrameDecode(this, handle,index,static_cast<UINT>(ids.size()));
+		CHeicBitmapFrameDecode* decoder = new(std::nothrow) CHeicBitmapFrameDecode(this, handle,index,static_cast<UINT>(m_TopLevelIds.size()));
 		if (!decoder) {
 			return E_OUTOFMEMORY;
 		}
