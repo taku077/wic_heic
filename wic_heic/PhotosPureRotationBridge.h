@@ -45,19 +45,23 @@ inline void Prune(Store& state,std::chrono::steady_clock::time_point now) {
     if(state.candidates.size()!=oldSize)++state.revision;
 }
 inline bool CaptureAllowedHost() {
-    // Avoid extra HEIC reads on every Explorer thumbnail request. Photos
-    // executable names vary between Win10/Win11 and legacy/modern packages.
-    // The artificial CI harness is also permitted, never Explorer.exe.
-    wchar_t name[MAX_PATH]{};
-    const DWORD n=GetModuleFileNameW(nullptr,name,MAX_PATH);
-    if(!n || n>=MAX_PATH)return false;
-    const wchar_t* base=wcsrchr(name,L'\\');
-    base=base?base+1:name;
-    return _wcsicmp(base,L"Microsoft.Photos.exe")==0 ||
-           _wcsicmp(base,L"Photos.exe")==0 ||
-           _wcsicmp(base,L"PhotosApp.exe")==0 ||
-           _wcsicmp(base,L"PhotoApp.exe")==0 ||
-           _wcsicmp(base,L"wictest.exe")==0;
+    // The host executable cannot change during this process's lifetime.
+    // Cache the fixed allowlist result instead of GetModuleFileNameW plus
+    // several case-folding comparisons on each HEIC GetFrame (and again
+    // inside Offer). C++11 local-static initialization is thread-safe.
+    static const bool allowed=[]() -> bool {
+        wchar_t name[MAX_PATH]{};
+        const DWORD n=GetModuleFileNameW(nullptr,name,MAX_PATH);
+        if(!n || n>=MAX_PATH)return false;
+        const wchar_t* base=wcsrchr(name,L'\\');
+        base=base?base+1:name;
+        return _wcsicmp(base,L"Microsoft.Photos.exe")==0 ||
+               _wcsicmp(base,L"Photos.exe")==0 ||
+               _wcsicmp(base,L"PhotosApp.exe")==0 ||
+               _wcsicmp(base,L"PhotoApp.exe")==0 ||
+               _wcsicmp(base,L"wictest.exe")==0;
+    }();
+    return allowed;
 }
 
 
