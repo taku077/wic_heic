@@ -95,6 +95,40 @@ inline void Run() {
     CComPtr<IWICImagingFactory> factory;
     Must(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
          IID_PPV_ARGS(&factory)),"scratch WIC factory");
+    // Models the viewer holding an old decoded WIC bitmap for the entire
+    // session while the stable on-disk scratch filename is replaced 50 times.
+    // A memory snapshot is used intentionally: holding a Windows file handle
+    // could inhibit ReplaceFileW and would test file sharing, not stale UI.
+    std::vector<BYTE> pinnedSnapshot(untouched.begin(),untouched.end());
+    CComPtr<IWICStream> pinnedStream;
+    Must(factory->CreateStream(&pinnedStream),"create old viewer snapshot");
+    Must(pinnedStream->InitializeFromMemory(
+             pinnedSnapshot.data(),UINT(pinnedSnapshot.size())),
+         "initialize old viewer snapshot");
+    CComPtr<IWICBitmapDecoder> pinnedDecoder;
+    Must(factory->CreateDecoderFromStream(pinnedStream,nullptr,
+         WICDecodeMetadataCacheOnLoad,&pinnedDecoder),
+         "create old viewer WIC decoder");
+    CComPtr<IWICBitmapFrameDecode> pinnedFrame;
+    Must(pinnedDecoder->GetFrame(0,&pinnedFrame),
+         "get old viewer WIC frame");
+    CComPtr<IWICBitmap> pinnedCachedBitmap;
+    Must(factory->CreateBitmapFromSource(pinnedFrame,WICBitmapCacheOnLoad,
+         &pinnedCachedBitmap),"snapshot old viewer RGB bitmap");
+    UINT pinnedW=0,pinnedH=0;
+    Must(pinnedCachedBitmap->GetSize(&pinnedW,&pinnedH),
+         "get pinned viewer dimensions");
+    if(pinnedW!=1080 || pinnedH!=1920)
+        throw std::runtime_error("Unexpected original viewer dimensions");
+    const size_t pinnedSize=size_t(pinnedW)*pinnedH*3;
+    std::vector<BYTE> pinnedRGB(pinnedSize);
+    // The public sample has 10-bit HEIF, so the WIC cache may be 48bpp.
+    CComPtr<IWICBitmapSource> pinnedAsRgb;
+    Must(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
+         pinnedCachedBitmap,&pinnedAsRgb),"old viewer RGB convert");
+    Must(pinnedAsRgb->CopyPixels(nullptr,pinnedW*3,UINT(pinnedSize),
+         pinnedRGB.data()),"old viewer RGB snapshot");
+
     UINT originalW=0,originalH=0;
     for(int i=1;i<=kTurns;i++) {
         const std::wstring temp=root+L"\\candidate-"+std::to_wstring(i)+L".heic";
@@ -130,6 +164,23 @@ inline void Run() {
         if(w!=(i%2?originalH:originalW) ||
            h!=(i%2?originalW:originalH))
             throw std::runtime_error("Same-path reopen returned stale HEIF dimensions");
+        UINT oldW=0,oldH=0;
+        Must(pinnedCachedBitmap->GetSize(&oldW,&oldH),
+             "held viewer cached geometry");
+        if(oldW!=pinnedW || oldH!=pinnedH)
+            throw std::runtime_error("Previously cached bitmap changed unexpectedly");
+        if(i==1 || i==25 || i==50) {
+            std::vector<BYTE> held(pinnedSize);
+            Must(pinnedAsRgb->CopyPixels(nullptr,pinnedW*3,UINT(held.size()),
+                 held.data()),"read old viewer cached RGB after replacement");
+            if(held!=pinnedRGB)
+                throw std::runtime_error("Pinned WIC cached image was mutated");
+            // In odd turns the new file is landscape while the old cached
+            // UI bitmap remains portrait; only a newly acquired WIC frame
+            // reflects the refreshed source.
+            if(i%2 && (w==oldW || h==oldH))
+                throw std::runtime_error("Old and newly decoded geometry conflated");
+        }
         if(i%10==0)
             printf("WIC_PHOTOS_REPLACE_SAME_PATH_TURN_%d_BYTE_EXACT_PASS\n",i);
     }
@@ -143,5 +194,7 @@ inline void Run() {
         throw std::runtime_error("Original public fixture modified");
     printf("WIC_PHOTOS_REPLACE_SAME_WORKING_COPY_FIFTY_PRESERVED_PASS "
            "operations=50 retainedBackups=50\n");
+    printf("WIC_PHOTOS_HELD_VIEWER_BITMAP_STAYS_OLD_FRESH_DECODER_UPDATES_PASS "
+           "old_dims=1080x1920 new_decoder_checked=50\n");
 }
 } // namespace WICPhotosReplace50Probe
