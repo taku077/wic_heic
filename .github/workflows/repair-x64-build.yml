@@ -54,19 +54,14 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Check CMake and NASM
+      - name: Check CMake
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           cmake --version
-          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
-            choco install nasm -y --no-progress
-            if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
-            "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            $env:PATH = "C:\Program Files\NASM;$env:PATH"
-          }
-          nasm -v
-          if ($LASTEXITCODE -ne 0) { throw 'NASM not available' }
+          if ($LASTEXITCODE -ne 0) { throw 'CMake unavailable' }
+          # Do not fetch NASM from Chocolatey unless a native dependency
+          # rebuild is actually required. Cache-hit builds do not use NASM.
 
       - name: Restore project dependencies
         shell: pwsh
@@ -96,6 +91,17 @@ jobs:
         working-directory: wic_heic/3rdparty
         run: |
           $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            if (Test-Path 'C:\Program Files\NASM\nasm.exe') {
+              $env:PATH = "C:\Program Files\NASM;$env:PATH"
+            } else {
+              choco install nasm -y --no-progress
+              if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed for real dependency rebuild' }
+              $env:PATH = "C:\Program Files\NASM;$env:PATH"
+            }
+          }
+          nasm -v
+          if ($LASTEXITCODE -ne 0) { throw 'NASM unavailable for dependency rebuild' }
           foreach ($part in @('libde265','kvazaar','libheif')) {
             cmd /c "call build-$part.bat x64"
             if ($LASTEXITCODE -ne 0) { throw "Failed to build dependency: $part" }
