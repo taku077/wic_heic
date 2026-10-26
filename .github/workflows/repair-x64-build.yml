@@ -160,6 +160,10 @@ jobs:
                 # downscale. Verify both scale->rotate and rotate->scale.
                 & $testExe --scale-matrix
                 if ($LASTEXITCODE -ne 0) { throw "WIC scale/rotation matrix failed: $LASTEXITCODE" }
+                # Model 50 back-to-back clicks whose save Commit calls overlap.
+                # All writes are unique artificial output files, never original.
+                & $testExe --burst50
+                if ($LASTEXITCODE -ne 0) { throw "WIC 50 overlapping Commit stress failed: $LASTEXITCODE" }
               }
               finally {
                 Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
