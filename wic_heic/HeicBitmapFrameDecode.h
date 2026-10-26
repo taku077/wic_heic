@@ -1,5 +1,6 @@
 #pragma once
 #include "HeicSourceAccess.h"
+#include <mutex>
 
 class CHeicBitmapFrameDecode : public IWICBitmapFrameDecode, public IHeicRawSource, public IHeicAuxiliaryContainerSource
 {
@@ -15,6 +16,10 @@ private:
 	size_t m_Stride;
 	uint8_t* m_PlaneInterleaved;
 	bool m_Decoded;
+	// Protect one-time lazy libheif decode when Photos issues concurrent
+	// CopyPixels on the SAME COM frame. The decoded RGB plane is immutable
+	// after publication; lock only the first-decode path, not every row copy.
+	std::mutex m_DecodeMutex;
 
 public:
 	CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle,UINT index,UINT count);
