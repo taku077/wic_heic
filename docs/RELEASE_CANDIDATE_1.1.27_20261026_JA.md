@@ -48,3 +48,14 @@
 - Microsoft WIC CreateNewFrame: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapencoder-createnewframe
 - libheif top-level image enumeration: https://github.com/strukturag/libheif/blob/master/go/heif/heif.go
 - Library of Congress HEIF items, auxiliary and HDR: https://wwws.loc.gov/preservation/digital/formats/fdd/fdd000526.shtml
+
+
+## 2026-10-26 Windows 10標準フォト実機結果：1.1.27で回転保存成功（ユーザー報告）
+
+- **ユーザーがWicHeic 1.1.27を導入し、1.1.26で保存失敗した公開人工2フレームHEICを標準フォトで回転保存できたと報告。** 新版による保存不能の改善を実機で確認。なおフォトのボタン操作、画像の最終的な画面方向については今回の添付のみでは機械判定しない。
+- 保存結果と考えられる添付 `fixture-irot3-exif6-noaux(3).zip` のHEICはZIP CRC整合性正常、10,597バイト、SHA-256 `A680DF74DCFE858EFAA5C29BFB39658628D1DF1C30891759375069BD893A314B`。
+- 参照元の公開人工HEICは10,597バイト、SHA-256 `D874948C2E6F218A45C740A270FE5E10F0344C8F3A525B59FD44FDCE898DCC95`。
+- **両HEICの差は1バイトのみ**（offset 10589、Exif Orientationの値 `6→1`）。HEIF primary `irot=3`は不変。HEVC圧縮画像、2画像の画素データ、HEIFその他の各バイトは同一。heif-infoで両ファイルに主画像1080×1920（10-bit）と追加画像1920×1080（10-bit）の存在を確認。
+- これは**無再圧縮・追加画像保持の証拠**である。ただしExif正規化のみで保存されており、回転が何度適用されたか・画面の見た目との方向一致はこの差分のみで断言しない。ユーザー報告の「保存できた」と、バイナリで立証した「Exif1バイトのみ変化」を区別する。
+- Windows CI #40220970052 SUCCESS と実機の保存成功を確認。一方、一般写真の全形式対応、繰り返し回転の表示崩れ/見切れ、再圧縮時のExif/XMP保全、ファイル置換/サムネイル遅延は引き続き未解決。
+- 今回の報告で新たなMSI変更・強制再インストールは行わない。個人写真のアップロード・GitHubへの取り込みは不要。
