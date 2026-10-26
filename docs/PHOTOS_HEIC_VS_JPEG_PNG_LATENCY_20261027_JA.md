@@ -117,3 +117,28 @@
 - 今回の中央値（ms）：HEIC 初回画素 43.346・90度回転21.538・準備139.261、PNG 初回8.240・回転8.974、JPEG 初回4.768・回転5.499。前回別CIではHEIC 初回51.122・回転25.703、PNG 初回9.651・回転10.652、JPEG 初回5.602・回転6.796。
 - **重要:** 変化率はHEICだけでなくPNG/JPEGも近い割合で速くなっている。したがって**HEICだけの15％短縮を達成したとは言えない**。同一ランナーで変更前／変更後のペア測定を行い、HEICに固有の優位性があるか判定するまで速度効果は「未確定」。見かけの改善率を成果としてMSIをユーザーに試させない。
 - 検査からはコンテナー準備約139msの持続が確認されており、この工程の内訳もDecoderContainerParsed等で確認する方針。これらは測定のための補助であり、Photosの表示破綻を解決した証拠ではない。
+
+## 2026-10-27：小規模改善を積み上げるための開発ルールと実装台帳
+
+ユーザーの方針：**一つ一つの改善幅が小さくても、積み重ねと組合せで10〜20％に達する可能性を評価する**。個別パッチの効果が小さいことだけを理由に直ちに破棄しない。一方、重複処理、予期しないレイアウト変化、メタデータ消失、体感悪化、過負荷、診断漏れがあれば無理に統合しない。
+
+### 改善項目と対象領域
+
+| 項目 | 技術上の削減 | 実装 | 速度向上の認定 |
+|---|---|---|---|
+| 1. 不要なStat取得 | 使われないファイル名のSTATと未解放メモリ | 2026-10-27既存済み | 未測定 |
+| 2. 非Photosホスト向け余分な全HEIF読み直しを省く | GetFrame中のCopyOriginalBytes/Offer不採用 | 2026-10-27既存済み | 未測定。Photos保存経路は対象外 |
+| 3. HEIFストリームのReadごとのSeek(CUR,0)を省く | libheif多数の小Readごとに追加されるCOM呼出し | `wic_heic/HeifStreamReader.cpp` commit `78bdbbc1d024` | CI安全性結果待ち・時間効果未測定 |
+| 4. トップレベル画像ID列挙を1回に集約 | GetFrameCount/GetFrameでのlibheif再列挙・std::vector再確保 | `wic_heic/HeicBitmapDecoder.h/.cpp` commit `7d9dd12c4444` | CI安全性結果待ち・時間効果未測定 |
+| 5. スレッド復号・16bit LUT最適化の再確認 | 研究ブランチに既存成果。既存の2/4スレッドやSSE実装と重複禁止 | 一部既存／研究のみ | Windows10 Photosの初回表示に実装済みとは限らない |
+
+- Microsoft ISequentialStream::Readは**実際に読んだバイト数だけシークポインターを進める**契約。従来は每回Read成功後にSeek(STREAM_SEEK_CUR,0)を呼び戻り値でm_LastPosをセットしていたが、成功時は`m_LastPos += nRead`と等価。エラー時は従来同様-1を返し、ポインターを増やさない。sizeがULONGより大きい場合は安全拒否。外部の並行アクセスによるストリームポインター変更にはもともと対応しておらず、IStream/readerの単一所有を維持する。
+- HEIFコンテナーはInitialize終了後にimmutable。画像一覧を一度だけ取得し、GetFrameCount/GetFrameで共有。2画像付き人工HEICを300回読み直す回帰テスト `wictest/WICDecoderFrameEnumerationProbe.h` を追加。プライマリー1080x1920、セカンダリー寸法、RGBの同一性を検査。写真原本には触れない。
+- **速度判定ルール：** 各候補の一次結果は人工画像のCI合否、時間測定。組合せ効果は以前と同じPC/OS/fixture/電源状態で、旧バージョンと候補を前後比較し、複数回の中央値とばらつきで判断。別CIランナー間の差を「10％達成」と呼ばない。初回フル画素時間10〜20％短縮の目標を維持。コードの静的削減が確認できた場合も、「実機速度改善」とは区別する。
+- **異常改善は別の合否：** Zoom→回転→表示崩れ→僅かなZoom→固着、数秒画像消失を解決したと推測しない。v1.1.27の安全な元バージョンを温存、Windows10 Photos実機GUI未確認の修正MSIは安易に提供しない。
+
+資料：
+- Microsoft ISequentialStream::Read: https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-isequentialstream-read
+- Microsoft IStream::Seek: https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-istream-seek
+- libheif: https://github.com/strukturag/libheif
+- Microsoft WIC transforms: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapsourcetransform
