@@ -152,6 +152,14 @@ jobs:
               try {
                 & $testExe
                 if ($LASTEXITCODE -ne 0) { throw "Native WIC sample conversion test failed: $LASTEXITCODE" }
+                # WIC 50 rapid FULL saves; no user images, no sleeps, unique
+                # destination for every turn, exact container checks each time.
+                & $testExe --stress50
+                if ($LASTEXITCODE -ne 0) { throw "Fifty-turn HEIC rapid-save regression failed: $LASTEXITCODE" }
+                # Distinguish actual resized-raster save from temporary viewer
+                # downscale. Verify both scale->rotate and rotate->scale.
+                & $testExe --scale-matrix
+                if ($LASTEXITCODE -ne 0) { throw "WIC scale/rotation matrix failed: $LASTEXITCODE" }
               }
               finally {
                 Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
