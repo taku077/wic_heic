@@ -47,3 +47,20 @@
 - Exifだけ`6→1`へ変えた場合はWICの画像寸法・RGBとも変更なし：`WIC_PHOTOS_EXIF_ONLY_NOT_ACTUAL_90_ROTATION_PASS`。
 - 50回の同名人工作業ファイル入替、8並行×50件、縮小回転試験、MSI隔離導入・削除・登録復旧も回帰試験合格。ユーザー実機のPhotos GUIは未検証。
 - これにより**独立デコーダーlibheifと、WIC直接呼び出しはこの11状態について正しい縦横を返す**と確認。異常がPhotosのアプリ内表示キャッシュ/再読込経路にある可能性が上がる。ただしPhotosが読み出す実経路・古いWICフレームを保持する経路・更新通知の障害は未確認なので、Photos固有と断言しない。
+
+## 2026-10-26 実機再オープン検査：縦長に復旧（ユーザー確認）
+
+**事実:** 連続回転の後、標準Photos画面が横長から変化しなくなった状態で、Photosを一度閉じて、**同一の** `synthetic-working.heic` を改めて開いたところ、ユーザー実機で**正しい縦長の表示へ復旧した**。
+
+**組み合わせた証拠:** 人工HEIC最終状態は `irot=3`, Exif Orientation=1, 1080×1920。HEVCデータ保持。独立libheifもWIC直接呼び出し（CI #40277179361）も当該11状態を正しい縦横寸法で復号。再オープンではPhotosも縦長表示。
+
+**解釈:** 同じファイルを新規に開いて正常表示へ戻るため、ファイル破損・回転情報欠落・恒常的なWIC復号失敗の仮説は後退。**Photosの開いている間の表示データ／寸法キャッシュ／保存後の再読み込み・レイアウト更新不足**が最も有力。標準Photosが保持しているIWICBitmapFrameDecodeなどの古いフレーム、非同期保存、同一ファイル置換通知、ビュー内ビットマップ更新のどこで stale となったかは未特定であり、Photos側の実装を証拠なしで断言しない。
+
+**WIC側の制約:** WICの `IWICBitmapDecoder::Initialize` は初期化された入力ストリームに結び付いており、外部アプリが保持中の既存デコーダーをコーデック側が勝手に再オープン・再初期化できるとは限らない。保存の `IWICBitmapEncoder::Commit` 成功は、Photos UIのファイル置換と描画更新完了を意味しない。 `SHChangeNotify` はShell通知であってPhotosの表示キャッシュ更新保証ではない。現状ではコーデックへ根拠なくShell通知・ファイル監視・強制キャッシュ破棄の処理を追加しない。
+
+**今後の焦点:** 必要に応じて人工HEICのみで、Photosを開いたまま別画像へ移動して戻る時（ビュー内再選択）と、Photosを終了して再オープンする時（アプリ側再生成）を区別する。操作と表示更新の時刻を独立v0.3のR/Tマーカーへ記録可能。PhotosプロセスまたはShellへの干渉・レジストリやMSI更新・キャッシュ全消去は行わない。
+
+公開仕様:
+- Microsoft IWICBitmapDecoder::Initialize: https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicbitmapdecoder-initialize
+- Microsoft WIC decoder implementation: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder
+- Microsoft SHChangeNotify: https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify
