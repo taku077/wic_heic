@@ -104,20 +104,40 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
     if(!width || !height || width>20000 || height>20000)return false;
     std::vector<Candidate> possible;
     uint64_t revision=0;
-    {
+    // A verified secondary WIC frame supplies the exact COMPLETE source
+    // container and origin. This is stronger evidence than the transient
+    // Photos decoder-candidate cache: do not consume/evict a global candidate
+    // on its behalf. Several overlapping WIC saves can now independently
+    // prove their original content. Unbound single-frame saves retain the
+    // existing revision/uniqueness fail-closed behaviour.
+    if(!requiredContainer) {
         auto& state=Current();
         std::lock_guard<std::mutex> lock(state.gate);
         Prune(state,std::chrono::steady_clock::now());
         revision=state.revision;
         for(const auto& c:state.candidates){
-            if(requiredContainer && c.original!=*requiredContainer)continue;
             const bool swapped=(width==c.height && height==c.width);
             const bool normal=(width==c.width && height==c.height);
             if(swapped || normal)possible.push_back(c);
         }
+        if(possible.empty())return false;
     }
-    if(possible.empty())return false;
     try {
+        if(requiredContainer) {
+            if(!IsValidHEIF(*requiredContainer))return false;
+            heif::Context bound;
+            bound.read_from_memory(requiredContainer->data(),
+                                   requiredContainer->size());
+            auto main=bound.get_primary_image_handle();
+            if(main.empty() || main.has_alpha_channel())return false;
+            const UINT w=static_cast<UINT>(main.get_width());
+            const UINT h=static_cast<UINT>(main.get_height());
+            if(!w || !h || w>20000 || h>20000)return false;
+            if(!((width==w && height==h) ||
+                 (width==h && height==w)))return false;
+            possible.push_back(Candidate{*requiredContainer,w,h,
+                          std::chrono::steady_clock::now()});
+        }
         int targetStride=0;
         auto* after=edited.get_plane(heif_channel_interleaved,&targetStride);
         if(!after || targetStride<int(width)*3)return false;
@@ -181,11 +201,11 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
         auto result=(confirmed==0)?source:
             HeicLosslessNative::Transform(source,confirmed);
         if(result.size()!=source.size())return false;
-        {
+        if(!requiredContainer) {
             auto& state=Current();
             std::lock_guard<std::mutex> lock(state.gate);
-            // Another image may have been offered while comparing. In that
-            // case the complete uniqueness proof is stale: fail closed.
+            // Unbound Photos raster: another offered source invalidates
+            // the global uniqueness proof. Never consume a stale candidate.
             if(state.revision!=revision)return false;
             const auto it=std::find_if(state.candidates.begin(),
                                       state.candidates.end(),
