@@ -15,6 +15,7 @@
 #include "WICPhotosOpaqueRotationProbe.h"
 #include "WICDecoderRectProbe.h"
 #include "WICDecoderConcurrentProbe.h"
+#include "WICDecoderFrameEnumerationProbe.h"
 #include "WICPhotosScaleMatrixProbe.h"
 #include "WICPhotosBurst50Probe.h"
 #include "WICPhotosReplace50Probe.h"
@@ -424,6 +425,7 @@ int main(int argc,char** argv)
 		CheckHalfTurnExifFixture();
 		WICDecoderRectProbe::Run();
 		WICDecoderConcurrentProbe::Run();
+        WICDecoderFrameEnumerationProbe::Run();
 		GeometryProbe::Run();
 		EncoderGuardProbe::Run();
 		WICLosslessRotationProbe::Run();
