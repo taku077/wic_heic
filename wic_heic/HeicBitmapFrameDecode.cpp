@@ -411,6 +411,11 @@ void CHeicBitmapFrameDecode::DecodeImage()
 		throw std::exception("Bad image handle");
 	}
 
+    // One full HEVC/libheif decode for this frame. Do NOT count the
+    // following warm CopyPixels row copies as fresh decompressions.
+    // All measurements are opt-in: the production path never writes a log
+    // unless the existing privacy-limited diagnostic was explicitly enabled.
+    const ULONGLONG decodeStarted=GetTickCount64();
 	// Set both to undefined to use original one
 	m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
 	m_PlaneInterleaved = m_Image.get_plane2(heif_channel_interleaved, &m_Stride);
@@ -422,7 +427,14 @@ void CHeicBitmapFrameDecode::DecodeImage()
 		throw std::exception("Unable to get plane");
 	}
 
+    // Timing is emitted only after a valid decoded RGB plane is published.
+    // All fields are numeric or fixed labels: never paths, EXIF or pixels.
+    const ULONGLONG decodeElapsed=GetTickCount64()-decodeStarted;
 	m_Decoded.store(true,std::memory_order_release);
+    WicHeicDiagnostic::Emit("DecoderFullDecode",
+        static_cast<UINT>(m_Handle.get_width()),
+        static_cast<UINT>(m_Handle.get_height()),0,0,
+        "libheif-cold",S_OK,0,decodeElapsed);
 }
 
 
