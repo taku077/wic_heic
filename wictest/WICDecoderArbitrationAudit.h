@@ -45,7 +45,18 @@ inline void Run() {
         BOOL matching=FALSE;
         const HRESULT checked=info->MatchesPattern(input,&matching);
         if(FAILED(checked)){++failedQueries;continue;}
-        if(matching){++matches;if(!self)++foreignMatches;}
+        if(matching){
+            ++matches;
+            if(!self) {
+                ++foreignMatches;
+                wchar_t guid[64]{};
+                if(StringFromGUID2(clsid,guid,64)<=0)
+                    throw std::runtime_error("Could not format registry candidate");
+                // Only a public COM CLSID from the disposable CI runner.
+                // No user photo, path, process info, or private metadata.
+                printf("WIC_ARBITRATION_OTHER_CLSID=%ls\n",guid);
+            }
+        }
     }
     if(total==0||ours!=1)
         throw std::runtime_error("HEIC codec registry mismatch in CI");
