@@ -3,6 +3,7 @@
 // HEIC frame in the same COM MTA. Detects races during lazy libheif decode.
 // No real photographs and no files are opened for writing.
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -68,12 +69,64 @@ inline void RunConcurrentGetFrame(IWICImagingFactory* factory) {
         Check(hr,"concurrent fresh GetFrame/dimensions/pixel format");
     printf("WIC_HEIF_CONCURRENT_GETFRAME_HANDLE_REUSE_PASS workers=4 calls=128\n");
 }
+// Same-context, alternating A/B microbenchmark of the *native* work that
+// the new GetFrame cache avoids. This is NOT an end-to-end Photos benchmark.
+// No WIC diagnostic I/O is involved in these two pure libheif paths.
+// Report medians only; never fail CI on speed measurements.
+inline void RunNativeHandleAB() {
+    heif::Context context;
+    context.read_from_file("samples\\fixture-irot3-exif6-noaux.heic");
+    const auto ids=context.get_list_of_top_level_image_IDs();
+    if(ids.size()!=2)throw std::runtime_error("Native A/B fixture frame count");
+    const heif_item_id id=ids[0];
+    const heif::ImageHandle shared=context.get_image_handle(id);
+    if(shared.empty())throw std::runtime_error("Native A/B handle missing");
+    constexpr int rounds=6, repetitions=3000;
+    std::vector<double> uncached, reused;
+    long long guardA=0,guardB=0;
+    LARGE_INTEGER frequency{};
+    if(!QueryPerformanceFrequency(&frequency) || frequency.QuadPart<=0)
+        throw std::runtime_error("Native A/B QPC unavailable");
+    const auto measure=[&](bool useCache,long long& checksum)->double {
+        LARGE_INTEGER start{},end{};
+        QueryPerformanceCounter(&start);
+        for(int i=0;i<repetitions;i++){
+            const heif::ImageHandle frame=useCache
+                ?shared:context.get_image_handle(id);
+            if(frame.empty())throw std::runtime_error("Native A/B empty handle");
+            checksum+=frame.get_width()+frame.get_height();
+        }
+        QueryPerformanceCounter(&end);
+        return 1000.0*double(end.QuadPart-start.QuadPart)/
+                      double(frequency.QuadPart);
+    };
+    for(int round=0;round<rounds;round++){
+        if((round&1)==0){
+            uncached.push_back(measure(false,guardA));
+            reused.push_back(measure(true,guardB));
+        }else{
+            reused.push_back(measure(true,guardB));
+            uncached.push_back(measure(false,guardA));
+        }
+    }
+    if(guardA!=guardB||guardA==0)
+        throw std::runtime_error("Native A/B handle geometry mismatch");
+    std::sort(uncached.begin(),uncached.end());
+    std::sort(reused.begin(),reused.end());
+    const double a=(uncached[rounds/2-1]+uncached[rounds/2])/2.0;
+    const double b=(reused[rounds/2-1]+reused[rounds/2])/2.0;
+    printf("WIC_HEIF_NATIVE_HANDLE_AB same_context=1 image_calls=%d "
+           "rounds=%d uncached_median_ms=%.5f shared_median_ms=%.5f "
+           "checksum_equal=1 no_photos_speed_claim=1\n",
+           repetitions,rounds,a,b);
+}
 inline void RunInMta() {
     Check(CoInitializeEx(nullptr,COINIT_MULTITHREADED),"init MTA coordinator");
     try {
         CComPtr<IWICImagingFactory> factory;
         Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
              CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"create factory");
+        RunNativeHandleAB();
         RunConcurrentGetFrame(factory);
         CComPtr<IWICBitmapDecoder> decoder;
         Check(factory->CreateDecoderFromFilename(
