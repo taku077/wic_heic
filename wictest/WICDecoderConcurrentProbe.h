@@ -66,7 +66,7 @@ inline void RunConcurrentGetFrame(IWICImagingFactory* factory) {
     for(auto& thread:threads)thread.join();
     for(auto hr:outcomes)
         Check(hr,"concurrent fresh GetFrame/dimensions/pixel format");
-    printf("WIC_HEIF_CONCURRENT_GETFRAME_HANDLE_REUSE_PASS workers=4 calls=128\\n");
+    printf("WIC_HEIF_CONCURRENT_GETFRAME_HANDLE_REUSE_PASS workers=4 calls=128\n");
 }
 inline void RunInMta() {
     Check(CoInitializeEx(nullptr,COINIT_MULTITHREADED),"init MTA coordinator");
