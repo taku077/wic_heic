@@ -217,3 +217,14 @@ Windows Actions **[#40456741590](https://github.com/taku077/wic_heic/actions/run
 **開発判断:** 競合レジストリの安易な優先順位変更／Windows標準デコーダーの無効化は現時点で採用しない。登録値を動かすだけでは約140msの遅延が改善せず、重要なフォールバック経路を失うおそれがある。自作WICの初回HEVC復号と、PhotosのUI非同期処理、デコーダー作成頻度の最適化を優先。Microsoftの仕様上、WICの自動探索経路をPhotosアプリ側から強制変更できると想定しない。安全な成果が見込めたときだけMSIを提示。
 
 出典：Microsoft公式WIC仲裁 https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks ；Windows `reg`/バックアップ・復元 https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/reg ; https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/reg-export
+
+## 2026-10-27：繰り返し GetFrame のネイティブHEIFハンドル再取得を抑制（性能効果未認定）
+
+- 実装前の `CHeicBitmapDecoder::GetFrame` は、`Initialize` が確定させた同一top-level image IDについても、毎回 `heif::Context::get_image_handle(id)` を呼び、新しいネイティブ画像ハンドルを作っていた。
+- 現行変更では `m_TopLevelHandles` に**IDごとの小さな `heif::ImageHandle` 共有参照**を遅延保持。二度目以降の同一 `GetFrame(index)` はコピーで再利用する。先に全補助画像を作る変更はせず、画像のRGB全画素もデコーダー側には保持しない。COMフレームの寿命とフレーム内の `m_Decoded` を維持する。
+- 複数スレッドの初回アクセスは `m_TopLevelHandleMutex` で保護。Photos無再圧縮回転候補の一度だけの公開も `m_OfferedRotationSource.exchange(true)` で原子的にし、従来の読み書き競合を防ぐ。
+- 対応する公開人工HEICテスト：既存の**2トップレベル画像を300回列挙しRGB照合**する `WICDecoderFrameEnumerationProbe` と、`WICDecoderConcurrentProbe` に新設した**同一MTAの4ワーカー×32回、同じデコーダーから新しいフレームを同時取得・寸法・画素形式検証**。公開画像以外に触れず、レジストリ変更もない。
+- ソース変更コミット：`75bc5342b3277ecf1f25d6200be68fe390f60333`、`3485c2a67c57e72e7cf8127a6e7c9136a4bde5c9`。テスト追加：`0ddb0f5626093bd78d8952e2100fbe9eb3322fb1`、表示修正：`3e0a80115626648c842dcaeff56acae42bd251a2`。
+- **未証明**：Windows Actions の実行結果と、実機Windows10の改善効果、初回全画素取得10～20％短縮、フォトの6～7秒画像消失の解消。共有ハンドルは**同一デコーダー内の繰り返しGetFrame**に限って効き、WICによる新規デコーダーの探索約140msを短縮するものではない。CIに合格したとしても、単独MSIは配布しない。
+
+外部実装照合：libheifのC++ `ImageHandle` はshared_ptrで保持（https://sources.debian.org/src/libheif/1.3.2-2~deb10u1/libheif/heif_cxx.h）。libvipsのHEIFローダも同一ページを再選択し続けるコストを避ける（https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c）。WIC MTAではスレッド同期が要求される（https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks）。
