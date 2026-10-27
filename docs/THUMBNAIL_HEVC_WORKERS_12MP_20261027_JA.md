@@ -57,3 +57,25 @@ WicHeic 1.1.28の既存Photos編集・回転保存とWIC登録を維持するた
 - libheifのタイル並列とコーデック並列は別レイヤー — https://docs.rs/libheif-sys/latest/libheif_sys/fn.heif_context_set_max_decoding_threads.html
 - libvips HEIF loader の埋込サムネイル切り替え・寸法検証 — https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c
 - Microsoft WIC codec lifetime／多数画像同時作成時の制約 — https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks
+
+
+## 2026-10-28：適応型ポリシー・ビット深度除外試験
+
+実験ブランチに`wic_heic/HeicThumbnailWorkerPolicy.h`を追加。固定4ワーカーを製品用に無条件採用するのではなく、**6,000,000画素以上、luma/chroma両方8bit、アルファなし、論理CPU数と並行実行数**に基づく選択を試作した。未知ビット深度・10/12bit・アルファ付き・小画像は**元のlibheif経路**（コーデックスレッド数を明示指定しない）へ戻す。4論理CPU以上で単独復号中は4、既に別の対象画像が1枚復号中なら2、2件以上なら0（元経路）とする。論理CPUが2なら単独復号で2に制限。
+
+ソースでは`WIC_HEIC_THUMB_WORKERS_LAB`と`GITHUB_ACTIONS=true`かつラボ変数`WIC_HEIC_THUMB_LAB_WORKERS=a`が揃ったときだけ動作。共有`atomic`のアクティブデコード数はRAIIで例外時にも減らす。**生産1.1.28は変えず、この分岐のRelease x64だけテスト。** この制御は同一DLL／プロセス内のみで、異なるプロセスの復号競合まで管理できるわけではない。
+
+[CI #40529006247](https://github.com/taku077/wic_heic/actions/runs/40529006247) **SUCCESS**。同一Windows Server 2022、同一4032×3024人工8bit HEIC、5回中央値・サムネイル256×192 Fant。すべて元画像RGBと縮小後RGBの厳密一致：
+
+| 方式 | 初回サムネイル生成中央値 | 標準比 |
+|---|---:|---:|
+| 標準 | 1472.420ms | 基準 |
+| 2スレッド固定 | 887.905ms | 約39.7%削減 |
+| 4スレッド固定 | 641.188ms | 約56.5%削減 |
+| 適応型auto | 642.065ms | 約56.4%削減 |
+
+実行時`THUMB_WORKERS_POLICY_DECISION requested=a selected=4 width=4032 height=3024 luma_bits=8 chroma_bits=8 alpha=0 concurrent_before=0`が**5/5回**。適応型の選択が単なる理論値ではなく実際に動作した。合計20回の8bit 12MPサムネイル画素一致に加え、**14個の純粋ポリシー判定ケースPASS**（小画像、CPU2/4、並行実行数、6MP境界、10/12bit、アルファ、ビット深度未知）。別の公開人工`1080×1920`の`fixture-irot3-exif6-noaux.heic`は実際に**luma/chroma 10bit**と報告され、`requested=a selected=0`で元方式に戻り、標準側の同じ256px画素と一致。
+
+**未確認**：本ユーザー実機のCPUでの相対速度、Windows10 Explorer初回表示、キャッシュミスの多数枚数処理、異なるHEIC bitstream、8bit+alpha/10/12bitの大きな実写真全体、フォトの回転・保存UI。このCI数値を完成版の高速化と称しない。今後、ラボ専用に異なるCOMフレーム2枚の同時サムネイル復号で競合を確認する。ただし、新しいMSIのインストールはまだ依頼しない。
+
+研究資料：libde265のWPP/tiles並列 https://github.com/strukturag/libde265 、libheifの独立タイル並列とcodec内部並列 https://docs.rs/libheif-sys/latest/libheif_sys/fn.heif_context_set_max_decoding_threads.html 、ビット深度・alphaの事前判定 https://codegraph.jelmer.uk/libheif/1.23.1-1/libheif/api/libheif/heif_image_handle.h 。
