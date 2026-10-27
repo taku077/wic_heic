@@ -14,6 +14,7 @@ on:
       - fix/encoder-geometry-failsafe
       - fix/photos-118-selfwic-incremental
       - experiment/thumb-hevc-workers-1128-isolated
+      - candidate/thumb-adaptive-1129-win10-pilot
   workflow_dispatch:
 
 permissions:
@@ -332,6 +333,8 @@ jobs:
                 'THUMB_CONCURRENT_AUTO_RGB_PARITY_PASS',
                 'THUMB_MIXED_PARALLEL_RGB_PARITY_PASS',
                 'THUMB_MIXED_BATCH_LATENCY',
+                'THUMB_PILOT_PRODUCTION_AUTO_SELECTED workers=4 width=4032 height=3024 alpha=0 luma_bits=8',
+                'THUMB_PILOT_NOENV_RGB_PARITY_PASS',
                 'THUMB_WORKERS_POLICY_DECISION requested=a selected=0 width=4032 height=3024 luma_bits=8 chroma_bits=8 alpha=1',
                 'THUMB_WORKERS_POLICY_DECISION requested=a selected=0 width=1080 height=1920 luma_bits=10 chroma_bits=10 alpha=0'
               )) {
@@ -707,7 +710,7 @@ jobs:
           Get-FileHash 'WicHeic-HEIC-x64.msi' -Algorithm SHA256 |
             Format-List
 
-      - name: Confirm candidate MSI version is 1.1.28
+      - name: Confirm candidate MSI version is 1.1.29
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -725,7 +728,7 @@ jobs:
           }
           $version=ReadMsiProperty 'ProductVersion'
           $productName=ReadMsiProperty 'ProductName'
-          if($version -ne '1.1.28' -or $productName -ne 'WicHeic Repair Test') {
+          if($version -ne '1.1.29' -or $productName -ne 'WicHeic Repair Test') {
             throw "Candidate has unexpected identity: $productName $version"
           }
           Write-Host "MSI_RELEASE_VERSION_PASS version=$version"
@@ -783,7 +786,7 @@ jobs:
           if(-not $?) { throw 'Read-only WIC restoration comparison failed' }
 
       # Upload PS5.1 diagnostic only after deliberate diagnostics(release): commit.
-      # No DLL/MSI release and no changes to existing installed 1.1.28.
+      # No DLL/MSI release and no changes to existing installed 1.1.29.
       - name: Upload no-install Photos UI timing kit
         if: ${{ github.ref == 'refs/heads/fix/photos-118-selfwic-incremental' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'diagnostics(release):') }}
         uses: actions/upload-artifact@v4
@@ -804,7 +807,7 @@ jobs:
       # release(candidate): commit triggers ONE candidate only AFTER all
       # WIC, MSI install/uninstall and COM restoration checks passed.
       - name: Prepare MSI candidate checksum and provenance
-        if: ${{ github.ref == 'refs/heads/fix/photos-118-selfwic-incremental' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
+        if: ${{ github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -815,15 +818,15 @@ jobs:
             "SHA256: $sha"
             "Commit: $env:GITHUB_SHA"
             "Actions run: $env:GITHUB_RUN_ID"
-            "Status: Win10 Photos UI UNVERIFIED; do not install on user PC until rollback and approval"
+            "Status: Win10 Photos UI UNVERIFIED; pilot auto HEVC for opaque 8bit >=6MP; keep v1.1.28 MSI for rollback"
           ) | Set-Content -LiteralPath 'MSI_SHA256_AND_PROVENANCE.txt' -Encoding UTF8
           Get-Content -LiteralPath 'MSI_SHA256_AND_PROVENANCE.txt'
 
       - name: Upload one MSI candidate (Win10 Photos UNVERIFIED)
-        if: ${{ github.ref == 'refs/heads/fix/photos-118-selfwic-incremental' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
+        if: ${{ github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
         uses: actions/upload-artifact@v4
         with:
-          name: WicHeic-1.1.28-x64-Win10-Photos-UNVERIFIED-RC
+          name: WicHeic-1.1.29-x64-Win10-Photos-UNVERIFIED-RC
           path: |
             WicHeic-HEIC-x64.msi
             MSI_SHA256_AND_PROVENANCE.txt
