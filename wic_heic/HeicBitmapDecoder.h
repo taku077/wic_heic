@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <mutex>
 
 class CHeicBitmapDecoder : public IWICBitmapDecoder
 {
@@ -10,7 +11,13 @@ private:
     // HEIF context is immutable after Initialize; reuse stable top-level
     // ids instead of allocating/enumerating the same list on every GetFrame.
     std::vector<heif_item_id> m_TopLevelIds;
-	bool m_OfferedRotationSource=false;
+    // Only small libheif image-handle references are retained. The decoded
+    // RGB planes remain owned by short-lived WIC frame objects, never cached
+    // here. Lazy initialization avoids eagerly parsing auxiliary frames.
+    std::vector<heif::ImageHandle> m_TopLevelHandles;
+    std::mutex m_TopLevelHandleMutex;
+    // GetFrame may run concurrently in Photos' MTA; the bridge is offered once.
+    std::atomic<bool> m_OfferedRotationSource{false};
 
 public:
 	CHeicBitmapDecoder();
