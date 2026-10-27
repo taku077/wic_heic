@@ -47,9 +47,13 @@ inline void Run() {
     const size_t planeBytes=size_t(stride)*height;
     const std::array<int,3> modes{{0,2,4}};
     std::array<std::vector<double>,3> readings;
-    std::vector<BYTE> reference,output(planeBytes);
-    // Interleaved within one runner: no between-job CPU scheduling claims.
-    // Each iteration constructs a fresh frame and triggers cold CopyPixels.
+    constexpr UINT thumbW=256,thumbH=192;
+    constexpr UINT thumbStride=thumbW*channels;
+    std::vector<BYTE> referenceFull,outputFull(planeBytes);
+    std::vector<BYTE> referenceThumb,outputThumb(size_t(thumbStride)*thumbH);
+    // Interleaved same-run measurements, freshly constructed WIC frames.
+    // Trigger cold HEVC decode through an actual 256px Fant scaler and
+    // verify BOTH its pixels and the untouched original full RGB raster.
     for(int round=0;round<5;round++) {
         for(int slot=0;slot<3;slot++) {
             const int index=(round+slot)%3;
@@ -79,16 +83,28 @@ inline void Run() {
                 throw std::runtime_error("Unexpected 12MP pixel type");
             LARGE_INTEGER start{},finish{};
             QueryPerformanceCounter(&start);
-            Check(frame->CopyPixels(nullptr,stride,UINT(planeBytes),output.data()),
-                "cold CopyPixels");
+            CComPtr<IWICBitmapScaler> scaler;
+            Check(factory->CreateBitmapScaler(&scaler),"create scaler");
+            Check(scaler->Initialize(frame,thumbW,thumbH,
+                  WICBitmapInterpolationModeFant),"256px Fant scaler");
+            Check(scaler->CopyPixels(nullptr,thumbStride,
+                  UINT(outputThumb.size()),outputThumb.data()),"first thumbnail pixels");
             QueryPerformanceCounter(&finish);
-            if(reference.empty())reference=output;
-            else if(reference!=output)
-                throw std::runtime_error("THUMB_WORKERS_AB_RGB_MISMATCH");
+            if(referenceThumb.empty())referenceThumb=outputThumb;
+            else if(referenceThumb!=outputThumb)
+                throw std::runtime_error("THUMB_WORKERS_AB_THUMB_RGB_MISMATCH");
+            // Decode already happened through scaler; full-sized readback is
+            // now warm and is used for exact source RGB parity, NOT timing.
+            Check(frame->CopyPixels(nullptr,stride,UINT(planeBytes),outputFull.data()),
+                "full RGB readback after thumbnail");
+            if(referenceFull.empty())referenceFull=outputFull;
+            else if(referenceFull!=outputFull)
+                throw std::runtime_error("THUMB_WORKERS_AB_FULL_RGB_MISMATCH");
             const double ms=Ms(start,finish,freq);
             readings[index].push_back(ms);
-            printf("THUMB_WORKERS_AB_SAMPLE workers=%d pass=%d pixels=%ux%u "
-                   "full_decode_and_copy_ms=%.3f exact_rgb=1\n",
+            printf("THUMB_WORKERS_AB_SAMPLE workers=%d pass=%d source=%ux%u "
+                   "thumb=256x192 first_thumbnail_ms=%.3f "
+                   "exact_full_rgb=1 exact_thumbnail_rgb=1\n",
                    workers,round,w,h,ms);
         }
     }
@@ -98,10 +114,10 @@ inline void Run() {
         if(v.size()!=5)throw std::runtime_error("Incomplete worker samples");
         std::sort(v.begin(),v.end());
         printf("THUMB_WORKERS_AB_MEDIAN workers=%d samples=5 "
-               "full_decode_and_copy_ms=%.3f no_explorer_claim=1\n",
+               "first_thumbnail_256_ms=%.3f no_explorer_claim=1\n",
                modes[index],v[2]);
     }
-    printf("THUMB_WORKERS_AB_PIXEL_PARITY_PASS modes=0,2,4 samples=15 "
+    printf("THUMB_WORKERS_AB_PIXEL_PARITY_PASS source=4032x3024 thumb=256x192 modes=0,2,4 samples=15 "
            "fixture=artificial_12MP no_msi_release=1\n");
 }
 }
