@@ -560,12 +560,16 @@ jobs:
           $ErrorActionPreference='Stop'
           if($PSVersionTable.PSVersion.Major -ne 5){throw 'Windows PowerShell 5.1 is required'}
           $root=(Resolve-Path -LiteralPath 'diagnostics/photos_trace').Path
-          & (Join-Path $root 'Photos_UI_Timeline_Capture.ps1') -DurationSeconds 5 -IntervalMs 250
+          & (Join-Path $root 'Photos_UI_Timeline_Capture.ps1') -DurationSeconds 5 -IntervalMs 250 -CiSimulateF9
           $record=Get-ChildItem -LiteralPath $root -Filter 'Photos_UI_Timeline_*.csv' -File |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if(-not $record){throw 'UI capture produced no file'}
           $rows=@(Import-Csv -LiteralPath $record.FullName)
           if($rows.Count -lt 5){throw 'UI capture produced too few samples'}
+          if(@($rows | Where-Object { $_.event -eq 'MARK_F9' }).Count -lt 1) {
+            throw 'Queued F9 WM_HOTKEY marker was lost during foreground-independent capture'
+          }
+          Write-Host 'PHOTOS_GLOBAL_F9_HOTKEY_QUEUE_CI_PASS'
           $csv=Join-Path $root 'synthetic_timeline_ci.csv'
           $trace=Join-Path $root 'synthetic_wic_ci.txt'
           @(
