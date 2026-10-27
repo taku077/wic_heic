@@ -14,7 +14,9 @@ struct Stream final : public IStream {
     std::atomic<ULONG> references{1};
     CComPtr<IStream> source;
     const bool legacy;
-    ULONG reads=0,extraSeeks=0;
+    ULONG reads=0,extraSeeks=0,seeks=0,stats=0;
+    LONGLONG readTicks=0,seekTicks=0,statTicks=0,extraSeekTicks=0;
+    static LARGE_INTEGER Now(){LARGE_INTEGER t{}; QueryPerformanceCounter(&t);return t;}
     explicit Stream(IStream* s,bool old) : source(s),legacy(old) {}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out) override {
         if(!out)return E_POINTER;
@@ -32,13 +34,19 @@ struct Stream final : public IStream {
     }
     HRESULT STDMETHODCALLTYPE Read(void* p,ULONG n,ULONG* actual) override {
         ULONG copied=0;
+        const auto r0=Now();
         const HRESULT hr=source->Read(p,n,&copied);
+        const auto r1=Now();
+        readTicks+=r1.QuadPart-r0.QuadPart;
         if(actual)*actual=copied;
         ++reads;
         if(legacy && hr==S_OK){
             LARGE_INTEGER zero{};ULARGE_INTEGER pos{};
             ++extraSeeks;
+            const auto t0=Now();
             const HRESULT seeking=source->Seek(zero,STREAM_SEEK_CUR,&pos);
+            const auto t1=Now();
+            extraSeekTicks+=t1.QuadPart-t0.QuadPart;
             if(FAILED(seeking))return seeking;
         }
         return hr;
@@ -48,7 +56,10 @@ struct Stream final : public IStream {
     }
     HRESULT STDMETHODCALLTYPE Seek(LARGE_INTEGER n,DWORD origin,
                                     ULARGE_INTEGER* pos) override {
-        return source->Seek(n,origin,pos);
+        const auto a=Now();
+        const HRESULT hr=source->Seek(n,origin,pos);
+        const auto b=Now();
+        ++seeks;seekTicks+=b.QuadPart-a.QuadPart;return hr;
     }
     HRESULT STDMETHODCALLTYPE SetSize(ULARGE_INTEGER n) override {
         return source->SetSize(n);
@@ -70,7 +81,10 @@ struct Stream final : public IStream {
         return source->UnlockRegion(offset,cb,type);
     }
     HRESULT STDMETHODCALLTYPE Stat(STATSTG* st,DWORD flags) override {
-        return source->Stat(st,flags);
+        const auto a=Now();
+        const HRESULT hr=source->Stat(st,flags);
+        const auto b=Now();
+        ++stats;statTicks+=b.QuadPart-a.QuadPart;return hr;
     }
     HRESULT STDMETHODCALLTYPE Clone(IStream** dest) override {
         if(!dest)return E_POINTER;
@@ -102,7 +116,8 @@ inline double Ms(LARGE_INTEGER a,LARGE_INTEGER b) {
 }
 struct One {
     double openMs=0,frameMs=0,firstMs=0;
-    ULONG reads=0,extraSeeks=0;
+    ULONG reads=0,extraSeeks=0,seeks=0;
+    double readMs=0,seekMs=0,statMs=0,extraSeekMs=0;
     std::vector<BYTE> rgb;
 };
 inline One Trial(IWICImagingFactory* factory,bool legacy) {
@@ -142,6 +157,15 @@ inline One Trial(IWICImagingFactory* factory,bool legacy) {
     o.firstMs=Ms(t2,t3);
     o.reads=counter->reads;
     o.extraSeeks=counter->extraSeeks;
+    o.seeks=counter->seeks;
+    LARGE_INTEGER freq{};
+    if(!QueryPerformanceFrequency(&freq)||freq.QuadPart<=0)
+        throw std::runtime_error("QPC frequency unavailable");
+    const double factor=1000.0/double(freq.QuadPart);
+    o.readMs=counter->readTicks*factor;
+    o.seekMs=counter->seekTicks*factor;
+    o.statMs=counter->statTicks*factor;
+    o.extraSeekMs=counter->extraSeekTicks*factor;
     if(legacy && o.extraSeeks==0)
         throw std::runtime_error("Legacy seek emulation did not run");
     if(!legacy && o.extraSeeks)
@@ -157,8 +181,8 @@ inline void Run() {
     Need(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),
         "factory for synthetic A/B");
-    std::vector<double> totals[2],openings[2],decodes[2];
-    ULONG legacyReads=0,legacyExtra=0,optimizedReads=0;
+    std::vector<double> totals[2],openings[2],decodes[2],readCosts[2],seekCosts[2],statCosts[2],extraCosts[2];
+    ULONG legacyReads=0,legacyExtra=0,optimizedReads=0,optimizedSeeks=0;
     // Interleave BAAB to average warmed cache/order and host noise.
     for(int round=0;round<12;round++){
         const bool legacy=(round%4==0 || round%4==3);
@@ -174,8 +198,12 @@ inline void Run() {
         totals[i].push_back(o.openMs+o.frameMs+o.firstMs);
         openings[i].push_back(o.openMs);
         decodes[i].push_back(o.firstMs);
+        readCosts[i].push_back(o.readMs);
+        seekCosts[i].push_back(o.seekMs);
+        statCosts[i].push_back(o.statMs);
+        extraCosts[i].push_back(o.extraSeekMs);
         if(legacy){legacyReads+=o.reads;legacyExtra+=o.extraSeeks;}
-        else optimizedReads+=o.reads;
+        else {optimizedReads+=o.reads;optimizedSeeks+=o.seeks;}
     }
     if(totals[0].size()!=6 || totals[1].size()!=6 ||
        legacyExtra==0 || optimizedReads==0)
@@ -192,6 +220,15 @@ inline void Run() {
            Median(openings[1]),Median(openings[0]),
            Median(decodes[1]),Median(decodes[0]),
            Median(totals[1]),Median(totals[0]));
+    printf("WIC_SAME_HOST_STREAM_CALLBACK_COST "
+           "optimized_reads=%lu optimized_seeks=%lu "
+           "optimized_read_median_ms=%.3f optimized_seek_median_ms=%.3f "
+           "optimized_stat_median_ms=%.3f "
+           "legacy_extra_seek_median_ms=%.3f\n",
+           static_cast<unsigned long>(optimizedReads),
+           static_cast<unsigned long>(optimizedSeeks),
+           Median(readCosts[0]),Median(seekCosts[0]),
+           Median(statCosts[0]),Median(extraCosts[1]));
     printf("WIC_SAME_HOST_STREAM_AB_PASS comparable_image=1\n");
 }
 } // namespace WICStreamSameHostABProbe
