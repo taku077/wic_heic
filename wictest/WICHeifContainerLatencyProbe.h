@@ -83,6 +83,42 @@ inline void Run() {
                "open_ms=%.3f samples=5 codec=public-checked-in-only\n",
                names[i],frameCounts[i],Median(opens[i]));
     }
+    // Same process, same checked-in HEIC, fresh streams. Distinguish
+    // WIC's automatic decoder discovery/probing from the codec's own
+    // CoCreateInstance + Initialize HEIF parser cost. This is read-only
+    // and does NOT change COM registration or the Photos call path.
+    std::vector<double> autodetect,direct;
+    for(int round=0;round<12;round++){
+        const bool viaFactory=(round%4==0||round%4==3);
+        CComPtr<IWICStream> stream;
+        Need(factory->CreateStream(&stream),"autodetect fixture stream");
+        Need(stream->InitializeFromFilename(paths[0],GENERIC_READ),
+            "read-only synthetic fixture stream");
+        const auto t0=Tick();
+        CComPtr<IWICBitmapDecoder> dec;
+        if(viaFactory){
+            Need(factory->CreateDecoderFromStream(stream,nullptr,
+                 WICDecodeMetadataCacheOnDemand,&dec),
+                 "WIC automatic decoder selection");
+        } else {
+            Need(CoCreateInstance(CLSID_HEICDecoder,nullptr,
+                 CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dec)),
+                 "direct registered HEIC codec COM activation");
+            Need(dec->Initialize(stream,WICDecodeMetadataCacheOnDemand),
+                 "direct codec container Initialize");
+        }
+        const auto t1=Tick();
+        UINT frames=0;
+        Need(dec->GetFrameCount(&frames),"A/B frame count");
+        if(frames!=2)throw std::runtime_error("A/B lost secondary frame");
+        (viaFactory?autodetect:direct).push_back(Millis(t0,t1));
+    }
+    if(autodetect.size()!=6||direct.size()!=6)
+        throw std::runtime_error("A/B count incorrect");
+    printf("WIC_HEIF_DECODER_SELECTION_AB public_fixture=two_frame "
+           "samples_per_mode=6 automatic_ms=%.3f direct_codec_ms=%.3f "
+           "pixels_not_decoded=1 same_host=1\n",
+           Median(autodetect),Median(direct));
     printf("WIC_HEIF_SIX_SAMPLES_CONTAINER_LATENCY_PASS\n");
 }
 } // namespace WICHeifContainerLatencyProbe
