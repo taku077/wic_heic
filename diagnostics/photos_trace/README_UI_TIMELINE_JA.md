@@ -37,3 +37,11 @@ GitHub内の`diagnostics/photos_trace`を**全ファイルまとめて**Cドラ�
 - Win32 foreground/window bounds: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect
 - Add-TypeネイティブAPI: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/add-type?view=powershell-5.1
 - 既存WIC診断仕様: README_JA.md
+
+## 2026-10-27 検証と配布上の位置付け
+
+- 新規キャプチャスクリプトと照合スクリプトは、Windows Server 2022上の**Windows PowerShell 5.1**で起動・終了、CSV数値記録、人工WICイベントとの時刻相関を検証済み。独立CIの記録は [#40484727909](https://github.com/taku077/wic_heic/actions/runs/40484727909)。
+- 一括起動`Photos_UI_Timeline_Run.ps1`の短縮5秒試験では、既存WICログ有効化と停止・HKCU`TraceFile`が残らないことを検査。GitHub Actions[#40484774291](https://github.com/taku077/wic_heic/actions/runs/40484774291)。
+- **Windows10標準フォト実機での使用・PNG/HEIC表示崩れ時の時刻相関は未検証。** CIの画面は標準フォトそのものではない。
+- このキットはMSIを含まない。現行インストール済みのWicHeic 1.1.28は維持する。
+- ファイル一式ZIPは、専用`diagnostics(release):`コミットで全CI・MSI安全検証を通過した場合だけGitHub Actionsアーティファクトにアップロードする。誤って再ビルドした1.1.28のMSIを配布することはない。
