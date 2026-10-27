@@ -243,6 +243,19 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::CopyPixels(
     const uint8_t* plane=m_PlaneInterleaved+
         static_cast<size_t>(rc.Y)*m_Stride+
         static_cast<size_t>(rc.X)*static_cast<size_t>(bpp);
+    // Direct full-width contiguous RGB planes can be copied in one bulk
+    // memcpy rather than thousands of tiny row copies. Only use this route
+    // when both source and destination have *exactly* the visible row stride
+    // and the rectangle spans the full width, so no padding or neighboring
+    // pixels can be copied accidentally. Crops/padded strides use the
+    // existing well-tested row-by-row path.
+    if(rc.X==0 && rc.Width==imageW &&
+       static_cast<uint64_t>(m_Stride)==rowBytes &&
+       static_cast<uint64_t>(cbStride)==rowBytes){
+        memcpy(pbBuffer,plane,static_cast<size_t>(rowBytes)*
+                               static_cast<size_t>(rc.Height));
+        return S_OK;
+    }
     BYTE* out=pbBuffer;
     for(int y=0;y<rc.Height;y++){
         memcpy(out,plane,static_cast<size_t>(rowBytes));
