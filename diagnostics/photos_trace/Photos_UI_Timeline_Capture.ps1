@@ -32,8 +32,8 @@ public static class PhotosUiTimelineWin32 {
 '@ -ErrorAction Stop
 }
 $out=Join-Path $root ('Photos_UI_Timeline_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+[guid]::NewGuid().ToString('N').Substring(0,8)+'.csv')
-$fs=New-Object System.IO.FileStream($out,[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,[System.IO.FileShare]::Read)
-$writer=New-Object System.IO.StreamWriter($fs,(New-Object System.Text.UTF8Encoding($false)))
+$fs=[System.IO.File]::Open($out,[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,[System.IO.FileShare]::Read)
+$writer=New-Object System.IO.StreamWriter($fs,([System.Text.UTF8Encoding]::new($false)))
 $writer.AutoFlush=$true
 try {
     $writer.WriteLine('utc_filetime,tick,event,foreground_pid,window_w,window_h,client_w,client_h,process_cpu_ms,working_set_kib')
