@@ -211,7 +211,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIC_HEIC_THUMB_WORKERS_LAB;X64;NDEBUG;_WINDOWS;_USRDLL;WIC_HEIC_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIC_HEIC_THUMB_ADAPTIVE_PILOT;WIC_HEIC_THUMB_WORKERS_LAB;X64;NDEBUG;_WINDOWS;_USRDLL;WIC_HEIC_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
