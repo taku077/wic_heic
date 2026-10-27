@@ -228,3 +228,38 @@ Windows Actions **[#40456741590](https://github.com/taku077/wic_heic/actions/run
 - **未証明**：Windows Actions の実行結果と、実機Windows10の改善効果、初回全画素取得10～20％短縮、フォトの6～7秒画像消失の解消。共有ハンドルは**同一デコーダー内の繰り返しGetFrame**に限って効き、WICによる新規デコーダーの探索約140msを短縮するものではない。CIに合格したとしても、単独MSIは配布しない。
 
 外部実装照合：libheifのC++ `ImageHandle` はshared_ptrで保持（https://sources.debian.org/src/libheif/1.3.2-2~deb10u1/libheif/heif_cxx.h）。libvipsのHEIFローダも同一ページを再選択し続けるコストを避ける（https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c）。WIC MTAではスレッド同期が要求される（https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks）。
+
+## 2026-10-27：Explorer初回サムネイル経路の優先調査（v0.4.0は参照資料、無条件移植禁止）
+
+### 出発点
+
+Windows10エクスプローラーのHEIC初回サムネイル生成がPNG/JPEGと比較してユーザー体感で10倍以上遅い。**10倍は体感であって客観的なフォルダ表示計測値ではない**。表示崩れの追究はいったん別課題とし、Windowsフォトの編集/回転保存動作を維持したままShell側に絞って改善する。
+
+- 研究版`candidate/fast-thumbnail-adaptive-v0.4.0`は**参考用**。私有WIC DLLと専用`IThumbnailProvider`を持ち、`wic_heic/HeicBitmapFrameDecode.cpp`では≥600万画素・8bit・アルファなしの条件でHEVC復号スレッドを2/4に適応。現行1.1.28はこの独立プロバイダーおよび適応型スレッド数指定を含まない。専用プロバイダーを**丸ごと取り込まない**。
+- 現行`wic_heic/dllmain.cpp`は`.heic`等にWindows標準のフォトサムネイルプロバイダー`{C7657C4A-9F68-40fa-A4DF-96BC08EB3551}`を登録。現行`GetThumbnail`はHEIFに埋め込みthumbnail itemが存在すれば返し、なければ`WINCODEC_ERR_CODECNOTHUMBNAIL`。Shellがどう呼ぶかは実機上で未確認。
+- v0.4.0の`wictest/isolated_shell/HeicTrialThumbnail.cpp`は`IThumbnailProvider::GetThumbnail`内で`GetFrame(0)`を選び拡大縮小するので、埋め込みサムネイルを必ず使う方式ではない。構造と制約を参考にするが、実装ごとの最適性は比較対象による。
+
+### 新しい同一CI内の人工画像比較
+
+コミット`d6d2dc9441287490be17d57c45556bb2ccd1cc52`で、既存の`wictest/WICFormatLatencyProbe.h`に読取専用`ProbeThumbnailRoute`を追加。既存`--perf-compare`を使い、`IWICBitmapDecoder::GetThumbnail`、`IWICBitmapFrameDecode::GetThumbnail`、フル画像fallback、初回1×1画素取得の順序と所要時間をログに記録。テストは通常のWIC登録と人工データだけを使用し、ユーザーの実画像／Shell登録／Windowsキャッシュを変更しない。
+
+Windows Actions [#40515816190](https://github.com/taku077/wic_heic/actions/runs/40515816190) **SUCCESS**、Release x64全回帰試験も成功：
+
+| 人工フォーマット | コンテナ・フレームの埋め込みthumb | WICデコーダー自動生成 | 初回1画素読込 |
+|---|---|---:|---:|
+| HEIC（1080×1920、固定人工fixture） | 両方`WINCODEC_ERR_CODECNOTHUMBNAIL`（0x88982f44）→FULL_FALLBACK | 141.210 ms | 48.106 ms |
+| PNG（人工HEICから同画素を生成） | 両方なし→FULL_FALLBACK | 0.123 ms | 0.083 ms |
+| JPEG（同可視画素から生成、非可逆） | 両方なし→FULL_FALLBACK | 0.126 ms | 0.069 ms |
+
+**注意：各形式1回の比較であり、141msは以前の同runnerのWIC自動選択約140msの報告と整合するが、実機のShellキャッシュ・プロセス間通信・画像群表示を測った値ではない**。PNG/JPEGの試料は同一プロセスで生成済みのため、ファイルキャッシュやフォーマットごとのデコーダー選択条件が異なり、そのまま加速倍率に変換できない。今回のHEIC人工fixtureには埋め込みthumbnailがないため、**ユーザー保有のHEICの埋め込みサムネイル比率は不明**。
+
+### 他社研究／規格資料との照合と次の採否
+
+1. Windowsは標準`IThumbnailProvider`からWIC codecを利用できる。独立ShellプロバイダーにはCOMの分離・優先登録の副作用があるため、既存1.1.28のShellExレジストリを上書きして試す方法は**避ける**：https://learn.microsoft.com/en-us/windows/win32/wic/-wic-integrationregentries
+2. WICのthumbnailが取れない場合、フル画像復号＋縮小になると重い：https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapframeencode
+3. libvipsはHEIF埋め込みサムネイルの寸法を確認してアップスケール不要な場合に利用し、選択したthumbnailがない場合に毎走査線で選択し直さない対策を持つ：https://github.com/libvips/libvips/blob/master/libvips/resample/thumbnail.c ／ https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c
+4. GDALはlibheifのembedded thumbnailをoverviewとして扱う例：https://gdal.org/en/stable/drivers/raster/heif.html
+5. zune-heicは独立HEVC decoder/SIMD・並列デコードにより特定環境でlibheif比1.3～2.7倍との公開ベンチマークを持つが、**Win10 Core i5 7世代、ICC/Exif/回転、フォト互換性で同等とは未確認**：https://docs.rs/zune-heic/latest/zune_heic/
+6. HEVCにおける画像内並列化と、フォルダ内画像同時処理は**異なる最適化**。v0.4.0の2/4スレッドと過去研究の約29.5%短縮は、1.1.28で実測達成した成果とは混同しない。libheifの画像タイル並列とcodec threadsも別設定：https://docs.rs/libheif-sys/latest/libheif_sys/fn.heif_context_set_max_decoding_threads.html
+
+**次の設計判断：** 追加MSIなしで、まず実機のExplorerが標準`IThumbnailProvider`をどう使用しているかの読み取り専用計測と、埋め込みthumbあり／なしの人工fixtureを作ってShell経路を比較する。並列codec threadsや独立Shellプロバイダーの最適化は、復号画素・回転・ICCなどを崩さない隔離A/Bで有益性が認定された場合だけ、現行WICへ安全に統合する。
