@@ -27,7 +27,7 @@ inline void Run() {
         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory));
     if(FAILED(hr))throw std::runtime_error("WIC factory failed");
     std::vector<double> times;
-    UINT custom=0,foreign=0,failures=0;
+    UINT custom=0,foreign=0,failures=0,unusable=0;
     const wchar_t* source=L"samples\\fixture-irot3-exif6-noaux.heic";
     for(int i=0;i<8;i++){
         auto t0=Tick();
@@ -51,20 +51,29 @@ inline void Run() {
         if(IsEqualGUID(id,CLSID_HEICDecoder))custom++;
         else foreign++;
         UINT count=0;
-        if(FAILED(decoder->GetFrameCount(&count)) || count==0)
-            throw std::runtime_error("Selected decoder cannot read fixture");
+        const HRESULT frameHr=decoder->GetFrameCount(&count);
+        if(FAILED(frameHr)||count==0){
+            // A native HEIF decoder without a HEVC extension may be selected
+            // but unable to decode. This is an experimental outcome, NOT a
+            // reason to leave its registration modified or abort rollback.
+            ++unusable;
+            printf("WIC_ARBITRATION_SELECTED_BUT_UNUSABLE sample=%d "
+                   "frame_hr=0x%08X frame_count=%u\n",
+                   i,static_cast<unsigned>(frameHr),count);
+        }
     }
     std::sort(times.begin(),times.end());
     if(!times.empty()){
         printf("WIC_ARBITRATION_MEASURE samples=%u median_ms=%.3f "
                "selected_custom=%u selected_other=%u failures=%u "
-               "registry_writes=0 fixture=public_only\n",
+               "unusable=%u registry_writes=0 fixture=public_only\n",
                static_cast<unsigned>(times.size()),times[times.size()/2],
-               custom,foreign,failures);
+               custom,foreign,failures,unusable);
     }else{
         printf("WIC_ARBITRATION_MEASURE samples=0 "
                "selected_custom=0 selected_other=0 failures=%u "
-               "registry_writes=0 fixture=public_only\n",failures);
+               "unusable=%u registry_writes=0 fixture=public_only\n",
+               failures,unusable);
     }
     // Do NOT force a test failure if the runner's temporarily preferred
     // competing codec refuses the synthetic multi-frame HEIF. Report it.
