@@ -30,7 +30,11 @@ inline std::vector<BYTE> Decode(const Fixture& input,
                                std::atomic<int>* ready,
                                std::atomic<bool>* release) {
     const HRESULT apartment=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
-    if(FAILED(apartment))throw std::runtime_error("Mixed MTA COM init");
+    if(FAILED(apartment)){
+        printf("THUMB_MIXED_COM_INIT_FAIL hr=0x%08X\n",
+               static_cast<unsigned>(apartment));
+        throw std::runtime_error("Mixed MTA COM init");
+    }
     // Scope guard is declared before COM pointers so all COM releases
     // happen BEFORE CoUninitialize, including return and exceptions.
     struct CoExit { ~CoExit(){CoUninitialize();} } apartmentGuard;
