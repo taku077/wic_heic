@@ -184,6 +184,11 @@ jobs:
                 try {
                   & $testExe --perf-compare
                   if ($LASTEXITCODE -ne 0) { throw "HEIC/PNG/JPEG WIC stage benchmark failed: $LASTEXITCODE" }
+                  # Same Windows runner, same codec binary, same artificial
+                  # HEIC. IStream proxy alternates legacy Seek(CUR,0) after
+                  # every Read versus direct byte-count bookkeeping.
+                  & $testExe --stream-ab
+                  if ($LASTEXITCODE -ne 0) { throw "Synthetic HEIC same-host IStream A/B failed: $LASTEXITCODE" }
                 } finally {
                   $env:WIC_HEIC_TRACE_FILE=$previousTrace
                 }
