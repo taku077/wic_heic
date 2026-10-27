@@ -110,7 +110,7 @@ inline void RunInMta() {
         CComPtr<IWICImagingFactory> factory;
         Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
              CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"create factory");
-        RunGetFrameLatency(factory);
+        // Keep high-volume timing OUT of the traced correctness suite.
         RunConcurrentGetFrame(factory);
         CComPtr<IWICBitmapDecoder> decoder;
         Check(factory->CreateDecoderFromFilename(
@@ -186,6 +186,33 @@ inline void Run() {
     std::thread worker([&]{
         try {RunInMta();}
         catch(...) {failure=std::current_exception();}
+    });
+    worker.join();
+    if(failure)std::rethrow_exception(failure);
+}
+inline void RunPerf() {
+    // Standalone only: invoke with --getframe-latency while diagnostic
+    // logging is explicitly disabled in the CI workflow. Never run it in
+    // the ordinary traced correctness pass (5000 GetFrame events would
+    // exhaust its 1.5MiB non-priority trace budget).
+    std::exception_ptr failure;
+    std::thread worker([&]{
+        const HRESULT init=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+        if(FAILED(init)) {
+            failure=std::make_exception_ptr(
+                std::runtime_error("GetFrame perf MTA COM init failed"));
+            return;
+        }
+        try {
+            CComPtr<IWICImagingFactory> factory;
+            Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
+                CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),
+                "GetFrame perf WIC factory");
+            RunGetFrameLatency(factory);
+        } catch(...) {
+            failure=std::current_exception();
+        }
+        CoUninitialize();
     });
     worker.join();
     if(failure)std::rethrow_exception(failure);
