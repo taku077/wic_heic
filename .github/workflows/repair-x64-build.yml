@@ -13,6 +13,7 @@ on:
       - diagnostic/photos-wic-calltrace
       - fix/encoder-geometry-failsafe
       - fix/photos-118-selfwic-incremental
+      - experiment/thumb-hevc-workers-1128-isolated
   workflow_dispatch:
 
 permissions:
@@ -281,6 +282,49 @@ jobs:
             $unregister = Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u', '/s', ('"{0}"' -f $dll)) -Wait -PassThru
             if ($unregister.ExitCode -ne 0) { Write-Warning "Runner-only COM deregistration failed: $($unregister.ExitCode)" }
           }
+
+      # Never ship the WIC_HEIC_THUMB_WORKERS_LAB codec. On a disposable
+      # Windows runner generate the SAME 12MP artificial HEIC, compare
+      # 0/default vs 2 vs 4 codec worker hints, require bit-exact RGB.
+      # No MSI artifact, no user's files, no real PC registry changes.
+      - name: Generate synthetic 12MP fixture for experimental HEVC workers
+        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Failed to build isolated 12MP generator'}
+          $generator=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          if(Test-Path -LiteralPath $fixture){throw 'Refuse to overwrite existing synthetic file'}
+          & $generator $dll $fixture
+          if($LASTEXITCODE -ne 0){throw 'Synthetic 12MP HEIC generator failed'}
+          if((Get-Item -LiteralPath $fixture).Length -gt 33554432){throw '12MP fixture exceeded 32MiB'}
+          Write-Host 'THUMB_WORKERS_12MP_SYNTHETIC_FIXTURE_PASS'
+
+      - name: Compare 12MP cold HEVC 0 versus 2 versus 4 worker decode with exact RGB
+        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $tester=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($reg.ExitCode -ne 0){throw 'Temporary CI COM registration failed'}
+          try {
+            Push-Location -LiteralPath 'wictest'
+            try {
+              Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+              & $tester --thumbnail-worker-lab
+              if($LASTEXITCODE -ne 0){throw '12MP worker A/B accuracy or performance regression'}
+            } finally { Pop-Location }
+          } finally {
+            Remove-Item Env:\WIC_HEIC_THUMB_LAB_WORKERS -ErrorAction SilentlyContinue
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0){throw 'Temporary CI COM unregister failed'}
+          }
+          Write-Host 'THUMB_WORKERS_12MP_RGB_PARITY_PASS'
 
       - name: Run isolated and reversible WIC decoder priority / competitor A-B
         shell: pwsh
