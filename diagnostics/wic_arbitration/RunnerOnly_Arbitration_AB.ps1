@@ -39,8 +39,8 @@ function Bench([string]$label) {
     CheckExit "Benchmark phase $label"
 }
 try {
-    & "$env:WINDIR\System32\regsvr32.exe" /s $CodecDll
-    CheckExit 'Register disposable-runner codec'
+    $registration=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $CodecDll)) -Wait -PassThru
+    if($registration.ExitCode -ne 0){throw "Register disposable-runner codec failed: $($registration.ExitCode)"}
     $registered=$true
     Push-Location -LiteralPath 'wictest'
     $pushed=$true
@@ -114,8 +114,8 @@ try {
     }
     if ($pushed) { Pop-Location }
     if ($registered) {
-        & "$env:WINDIR\System32\regsvr32.exe" /u /s $CodecDll
-        CheckExit 'Unregister disposable CI codec'
+        $unregistration=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $CodecDll)) -Wait -PassThru
+        if($unregistration.ExitCode -ne 0){throw "Unregister disposable CI codec failed: $($unregistration.ExitCode)"}
     }
 }
 if (-not $restored) { throw 'Registry A/B did not reach verified restoration' }
