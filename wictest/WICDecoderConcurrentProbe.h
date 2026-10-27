@@ -69,56 +69,40 @@ inline void RunConcurrentGetFrame(IWICImagingFactory* factory) {
         Check(hr,"concurrent fresh GetFrame/dimensions/pixel format");
     printf("WIC_HEIF_CONCURRENT_GETFRAME_HANDLE_REUSE_PASS workers=4 calls=128\n");
 }
-// Same-context, alternating A/B microbenchmark of the *native* work that
-// the new GetFrame cache avoids. This is NOT an end-to-end Photos benchmark.
-// No WIC diagnostic I/O is involved in these two pure libheif paths.
-// Report medians only; never fail CI on speed measurements.
-inline void RunNativeHandleAB() {
-    heif::Context context;
-    context.read_from_file("samples\\fixture-irot3-exif6-noaux.heic");
-    const auto ids=context.get_list_of_top_level_image_IDs();
-    if(ids.size()!=2)throw std::runtime_error("Native A/B fixture frame count");
-    const heif_item_id id=ids[0];
-    const heif::ImageHandle shared=context.get_image_handle(id);
-    if(shared.empty())throw std::runtime_error("Native A/B handle missing");
-    constexpr int rounds=6, repetitions=3000;
-    std::vector<double> uncached, reused;
-    long long guardA=0,guardB=0;
-    LARGE_INTEGER frequency{};
-    if(!QueryPerformanceFrequency(&frequency) || frequency.QuadPart<=0)
-        throw std::runtime_error("Native A/B QPC unavailable");
-    const auto measure=[&](bool useCache,long long& checksum)->double {
-        LARGE_INTEGER start{},end{};
+// Exercise repeated *WIC* GetFrame through the same public COM interface
+// Photos uses. No libheif headers/library dependency in wictest.exe.
+// A reproducible observation, not proof of a percentage speedup: the CI
+// runner is shared and unrelated WIC/Photos costs are not controlled here.
+inline void RunGetFrameLatency(IWICImagingFactory* factory) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",
+        nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,
+        &decoder),"open GetFrame perf fixture");
+    constexpr int rounds=5, calls=1000;
+    std::array<double,rounds> elapsed{};
+    LARGE_INTEGER clock{};
+    if(!QueryPerformanceFrequency(&clock)||clock.QuadPart<=0)
+        throw std::runtime_error("GetFrame QPC unavailable");
+    for(int round=0;round<rounds;round++) {
+        LARGE_INTEGER start{},finish{};
         QueryPerformanceCounter(&start);
-        for(int i=0;i<repetitions;i++){
-            const heif::ImageHandle frame=useCache
-                ?shared:context.get_image_handle(id);
-            if(frame.empty())throw std::runtime_error("Native A/B empty handle");
-            checksum+=frame.get_width()+frame.get_height();
+        for(int i=0;i<calls;i++){
+            CComPtr<IWICBitmapFrameDecode> frame;
+            Check(decoder->GetFrame(0,&frame),"repeated GetFrame");
+            UINT w=0,h=0;
+            Check(frame->GetSize(&w,&h),"repeated GetFrame size");
+            if(w!=1080||h!=1920)
+                throw std::runtime_error("GetFrame perf geometry changed");
         }
-        QueryPerformanceCounter(&end);
-        return 1000.0*double(end.QuadPart-start.QuadPart)/
-                      double(frequency.QuadPart);
-    };
-    for(int round=0;round<rounds;round++){
-        if((round&1)==0){
-            uncached.push_back(measure(false,guardA));
-            reused.push_back(measure(true,guardB));
-        }else{
-            reused.push_back(measure(true,guardB));
-            uncached.push_back(measure(false,guardA));
-        }
+        QueryPerformanceCounter(&finish);
+        elapsed[round]=1000.0*double(finish.QuadPart-start.QuadPart)/
+            double(clock.QuadPart);
     }
-    if(guardA!=guardB||guardA==0)
-        throw std::runtime_error("Native A/B handle geometry mismatch");
-    std::sort(uncached.begin(),uncached.end());
-    std::sort(reused.begin(),reused.end());
-    const double a=(uncached[rounds/2-1]+uncached[rounds/2])/2.0;
-    const double b=(reused[rounds/2-1]+reused[rounds/2])/2.0;
-    printf("WIC_HEIF_NATIVE_HANDLE_AB same_context=1 image_calls=%d "
-           "rounds=%d uncached_median_ms=%.5f shared_median_ms=%.5f "
-           "checksum_equal=1 no_photos_speed_claim=1\n",
-           repetitions,rounds,a,b);
+    std::sort(elapsed.begin(),elapsed.end());
+    printf("WIC_HEIF_GETFRAME_WARM_OBSERVATION calls_per_round=%d rounds=%d "
+           "median_total_ms=%.5f no_cross_run_speed_claim=1\n",
+           calls,rounds,elapsed[rounds/2]);
 }
 inline void RunInMta() {
     Check(CoInitializeEx(nullptr,COINIT_MULTITHREADED),"init MTA coordinator");
@@ -126,7 +110,7 @@ inline void RunInMta() {
         CComPtr<IWICImagingFactory> factory;
         Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
              CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"create factory");
-        RunNativeHandleAB();
+        RunGetFrameLatency(factory);
         RunConcurrentGetFrame(factory);
         CComPtr<IWICBitmapDecoder> decoder;
         Check(factory->CreateDecoderFromFilename(
