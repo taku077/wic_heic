@@ -37,7 +37,7 @@ $writer=New-Object System.IO.StreamWriter($fs,([System.Text.UTF8Encoding]::new($
 $writer.AutoFlush=$true
 try {
     $writer.WriteLine('utc_filetime,tick,event,foreground_pid,window_w,window_h,client_w,client_h,process_cpu_ms,working_set_kib')
-    $until=[PhotosUiTimelineWin32]::GetTickCount64()+[ulong]($DurationSeconds*1000)
+    $until=[PhotosUiTimelineWin32]::GetTickCount64()+[uint64]($DurationSeconds*1000)
     $lastPressed=$false
     Write-Host 'Photo UI numeric timeline capture started; switch to Windows Photos.'
     Write-Host 'While Photos is foreground, tap F9 when the visible glitch occurs (hold briefly).'
