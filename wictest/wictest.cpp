@@ -415,6 +415,8 @@ int main(int argc,char** argv)
             WICPhotosBurst50Probe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--scale-matrix")==0){
             WICPhotosScaleMatrixProbe::Run();
+        } else if(argc==2 && std::strcmp(argv[1],"--getframe-latency")==0){
+            WICDecoderConcurrentProbe::RunPerf();
         } else if(argc==2 && std::strcmp(argv[1],"--perf-compare")==0){
             WICFormatLatencyProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--stream-ab")==0){
