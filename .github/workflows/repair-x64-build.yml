@@ -669,6 +669,24 @@ jobs:
           & ./diagnostics/photos_trace/WIC_Preflight_Compare.ps1 -Before $env:WIC_BASELINE -After $after
           if(-not $?) { throw 'Read-only WIC restoration comparison failed' }
 
+      # Upload PS5.1 diagnostic only after deliberate diagnostics(release): commit.
+      # No DLL/MSI release and no changes to existing installed 1.1.28.
+      - name: Upload no-install Photos UI timing kit
+        if: ${{ github.ref == 'refs/heads/fix/photos-118-selfwic-incremental' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'diagnostics(release):') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Photos-UI-Timeline-PS51-NoInstall-20261027
+          path: |
+            diagnostics/photos_trace/01_Photos_UI_Timeline.cmd
+            diagnostics/photos_trace/Photos_UI_Timeline_Run.ps1
+            diagnostics/photos_trace/Photos_UI_Timeline_Capture.ps1
+            diagnostics/photos_trace/Photos_UI_Timeline_Correlate.ps1
+            diagnostics/photos_trace/PhotosTrace_Start.ps1
+            diagnostics/photos_trace/PhotosTrace_Stop.ps1
+            diagnostics/photos_trace/README_UI_TIMELINE_JA.md
+          if-no-files-found: error
+          retention-days: 14
+
       # Never upload an MSI after every incremental push. A deliberate
       # release(candidate): commit triggers ONE candidate only AFTER all
       # WIC, MSI install/uninstall and COM restoration checks passed.
