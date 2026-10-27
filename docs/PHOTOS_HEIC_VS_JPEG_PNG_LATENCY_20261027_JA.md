@@ -178,3 +178,15 @@
 - Microsoft IWICImagingFactory::CreateDecoderFromStream https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicimagingfactory-createdecoderfromstream
 - libheif RGB-conversion performance discussion https://github.com/strukturag/libheif/issues/1215
 - libheif RGB-conversion slowdown example https://github.com/strukturag/libheif/issues/472
+
+### 自動デコーダーの署名競合を読み取り専用CIで確認
+
+Windows Actions **[#40456741590](https://github.com/taku077/wic_heic/actions/runs/40456741590) SUCCESS**。`IWICImagingFactory::CreateComponentEnumerator(WICDecoder)`と各`IWICBitmapDecoderInfo::MatchesPattern`で、公開人工HEICに一致する登録パターンを調査。
+
+- 登録デコーダー計**15件**、当該HEICの識別パターンに一致**2件**（自作WIC1件、**他社／Windows登録1件**）、パターン確認失敗0件。
+- Windows WIC自動選択の**最終採用は自作WicHeic** (`selected_ours=1`) を確認。競合している他方の実装名や実際の探索順序はこの集計だけでは特定できない。**他方の候補だけが140msの直接原因と確定したわけではない**。
+- 同じCI群でWIC自動選択約140ms、直接COM+Initialize約0.5ms。探索・仲裁のコストが大きい可能性は裏付けが増したが、Windows 10標準PhotosのUIが毎回この探索を行っているかは未確認。
+- **レジストリ書き込み0件、WICの競合解消操作なし**。新WICへの優先順位変更、他デコーダーの無効化、アプリ関連付けを現時点では採用しない。既存の機能安全性とMSI隔離インストール/アンインストール後の完全登録復元もPASS。
+- 次の改善方向は安全なWIC内部CPU処理の累積改善＋必要なら別環境に隔離した登録・仲裁A/B（ユーザーPC上では実施しない）。大幅な開発変更の前に実機WicHeic1.1.27に近い環境で同条件のA/Bが必須。
+
+参考: Microsoft WIC自動探索と仲裁 https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks
