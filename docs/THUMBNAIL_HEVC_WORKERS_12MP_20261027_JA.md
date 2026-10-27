@@ -79,3 +79,29 @@ WicHeic 1.1.28の既存Photos編集・回転保存とWIC登録を維持するた
 **未確認**：本ユーザー実機のCPUでの相対速度、Windows10 Explorer初回表示、キャッシュミスの多数枚数処理、異なるHEIC bitstream、8bit+alpha/10/12bitの大きな実写真全体、フォトの回転・保存UI。このCI数値を完成版の高速化と称しない。今後、ラボ専用に異なるCOMフレーム2枚の同時サムネイル復号で競合を確認する。ただし、新しいMSIのインストールはまだ依頼しない。
 
 研究資料：libde265のWPP/tiles並列 https://github.com/strukturag/libde265 、libheifの独立タイル並列とcodec内部並列 https://docs.rs/libheif-sys/latest/libheif_sys/fn.heif_context_set_max_decoding_threads.html 、ビット深度・alphaの事前判定 https://codegraph.jelmer.uk/libheif/1.23.1-1/libheif/api/libheif/heif_image_handle.h 。
+
+
+## 2026-10-28：2画像同時復号の実機に近いCOM試験
+
+[Windows Actions #40530246040](https://github.com/taku077/wic_heic/actions/runs/40530246040) **全工程SUCCESS**。新規`wictest/WICThumbnailConcurrentAutoProbe.h`を追加し、**異なるCOM MTAスレッドで独立のデコーダー・フレーム・Fant Scalerを同時起動**。標準方式で取得した12MP人工HEICの256×192 RGBサムネイルに対して、同時実行した2つの適応型サムネイルが**それぞれ画素完全一致**。`THUMB_CONCURRENT_AUTO_RGB_PARITY_PASS`を確認。
+
+実行時に記録された選択は次の通り：
+
+- 逐次標準画像：`requested=0 selected=0 concurrent_before=0`
+- 並列先行画像：`requested=a selected=4 concurrent_before=0`
+- 並列後発画像：`requested=a selected=2 concurrent_before=1`
+
+これにより、**同一プロセス内で複数HEIC画像を復号すると、2枚目のワーカーが4→2へ減る設計が実際に働く**ことを確認できた。両画像の解像度4032×3024、8bit不透明、同一人工fixture。実機で異なる内容の画像・多数枚・負荷の高いCPUでのスケーリングは未確認。**これは並列処理の正確性・選択の証明であり、同時2画像の処理全体時間が高速化したというベンチマークではない。**
+
+同CIでの初回256px Fantサムネイル生成・各5回中央値は以下。前回[#40529006247]とは異なるrunnerのため絶対値の大小を直接比較しない。
+
+| 処理方式 | 各5回中央値 | 同一runner内の標準比 |
+|---|---:|---:|
+| 標準方式 | 1427.335ms | 基準 |
+| 2ワーカー固定 | 797.619ms | 約44.1％短縮 |
+| 4ワーカー固定 | 566.802ms | 約60.3％短縮 |
+| 適応型auto（単独） | 567.721ms | 約60.2％短縮 |
+
+通常のWIC回転・保存・デコード、診断ログ2MiB上限、Shell登録の一時変更・ロールバック、MSI隔離インストール／アンインストール後のレジストリ一致も**SUCCESS**。MSIはビルドされただけで**アップロードされておらず、ユーザーへの導入依頼もしていない**。
+
+**次の未検証課題：** 8bit+alpha・10/12bit・grid画像を含む複数画像同時処理のフォールバックと、Windows10 Explorer初回サムネイル（同一キャッシュ条件、複数枚、CPU負荷）での実効比較。現行1.1.28に変更はない。
