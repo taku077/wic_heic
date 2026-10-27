@@ -574,9 +574,13 @@ jobs:
           ) | Set-Content -LiteralPath $csv -Encoding ASCII
           'WIC_HEIC_TRACE v1 tick=100030 pid=42 event=DecoderFullDecode width=1080 height=1920 transform=0 compression=0 source=libheif-cold hr=0x00000000 tid=1 operation=0 elapsed_ms=40 utc_filetime=134065152000001100' |
             Set-Content -LiteralPath $trace -Encoding ASCII
-          $report=@(& (Join-Path $root 'Photos_UI_Timeline_Correlate.ps1') -TimelinePath $csv -TracePath $trace -WindowSeconds 1)
-          if(-not ($report -match 'approximate_decode_overlap=1')) {
-            throw 'WIC/UI clock correlation test failed'
+          & (Join-Path $root 'Photos_UI_Timeline_Correlate.ps1') -TimelinePath $csv -TracePath $trace -WindowSeconds 1
+          $report=Get-ChildItem -LiteralPath $root -Filter 'Photos_UI_Correlation_*.txt' -File |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if(-not $report){throw 'UI correlation report was not saved'}
+          $text=Get-Content -LiteralPath $report.FullName -Raw -Encoding UTF8
+          if($text -notmatch 'approximate_decode_overlap=1') {
+            throw ('WIC/UI clock correlation test failed: '+$text)
           }
           Write-Host 'PHOTOS_UI_TIMELINE_DIAGNOSTICS_PS51_PASS'
 
