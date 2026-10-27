@@ -122,3 +122,19 @@ WicHeic 1.1.28の既存Photos編集・回転保存とWIC登録を維持するた
 追加の同一runner混在バッチ処理時間比較と、実際のalpha検出・10bitフォールバックの自動CI必須判定は後続試験で実施（検証完了まで速度向上を断定しない）。
 
 実機MSIは`docs/THUMBNAIL_WINDOWS10_PILOT_GATE_20261028_JA.md`のリリース条件を満たしてから、**旧版1.1.28へ戻せる別バージョンで1度だけ**提供する。
+
+
+## 2026-10-28：混在バッチの処理時間も測定（1回のみ）
+
+[Windows Actions #40537268013](https://github.com/taku077/wic_heic/actions/runs/40537268013) **全工程SUCCESS**。WIC登録復元・MSI隔離導入/アンインストール回帰もPASS。3画像混在バッチを、各画像を**直列で従来復号**した合計と、**別々のMTAスレッドで同時に適応型復号**した合計で比較。双方に独立COMデコーダー生成・Fant 256px縮小・画素全量取得を含む：
+
+| 同一runner内・混在3形式バッチ | 全画像処理時間 |
+|---|---:|
+| 直列・従来方式 | 3695.879ms |
+| 並列・適応型 | 2425.610ms |
+
+差は**1270.269ms、約34.4%短縮**。**これは単一バッチ1回の測定であり、反復中央値・統計有意性・Windows10 Explorer表示時間を示さない。** 8bit不透明12MP、8bitアルファ付き12MP、10bit小画像の3種類を同じrunnerで計測した結果に限定して扱う。
+
+追加CI必須判定`THUMB_MIXED_SOURCE_ALPHA_AND_10BIT_FALLBACK_PASS`：実際にalpha補助情報があることを示す`alpha=1 luma_bits=8 chroma_bits=8`の画像で`requested=a selected=0`、実際の10bit画像で`requested=a selected=0 luma_bits=10 chroma_bits=10`、全3画像の縮小WIC RGB全画素一致、12MP RGB全量一致、2枚同時復号の画素一致がすべてPASS。
+
+追加試験で**新しく確認した成果**は「同一runnerの混在3枚で実測34.4%短縮（1回）」であり、以前の「12MP単独画像で約60%」とは別評価。12bit実画像の扱いは未確認、現行1.1.28のWIC高ビット深度/alpha出力の24bit RGB平坦化も未解決。旧製品1.1.28から試験版を配布する前には、`THUMBNAIL_WINDOWS10_PILOT_GATE_20261028_JA.md`のロールバック条件を満たすこと。実験ブランチのMSIは**同じ版番号1.1.28のままで速度を有効化しないため配布禁止**。
