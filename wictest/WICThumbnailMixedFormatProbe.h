@@ -31,7 +31,9 @@ inline std::vector<BYTE> Decode(const Fixture& input,
                                std::atomic<bool>* release) {
     const HRESULT apartment=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     if(FAILED(apartment))throw std::runtime_error("Mixed MTA COM init");
-    try {
+    // Scope guard is declared before COM pointers so all COM releases
+    // happen BEFORE CoUninitialize, including return and exceptions.
+    struct CoExit { ~CoExit(){CoUninitialize();} } apartmentGuard;
         CComPtr<IWICImagingFactory> factory;
         Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
             CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"mixed WIC factory");
@@ -68,12 +70,7 @@ inline std::vector<BYTE> Decode(const Fixture& input,
         std::vector<BYTE> pixels(size_t(rowBytes)*input.thumbH);
         Check(scaler->CopyPixels(nullptr,rowBytes,UINT(pixels.size()),
             pixels.data()),"mixed thumbnail CopyPixels");
-        CoUninitialize();
         return pixels;
-    } catch(...) {
-        CoUninitialize();
-        throw;
-    }
 }
 inline void Run(){
     wchar_t val[12]{};
