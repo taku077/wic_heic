@@ -324,8 +324,22 @@ jobs:
             Push-Location -LiteralPath 'wictest'
             try {
               Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
-              & $tester --thumbnail-worker-lab
+              & $tester --thumbnail-worker-lab | Tee-Object -Variable labLines
               if($LASTEXITCODE -ne 0){throw '12MP worker A/B accuracy or performance regression'}
+              $joined=($labLines -join "`n")
+              foreach($required in @(
+                'THUMB_WORKERS_AB_PIXEL_PARITY_PASS',
+                'THUMB_CONCURRENT_AUTO_RGB_PARITY_PASS',
+                'THUMB_MIXED_PARALLEL_RGB_PARITY_PASS',
+                'THUMB_MIXED_BATCH_LATENCY',
+                'THUMB_WORKERS_POLICY_DECISION requested=a selected=0 width=4032 height=3024 luma_bits=8 chroma_bits=8 alpha=1',
+                'THUMB_WORKERS_POLICY_DECISION requested=a selected=0 width=1080 height=1920 luma_bits=10 chroma_bits=10 alpha=0'
+              )) {
+                if(-not $joined.Contains($required)) {
+                  throw ('Mixed HEIC actual alpha/high-depth guard or RGB test missing: '+$required)
+                }
+              }
+              Write-Host 'THUMB_MIXED_SOURCE_ALPHA_AND_10BIT_FALLBACK_PASS'
             } finally { Pop-Location }
           } finally {
             Remove-Item Env:\WIC_HEIC_THUMB_LAB_WORKERS -ErrorAction SilentlyContinue
