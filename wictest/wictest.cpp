@@ -23,6 +23,7 @@
 #include "WICFormatLatencyProbe.h"
 #include "WICStreamSameHostABProbe.h"
 #include "WICHeifContainerLatencyProbe.h"
+#include "WICDecoderArbitrationAudit.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -419,6 +420,8 @@ int main(int argc,char** argv)
             WICStreamSameHostABProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--container-latency")==0){
             WICHeifContainerLatencyProbe::Run();
+        } else if(argc==2 && std::strcmp(argv[1],"--arbitration-audit")==0){
+            WICDecoderArbitrationAudit::Run();
         } else if(argc!=1){
             throw std::runtime_error("Unknown synthetic WIC test mode");
         } else {
