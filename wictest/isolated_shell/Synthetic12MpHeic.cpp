@@ -26,20 +26,22 @@ std::wstring Env(const wchar_t* key) {
  const DWORD n=GetEnvironmentVariableW(key,buf,32768);
  return n>0&&n<32768?std::wstring(buf,n):L"";
 }
-void GuardPath(const wchar_t* path){
+void GuardPath(const wchar_t* path,bool alpha){
  if(Env(L"GITHUB_ACTIONS")!=L"true")throw E_ACCESSDENIED;
  const auto root=Env(L"RUNNER_TEMP");
  if(root.empty()||!path)throw E_INVALIDARG;
  const auto candidate=std::wstring(path);
- const auto expected=root+L"\\wicfast_synthetic_4032x3024.heic";
+ const auto expected=root+(alpha?L"\\wicfast_synthetic_4032x3024_alpha.heic":L"\\wicfast_synthetic_4032x3024.heic");
  if(_wcsicmp(candidate.c_str(),expected.c_str())!=0)throw E_ACCESSDENIED;
  if(GetFileAttributesW(path)!=INVALID_FILE_ATTRIBUTES)throw HRESULT_FROM_WIN32(ERROR_FILE_EXISTS);
 }
 }
 int wmain(int argc,wchar_t** argv){
  try {
-  if(argc!=3)throw E_INVALIDARG;
-  GuardPath(argv[2]);
+  if(argc!=3&&argc!=4)throw E_INVALIDARG;
+  const bool alpha=argc==4 && wcscmp(argv[3],L"alpha")==0;
+  if(argc==4&&!alpha)throw E_INVALIDARG;
+  GuardPath(argv[2],alpha);
   Check(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED),"COM");
   const auto dll=std::wstring(argv[1]);
   HMODULE module=LoadLibraryExW(dll.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
@@ -62,20 +64,22 @@ int wmain(int argc,wchar_t** argv){
   Check(encoder->CreateNewFrame(frame.GetAddressOf(),nullptr),"frame create");
   Check(frame->Initialize(nullptr),"frame init");
   Check(frame->SetSize(kWidth,kHeight),"frame size");
-  WICPixelFormatGUID format=GUID_WICPixelFormat24bppRGB;
+  WICPixelFormatGUID format=alpha?GUID_WICPixelFormat32bppRGBA:GUID_WICPixelFormat24bppRGB;
   Check(frame->SetPixelFormat(&format),"frame pixel format");
-  if(!IsEqualGUID(format,GUID_WICPixelFormat24bppRGB))throw E_FAIL;
+  if(!IsEqualGUID(format,alpha?GUID_WICPixelFormat32bppRGBA:GUID_WICPixelFormat24bppRGB))throw E_FAIL;
   // Natural-looking synthetic texture/edges, without photos or metadata.
-  const UINT stride=kWidth*3u;
+  const UINT channels=alpha?4u:3u;
+  const UINT stride=kWidth*channels;
   std::vector<BYTE> pixels(size_t(stride)*kHeight);
   for(UINT y=0;y<kHeight;++y){
     for(UINT x=0;x<kWidth;++x){
-      const size_t offset=size_t(y)*stride+size_t(x)*3u;
+      const size_t offset=size_t(y)*stride+size_t(x)*channels;
       const uint32_t fine=(x*13u+y*7u+(x^y)*3u)&255u;
       const uint32_t tile=((x/64u+y/64u)&1u)?22u:0u;
       pixels[offset+0]=BYTE((x/16u+fine/3u+tile)&255u);
       pixels[offset+1]=BYTE((y/12u+fine/4u+tile)&255u);
       pixels[offset+2]=BYTE(((x+y)/25u+fine/2u+tile)&255u);
+      if(alpha)pixels[offset+3]=BYTE((x/7u+y/11u+fine)&255u);
     }
   }
   Check(frame->WritePixels(kHeight,stride,UINT(pixels.size()),pixels.data()),"write pixels");
@@ -88,8 +92,8 @@ int wmain(int argc,wchar_t** argv){
   if(!GetFileAttributesExW(argv[2],GetFileExInfoStandard,&attrs))throw E_FAIL;
   const uint64_t bytes=(uint64_t(attrs.nFileSizeHigh)<<32u)|attrs.nFileSizeLow;
   if(bytes<1000u || bytes>32ull*1024*1024)throw E_FAIL;
-  std::printf("SYNTHETIC_12MP_HEIC_CREATED width=%u height=%u bytes=%llu\n",
-        kWidth,kHeight,static_cast<unsigned long long>(bytes));
+  std::printf("SYNTHETIC_12MP_HEIC_CREATED width=%u height=%u alpha=%d bytes=%llu\n",
+        kWidth,kHeight,alpha?1:0,static_cast<unsigned long long>(bytes));
   return 0;
  } catch(HRESULT hr) {
   std::printf("SYNTHETIC_12MP_FAILED hr=0x%08X\n",unsigned(hr));
