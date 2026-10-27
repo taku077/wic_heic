@@ -134,6 +134,77 @@ inline Timings ProbeOne(IWICImagingFactory* factory,
            Millis(t3,t4),Millis(t4,t5));
     return {Millis(t0,t1),Millis(t1,t2),Millis(t4,t5)};
 }
+// User's Win10 Photos repro: initial fit-to-window, zoom out further,
+// then rotate. This tests only WIC source geometry/pixels; the Photos app's
+// internal visual/layout transform is NOT exposed to this harness.
+// Reuse the existing identical-visible-pixel HEIC/PNG/JPEG comparators,
+// not another output fixture or expensive saved-image matrix.
+inline void ProbeFitExtraZoomRotate(IWICImagingFactory* factory,
+                                   const char* format,
+                                   const wchar_t* path) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    Need(factory->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,
+         WICDecodeMetadataCacheOnDemand,&decoder),"fit/zoom decoder");
+    CComPtr<IWICBitmapFrameDecode> frame;
+    Need(decoder->GetFrame(0,&frame),"fit/zoom frame");
+    UINT originalW=0,originalH=0;
+    Need(frame->GetSize(&originalW,&originalH),"fit/zoom source size");
+    if(originalW!=1080||originalH!=1920)
+        throw std::runtime_error("fit/zoom source geometry differs");
+
+    CComPtr<IWICBitmapScaler> fitted,extraZoom;
+    Need(factory->CreateBitmapScaler(&fitted),"fit scaler");
+    Need(fitted->Initialize(frame,540,960,WICBitmapInterpolationModeFant),
+         "fit scaler init");
+    Need(factory->CreateBitmapScaler(&extraZoom),"extra zoom scaler");
+    Need(extraZoom->Initialize(fitted,405,720,
+         WICBitmapInterpolationModeFant),"extra zoom init");
+    CComPtr<IWICBitmapFlipRotator> rotated;
+    Need(factory->CreateBitmapFlipRotator(&rotated),"fit/zoom rotator");
+    Need(rotated->Initialize(extraZoom,WICBitmapTransformRotate90),
+         "fit/zoom rotate 90");
+
+    UINT fitW=0,fitH=0,zoomW=0,zoomH=0,rotW=0,rotH=0;
+    Need(fitted->GetSize(&fitW,&fitH),"fit dimensions");
+    Need(extraZoom->GetSize(&zoomW,&zoomH),"extra zoom dimensions");
+    Need(rotated->GetSize(&rotW,&rotH),"post-rotation dimensions");
+    if(fitW!=540||fitH!=960 || zoomW!=405||zoomH!=720 ||
+       rotW!=720||rotH!=405)
+        throw std::runtime_error("FIT_EXTRA_ZOOM_ROTATE_GEOMETRY_MISMATCH");
+
+    CComPtr<IWICBitmapSource> zoomRGB,rotationRGB;
+    Need(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
+         extraZoom,&zoomRGB),"extra zoom RGB");
+    Need(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
+         rotated,&rotationRGB),"rotated RGB");
+    std::vector<BYTE> before(size_t(zoomW)*zoomH*3);
+    std::vector<BYTE> after(size_t(rotW)*rotH*3);
+    Need(zoomRGB->CopyPixels(nullptr,zoomW*3,UINT(before.size()),
+         before.data()),"fit/zoom pixels");
+    Need(rotationRGB->CopyPixels(nullptr,rotW*3,UINT(after.size()),
+         after.data()),"rotated fit/zoom pixels");
+
+    // 90 degrees clockwise: source (x,y) -> output (H-1-y,x).
+    // An aspect-stretched, transposed incorrectly, or shifted RGB plane
+    // cannot pass this exact per-pixel mapping check.
+    for(UINT y=0;y<zoomH;y++) {
+        for(UINT x=0;x<zoomW;x++) {
+            const size_t si=(size_t(y)*zoomW+x)*3;
+            const UINT rx=zoomH-1-y,ry=x;
+            const size_t di=(size_t(ry)*rotW+rx)*3;
+            if(std::memcmp(before.data()+si,after.data()+di,3)!=0)
+                throw std::runtime_error("FIT_EXTRA_ZOOM_ROTATE_RGB_MISMATCH");
+        }
+    }
+    UINT repeatW=0,repeatH=0;
+    Need(frame->GetSize(&repeatW,&repeatH),"post-rotation source dimensions");
+    if(repeatW!=originalW||repeatH!=originalH)
+        throw std::runtime_error("FIT_EXTRA_ZOOM_CHANGED_SOURCE_SIZE");
+    printf("WIC_FIT_EXTRA_ZOOM_ROTATE_PASS format=%s "
+           "original=1080x1920 fit=540x960 zoom=405x720 "
+           "rotated=720x405 exact_rgb_map=1 photos_ui_unverified=1\n",
+           format);
+}
 inline void Run() {
     const wchar_t* original=L"samples\\fixture-irot3-exif6-noaux.heic";
     const DWORD status=GetFileAttributesW(original);
@@ -169,6 +240,10 @@ inline void Run() {
     // A median is less misleading than the previous one-shot metric.
     const char* labels[]={"HEIC","PNG","JPEG"};
     const wchar_t* paths[]={original,png.c_str(),jpg.c_str()};
+    // Exercise the precise fit -> further zoom -> rotate WIC pixel path
+    // once for each equivalent format before the timing comparison.
+    for(int format=0;format<3;format++)
+        ProbeFitExtraZoomRotate(factory,labels[format],paths[format]);
     std::vector<Timings> readings[3];
     for(int pass=0;pass<5;pass++) {
         for(int slot=0;slot<3;slot++) {
