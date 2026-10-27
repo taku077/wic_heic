@@ -582,6 +582,20 @@ jobs:
           if($text -notmatch 'approximate_decode_overlap=1') {
             throw ('WIC/UI clock correlation test failed: '+$text)
           }
+          # A no-F9 user recording still contains actionable aggregate WIC
+          # statistics. Check that its report is not just "inconclusive".
+          $noMark=Join-Path $root 'synthetic_timeline_no_mark_ci.csv'
+          ((Get-Content -LiteralPath $csv -Raw -Encoding ASCII) -replace ',MARK_F9,',',SAMPLE,') |
+            Set-Content -LiteralPath $noMark -Encoding ASCII
+          & (Join-Path $root 'Photos_UI_Timeline_Correlate.ps1') -TimelinePath $noMark -TracePath $trace -WindowSeconds 1
+          $report=Get-ChildItem -LiteralPath $root -Filter 'Photos_UI_Correlation_*.txt' -File |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $text=Get-Content -LiteralPath $report.FullName -Raw -Encoding UTF8
+          if($text -notmatch 'NO_F9_MARK' -or
+             $text -notmatch 'PASSIVE_WIC_SUMMARY full_decode_count=1' -or
+             $text -notmatch 'PASSIVE_DECODE_MS min=40 median_lower=40 max=40') {
+            throw 'No-F9 passive WIC analysis regression'
+          }
           # End-to-end 5s smoke for the one-click orchestration. It must
           # remove only its own HKCU trace settings, even without Photos.
           & (Join-Path $root 'Photos_UI_Timeline_Run.ps1') -DurationSeconds 5 -IntervalMs 250
