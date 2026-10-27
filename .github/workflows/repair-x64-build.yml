@@ -213,6 +213,11 @@ jobs:
                 $previousTrace=$env:WIC_HEIC_TRACE_FILE
                 Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
                 try {
+                  # 5,000 GetFrame calls emit too many DecoderGetFrame events
+                  # for the privacy-capped trace, hiding later save-route
+                  # events. Run this microbenchmark ONLY while trace is off.
+                  & $testExe --getframe-latency
+                  if ($LASTEXITCODE -ne 0) { throw "Standalone GetFrame benchmark failed: $LASTEXITCODE" }
                   & $testExe --perf-compare
                   if ($LASTEXITCODE -ne 0) { throw "HEIC/PNG/JPEG WIC stage benchmark failed: $LASTEXITCODE" }
                   # Same Windows runner, same codec binary, same artificial
