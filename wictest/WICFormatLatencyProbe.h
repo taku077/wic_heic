@@ -205,6 +205,83 @@ inline void ProbeFitExtraZoomRotate(IWICImagingFactory* factory,
            "rotated=720x405 exact_rgb_map=1 photos_ui_unverified=1\n",
            format);
 }
+// Observe Microsoft-documented buffering effect (without claiming that
+// Microsoft Photos actually uses this precise WIC transform chain).
+// Both pipelines use the same WIC frame and Fant fit->extra zoom operation.
+// A: Rotate90 directly after two lazy scalers.
+// B: Materialize the final zoomed RGB into ~0.9 MB IWICBitmap and Rotate90.
+// Test repeated one-scanline CopyPixels calls, precisely the access pattern
+// identified as costly in IWICBitmapFlipRotator's published remarks.
+// No source file is written or changed, and the original image is read-only.
+inline void ProbeRotatorBufferAB(IWICImagingFactory* factory,
+                                 const char* format,
+                                 const wchar_t* path) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    Need(factory->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,
+         WICDecodeMetadataCacheOnDemand,&decoder),"buffer A/B decoder");
+    CComPtr<IWICBitmapFrameDecode> frame;
+    Need(decoder->GetFrame(0,&frame),"buffer A/B frame");
+    CComPtr<IWICBitmapScaler> fit,zoom;
+    Need(factory->CreateBitmapScaler(&fit),"buffer A/B fit");
+    Need(fit->Initialize(frame,540,960,WICBitmapInterpolationModeFant),
+         "buffer A/B fit init");
+    Need(factory->CreateBitmapScaler(&zoom),"buffer A/B extra zoom");
+    Need(zoom->Initialize(fit,405,720,WICBitmapInterpolationModeFant),
+         "buffer A/B extra zoom init");
+    CComPtr<IWICBitmapFlipRotator> lazy;
+    Need(factory->CreateBitmapFlipRotator(&lazy),"buffer A/B lazy rotate");
+    Need(lazy->Initialize(zoom,WICBitmapTransformRotate90),
+         "buffer A/B lazy rotate init");
+    CComPtr<IWICBitmapSource> lazyRgb;
+    Need(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
+         lazy,&lazyRgb),"buffer A/B lazy RGB");
+    const auto beforeCache=Now();
+    CComPtr<IWICBitmap> bitmap;
+    Need(factory->CreateBitmapFromSource(zoom,WICBitmapCacheOnLoad,&bitmap),
+         "buffer A/B allocate cached zoom raster");
+    const auto afterCache=Now();
+    CComPtr<IWICBitmapFlipRotator> buffered;
+    Need(factory->CreateBitmapFlipRotator(&buffered),"buffer A/B buffered rotate");
+    Need(buffered->Initialize(bitmap,WICBitmapTransformRotate90),
+         "buffer A/B buffered rotate init");
+    CComPtr<IWICBitmapSource> bufferedRgb;
+    Need(WICConvertBitmapSource(GUID_WICPixelFormat24bppRGB,
+         buffered,&bufferedRgb),"buffer A/B buffered RGB");
+    UINT aw=0,ah=0,bw=0,bh=0;
+    Need(lazyRgb->GetSize(&aw,&ah),"buffer A/B lazy geometry");
+    Need(bufferedRgb->GetSize(&bw,&bh),"buffer A/B cached geometry");
+    if(aw!=720||ah!=405||bw!=aw||bh!=ah)
+        throw std::runtime_error("BUFFER_AB_GEOMETRY_DIFF");
+    const UINT stride=aw*3, bytes=stride*ah;
+    std::vector<BYTE> a(bytes),b(bytes);
+    auto rows=[&](IWICBitmapSource* source,std::vector<BYTE>& output)->double {
+        const auto start=Now();
+        for(UINT row=0;row<ah;row++){
+            WICRect rc{0,static_cast<INT>(row),static_cast<INT>(aw),1};
+            Need(source->CopyPixels(&rc,stride,stride,
+                 output.data()+size_t(row)*stride),"buffer A/B row");
+        }
+        return Millis(start,Now());
+    };
+    std::vector<double> lazyMs,bufferedMs;
+    for(int round=0;round<3;round++){
+        if(round%2==0) {
+            lazyMs.push_back(rows(lazyRgb,a));
+            bufferedMs.push_back(rows(bufferedRgb,b));
+        } else {
+            bufferedMs.push_back(rows(bufferedRgb,b));
+            lazyMs.push_back(rows(lazyRgb,a));
+        }
+        if(a!=b)throw std::runtime_error("BUFFER_AB_RGB_DIFF");
+    }
+    std::sort(lazyMs.begin(),lazyMs.end());
+    std::sort(bufferedMs.begin(),bufferedMs.end());
+    printf("WIC_ROTATOR_BUFFER_AB format=%s fit=540x960 zoom=405x720 "
+           "rotate=720x405 row_calls=405 samples=3 lazy_median_ms=%.4f "
+           "buffered_median_ms=%.4f one_time_cache_ms=%.4f "
+           "exact_rgb_equal=1 windows_server_only=1 photos_ui_unverified=1\n",
+           format,lazyMs[1],bufferedMs[1],Millis(beforeCache,afterCache));
+}
 inline void Run() {
     const wchar_t* original=L"samples\\fixture-irot3-exif6-noaux.heic";
     const DWORD status=GetFileAttributesW(original);
@@ -242,8 +319,10 @@ inline void Run() {
     const wchar_t* paths[]={original,png.c_str(),jpg.c_str()};
     // Exercise the precise fit -> further zoom -> rotate WIC pixel path
     // once for each equivalent format before the timing comparison.
-    for(int format=0;format<3;format++)
+    for(int format=0;format<3;format++) {
         ProbeFitExtraZoomRotate(factory,labels[format],paths[format]);
+        ProbeRotatorBufferAB(factory,labels[format],paths[format]);
+    }
     std::vector<Timings> readings[3];
     for(int pass=0;pass<5;pass++) {
         for(int slot=0;slot<3;slot++) {
