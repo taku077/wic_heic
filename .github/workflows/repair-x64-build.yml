@@ -582,6 +582,13 @@ jobs:
           if($text -notmatch 'approximate_decode_overlap=1') {
             throw ('WIC/UI clock correlation test failed: '+$text)
           }
+          # End-to-end 5s smoke for the one-click orchestration. It must
+          # remove only its own HKCU trace settings, even without Photos.
+          & (Join-Path $root 'Photos_UI_Timeline_Run.ps1') -DurationSeconds 5 -IntervalMs 250
+          $settings=Get-ItemProperty -Path 'HKCU:\Software\WicHeic' -ErrorAction SilentlyContinue
+          if($settings -and ($settings.PSObject.Properties.Name -contains 'TraceFile')) {
+            throw 'Combined UI tool left HKCU TraceFile enabled'
+          }
           Write-Host 'PHOTOS_UI_TIMELINE_DIAGNOSTICS_PS51_PASS'
 
       - name: Build experimental replacement x64 MSI
