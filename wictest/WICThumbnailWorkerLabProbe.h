@@ -91,6 +91,32 @@ inline void RunSmallFallback(IWICImagingFactory* factory) {
     printf("THUMB_WORKERS_SMALL_FALLBACK_PARITY_PASS small=1080x1920 "
            "thumb=144x256 exact_rgb=1\n");
 }
+// Verify the PILOT production path without the CI-only worker override.
+inline void RunPilotAutoWithoutOverride(IWICImagingFactory* factory,
+    const std::wstring& path,const std::vector<BYTE>& baseline) {
+    SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr);
+    CComPtr<IWICStream> stream;
+    Check(factory->CreateStream(&stream),"pilot stream");
+    Check(stream->InitializeFromFilename(path.c_str(),GENERIC_READ),
+        "pilot artificial fixture");
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(CoCreateInstance(CLSID_HEICDecoder,nullptr,
+        CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&decoder)),"pilot direct decoder");
+    Check(decoder->Initialize(stream,WICDecodeMetadataCacheOnDemand),
+        "pilot decoder init");
+    CComPtr<IWICBitmapFrameDecode> frame;
+    Check(decoder->GetFrame(0,&frame),"pilot frame");
+    CComPtr<IWICBitmapScaler> scaler;
+    Check(factory->CreateBitmapScaler(&scaler),"pilot scaler");
+    Check(scaler->Initialize(frame,256,192,WICBitmapInterpolationModeFant),
+        "pilot 256px Fant");
+    std::vector<BYTE> result(256u*192u*3u);
+    Check(scaler->CopyPixels(nullptr,256u*3u,UINT(result.size()),
+        result.data()),"pilot RGB");
+    if(result!=baseline)throw std::runtime_error(
+        "Pilot production path changed thumbnail RGB");
+    printf("THUMB_PILOT_NOENV_RGB_PARITY_PASS source=12MP thumb=256x192\n");
+}
 inline void Run() {
     wchar_t enabled[12]{};
     if(GetEnvironmentVariableW(L"GITHUB_ACTIONS",enabled,12)!=4 ||
@@ -190,5 +216,6 @@ inline void Run() {
     printf("THUMB_WORKERS_AB_PIXEL_PARITY_PASS source=4032x3024 thumb=256x192 modes=0,2,4,auto samples=20 "
            "fixture=artificial_12MP no_msi_release=1\n");
     RunSmallFallback(factory);
+    RunPilotAutoWithoutOverride(factory,path,referenceThumb);
 }
 }
