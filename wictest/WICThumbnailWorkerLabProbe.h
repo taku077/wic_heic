@@ -12,6 +12,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include "../wic_heic/HeicThumbnailWorkerPolicy.h"
 namespace WICThumbnailWorkerLabProbe {
 inline void Check(HRESULT hr,const char* s) {
     if(FAILED(hr)){
@@ -22,12 +23,81 @@ inline void Check(HRESULT hr,const char* s) {
 inline double Ms(LARGE_INTEGER a,LARGE_INTEGER b,LARGE_INTEGER f){
     return double(b.QuadPart-a.QuadPart)*1000.0/double(f.QuadPart);
 }
+inline void RunPolicyCases() {
+    struct Case {
+        unsigned w,h;
+        int luma,chroma;
+        bool alpha;
+        unsigned cpus,active,expected;
+    };
+    constexpr std::array<Case,14> cases{{
+        {4032,3024,8,8,false,4,0,4},     // sole high-resolution frame
+        {4032,3024,8,8,false,4,1,2},     // 2nd concurrent frame
+        {4032,3024,8,8,false,4,2,0},     // cap CPU saturation
+        {4032,3024,8,8,false,2,0,2},     // 2 logical CPU laptop
+        {4032,3024,8,8,false,2,1,0},     // 2 logical CPU concurrent
+        {4032,3024,8,8,false,1,0,0},     // no parallelism
+        {1080,1920,8,8,false,4,0,0},     // small photo
+        {3000,2000,8,8,false,4,0,4},     // exact 6MP threshold
+        {2999,2000,8,8,false,4,0,0},     // just below 6MP
+        {4032,3024,10,10,false,4,0,0},   // high bit depth
+        {4032,3024,12,12,false,4,0,0},   // range-extension
+        {4032,3024,8,8,true,4,0,0},     // alpha
+        {4032,3024,-1,8,false,4,0,0},   // undefined luma depth
+        {4032,3024,8,-1,false,4,0,0}    // undefined chroma depth
+    }};
+    for(const auto& c : cases) {
+        const unsigned got=HeicThumbnailWorkerPolicy::Select(
+            c.w,c.h,c.luma,c.chroma,c.alpha,c.cpus,c.active);
+        if(got!=c.expected) {
+            printf("THUMB_WORKERS_POLICY_CASE_FAIL w=%u h=%u "
+                   "luma=%d chroma=%d alpha=%d cpu=%u concurrent=%u "
+                   "expected=%u actual=%u\n",
+                   c.w,c.h,c.luma,c.chroma,c.alpha?1:0,
+                   c.cpus,c.active,c.expected,got);
+            throw std::runtime_error("Unsafe thumbnail worker selection");
+        }
+    }
+    printf("THUMB_WORKERS_POLICY_CASES_PASS count=%zu "
+           "low_res=0 high_depth=0 alpha=0 concurrency_capped=1\n",
+           cases.size());
+}
+inline void RunSmallFallback(IWICImagingFactory* factory) {
+    const wchar_t* path=L"samples\\fixture-irot3-exif6-noaux.heic";
+    std::vector<BYTE> baseline,actual(144u*256u*3u);
+    for(const wchar_t* choice : {L"0",L"a"}) {
+        if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",choice))
+            throw std::runtime_error("Cannot set CI small image mode");
+        CComPtr<IWICBitmapDecoder> decoder;
+        Check(factory->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand,&decoder),"small fixture open");
+        CComPtr<IWICBitmapFrameDecode> frame;
+        Check(decoder->GetFrame(0,&frame),"small fixture frame");
+        UINT w=0,h=0;
+        Check(frame->GetSize(&w,&h),"small fixture dimensions");
+        if(w!=1080 || h!=1920)
+            throw std::runtime_error("Unexpected small fixture geometry");
+        CComPtr<IWICBitmapScaler> scaler;
+        Check(factory->CreateBitmapScaler(&scaler),"small fixture scaler");
+        Check(scaler->Initialize(frame,144,256,
+            WICBitmapInterpolationModeFant),"small fixture scaler init");
+        Check(scaler->CopyPixels(nullptr,144u*3u,UINT(actual.size()),
+            actual.data()),"small fallback thumbnail");
+        if(baseline.empty())baseline=actual;
+        else if(baseline!=actual)
+            throw std::runtime_error("Small image auto fallback pixel mismatch");
+    }
+    SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr);
+    printf("THUMB_WORKERS_SMALL_FALLBACK_PARITY_PASS small=1080x1920 "
+           "thumb=144x256 exact_rgb=1\n");
+}
 inline void Run() {
     wchar_t enabled[12]{};
     if(GetEnvironmentVariableW(L"GITHUB_ACTIONS",enabled,12)!=4 ||
        wcscmp(enabled,L"true")!=0) {
         throw std::runtime_error("Worker lab is CI-only");
     }
+    RunPolicyCases();
     wchar_t runnerTemp[32768]{};
     const DWORD n=GetEnvironmentVariableW(L"RUNNER_TEMP",runnerTemp,32768);
     if(n==0 || n>=32768)throw std::runtime_error("No CI temp directory");
@@ -45,8 +115,8 @@ inline void Run() {
     constexpr UINT width=4032,height=3024,channels=3;
     constexpr UINT stride=width*channels;
     const size_t planeBytes=size_t(stride)*height;
-    const std::array<int,3> modes{{0,2,4}};
-    std::array<std::vector<double>,3> readings;
+    const std::array<int,4> modes{{0,2,4,-1}};
+    std::array<std::vector<double>,4> readings;
     constexpr UINT thumbW=256,thumbH=192;
     constexpr UINT thumbStride=thumbW*channels;
     std::vector<BYTE> referenceFull,outputFull(planeBytes);
@@ -55,11 +125,11 @@ inline void Run() {
     // Trigger cold HEVC decode through an actual 256px Fant scaler and
     // verify BOTH its pixels and the untouched original full RGB raster.
     for(int round=0;round<5;round++) {
-        for(int slot=0;slot<3;slot++) {
-            const int index=(round+slot)%3;
+        for(int slot=0;slot<4;slot++) {
+            const int index=(round+slot)%4;
             const int workers=modes[index];
             const wchar_t* value=workers==0?L"0":
-                (workers==2?L"2":L"4");
+                (workers==2?L"2":(workers==4?L"4":L"a"));
             if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",value))
                 throw std::runtime_error("Unable to set CI worker mode");
             CComPtr<IWICStream> stream;
@@ -109,7 +179,7 @@ inline void Run() {
         }
     }
     SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr);
-    for(int index=0;index<3;index++){
+    for(int index=0;index<4;index++){
         auto& v=readings[index];
         if(v.size()!=5)throw std::runtime_error("Incomplete worker samples");
         std::sort(v.begin(),v.end());
@@ -117,7 +187,8 @@ inline void Run() {
                "first_thumbnail_256_ms=%.3f no_explorer_claim=1\n",
                modes[index],v[2]);
     }
-    printf("THUMB_WORKERS_AB_PIXEL_PARITY_PASS source=4032x3024 thumb=256x192 modes=0,2,4 samples=15 "
+    printf("THUMB_WORKERS_AB_PIXEL_PARITY_PASS source=4032x3024 thumb=256x192 modes=0,2,4,auto samples=20 "
            "fixture=artificial_12MP no_msi_release=1\n");
+    RunSmallFallback(factory);
 }
 }
