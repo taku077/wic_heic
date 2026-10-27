@@ -98,6 +98,10 @@ inline void Run(){
     std::array<std::vector<BYTE>,3> reference,concurrent;
     if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",L"0"))
         throw std::runtime_error("Cannot set default HEVC mode");
+    LARGE_INTEGER freq{},serialStart{},serialEnd{},parallelStart{},parallelEnd{};
+    if(!QueryPerformanceFrequency(&freq)||freq.QuadPart<=0)
+        throw std::runtime_error("Mixed QPC unavailable");
+    QueryPerformanceCounter(&serialStart);
     // wictest.exe's main thread is already COM STA via CoInitialize().
     // Run EACH baseline on a fresh MTA thread; never change the apartment
     // model of the existing test host (RPC_E_CHANGED_MODE).
@@ -110,8 +114,10 @@ inline void Run(){
         baseline.join();
         if(baselineFailure)std::rethrow_exception(baselineFailure);
     }
+    QueryPerformanceCounter(&serialEnd);
     if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",L"a"))
         throw std::runtime_error("Cannot set auto HEVC mode");
+    QueryPerformanceCounter(&parallelStart);
     std::atomic<int> ready{0};
     std::atomic<bool> release{false};
     std::array<std::exception_ptr,3> failure{};
@@ -138,6 +144,7 @@ inline void Run(){
     const bool launched=ready.load(std::memory_order_acquire)==3;
     release.store(true,std::memory_order_release);
     for(auto& thread:threads)if(thread.joinable())thread.join();
+    QueryPerformanceCounter(&parallelEnd);
     SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr);
     for(const auto& error:failure)if(error)std::rethrow_exception(error);
     if(!launched)throw std::runtime_error("Mixed parallel setup timeout");
@@ -145,6 +152,15 @@ inline void Run(){
         if(reference[i].empty()||reference[i]!=concurrent[i])
             throw std::runtime_error("Mixed HEIC WIC output RGB mismatch");
     }
+    const double serialMs=1000.0*double(serialEnd.QuadPart-serialStart.QuadPart)/
+        double(freq.QuadPart);
+    const double parallelMs=1000.0*double(parallelEnd.QuadPart-parallelStart.QuadPart)/
+        double(freq.QuadPart);
+    if(serialMs<=0.0||parallelMs<=0.0)
+        throw std::runtime_error("Mixed timing clock invalid");
+    printf("THUMB_MIXED_BATCH_LATENCY serial_default_ms=%.3f "
+           "parallel_adaptive_ms=%.3f includes_MTA_COM_setup=1 "
+           "sample_count=1 no_explorer_claim=1\n",serialMs,parallelMs);
     printf("THUMB_MIXED_PARALLEL_RGB_PARITY_PASS fixtures=3 "
            "opaque8=1 alpha8=1 depth10=1 parallel=3 "
            "thumbnail_rgb_exact=1 source_alpha_precision_unverified=1\n");
