@@ -554,6 +554,32 @@ jobs:
           Write-Host 'HEIC_COMPARE_READONLY_POWERSHELL_5_1_PASS'
           Write-Host 'WINDOWS_POWERSHELL_5_1_TOOLCHAIN_PASSED'
 
+      - name: Validate Photos UI timing diagnostic with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5){throw 'Windows PowerShell 5.1 is required'}
+          $root=(Resolve-Path -LiteralPath 'diagnostics/photos_trace').Path
+          & (Join-Path $root 'Photos_UI_Timeline_Capture.ps1') -DurationSeconds 5 -IntervalMs 250
+          $record=Get-ChildItem -LiteralPath $root -Filter 'Photos_UI_Timeline_*.csv' -File |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if(-not $record){throw 'UI capture produced no file'}
+          $rows=@(Import-Csv -LiteralPath $record.FullName)
+          if($rows.Count -lt 5){throw 'UI capture produced too few samples'}
+          $csv=Join-Path $root 'synthetic_timeline_ci.csv'
+          $trace=Join-Path $root 'synthetic_wic_ci.txt'
+          @(
+            'utc_filetime,tick,event,foreground_pid,window_w,window_h,client_w,client_h,process_cpu_ms,working_set_kib',
+            '134065152000001000,100010,MARK_F9,42,1000,800,980,750,50,2048'
+          ) | Set-Content -LiteralPath $csv -Encoding ASCII
+          'WIC_HEIC_TRACE v1 tick=100030 pid=42 event=DecoderFullDecode width=1080 height=1920 transform=0 compression=0 source=libheif-cold hr=0x00000000 tid=1 operation=0 elapsed_ms=40 utc_filetime=134065152000001100' |
+            Set-Content -LiteralPath $trace -Encoding ASCII
+          $report=@(& (Join-Path $root 'Photos_UI_Timeline_Correlate.ps1') -TimelinePath $csv -TracePath $trace -WindowSeconds 1)
+          if(-not ($report -match 'approximate_decode_overlap=1')) {
+            throw 'WIC/UI clock correlation test failed'
+          }
+          Write-Host 'PHOTOS_UI_TIMELINE_DIAGNOSTICS_PS51_PASS'
+
       - name: Build experimental replacement x64 MSI
         shell: pwsh
         run: |
