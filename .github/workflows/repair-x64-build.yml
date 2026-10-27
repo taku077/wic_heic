@@ -189,6 +189,8 @@ jobs:
                   # every Read versus direct byte-count bookkeeping.
                   & $testExe --stream-ab
                   if ($LASTEXITCODE -ne 0) { throw "Synthetic HEIC same-host IStream A/B failed: $LASTEXITCODE" }
+                  & $testExe --container-latency
+                  if ($LASTEXITCODE -ne 0) { throw "Six HEIF container metadata timing probe failed: $LASTEXITCODE" }
                 } finally {
                   $env:WIC_HEIC_TRACE_FILE=$previousTrace
                 }
