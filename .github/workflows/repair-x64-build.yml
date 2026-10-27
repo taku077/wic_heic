@@ -821,9 +821,21 @@ jobs:
           $ErrorActionPreference='Stop'
           $msi=(Resolve-Path -LiteralPath 'WicHeic-HEIC-x64.msi').Path
           $sha=(Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          if(-not (Test-Path -LiteralPath $fixture -PathType Leaf)) {
+            throw 'Release fixture is missing; refuse to publish untestable 1.1.29'
+          }
+          $fixtureInfo=Get-Item -LiteralPath $fixture
+          if($fixtureInfo.Length -lt 1000 -or $fixtureInfo.Length -gt 33554432) {
+            throw 'Release fixture size is outside expected 12MP synthetic bounds'
+          }
+          $fixtureSha=(Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash
           @(
             "File: WicHeic-HEIC-x64.msi"
             "SHA256: $sha"
+            "SyntheticFixture: wicfast_synthetic_4032x3024.heic"
+            "SyntheticFixtureSHA256: $fixtureSha"
+            "SyntheticFixtureBytes: $($fixtureInfo.Length)"
             "Commit: $env:GITHUB_SHA"
             "Actions run: $env:GITHUB_RUN_ID"
             "Status: Win10 Photos UI UNVERIFIED; pilot auto HEVC for opaque 8bit >=6MP; keep v1.1.28 MSI for rollback"
@@ -838,6 +850,9 @@ jobs:
           path: |
             WicHeic-HEIC-x64.msi
             MSI_SHA256_AND_PROVENANCE.txt
+            docs/WIN10_THUMBNAIL_1129_PILOT_README_JA.md
+            ${{ runner.temp }}/wicfast_synthetic_4032x3024.heic
+            wictest/samples/fixture-irot3-exif6-noaux.heic
           if-no-files-found: error
           retention-days: 14
 
