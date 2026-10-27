@@ -66,6 +66,36 @@ $lines.Add('No pictures, filenames, window titles, screenshots or EXIF were coll
 if($marks.Count -eq 0) {
     $lines.Add('NO_F9_MARK: no marked visual glitch; timing causality remains UNKNOWN.')
 }
+# Provide useful WIC facts even when F9 was not pressed/captured.
+# No claim is made that any decoder PID is certainly Photos itself.
+$decodeAll=@($events | Where-Object {$_.event -eq 'DecoderFullDecode'})
+$losslessAll=@($events | Where-Object {$_.event -eq 'EncoderCommitLossless'})
+$reencodedAll=@($events | Where-Object {$_.event -eq 'EncoderCommitRecompressed'})
+$copySamples=@($events | Where-Object {$_.event -eq 'DecoderCopyPixels'})
+$lines.Add(('PASSIVE_WIC_SUMMARY full_decode_count={0} lossless_commit_count={1} reencoded_commit_count={2} copy_pixels_logged_count={3}' -f
+    $decodeAll.Count,$losslessAll.Count,$reencodedAll.Count,$copySamples.Count))
+if($decodeAll.Count -gt 0) {
+    $durations=@($decodeAll | ForEach-Object {[long]$_.elapsed} | Sort-Object)
+    $median=$durations[[int][math]::Floor(($durations.Count-1)/2)]
+    $lines.Add(('PASSIVE_DECODE_MS min={0} median_lower={1} max={2} n={3}' -f
+        $durations[0],$median,$durations[$durations.Count-1],$durations.Count))
+}
+if($losslessAll.Count -gt 0) {
+    $durations=@($losslessAll | ForEach-Object {[long]$_.elapsed} | Sort-Object)
+    $median=$durations[[int][math]::Floor(($durations.Count-1)/2)]
+    $lines.Add(('PASSIVE_LOSSLESS_COMMIT_MS min={0} median_lower={1} max={2} n={3}' -f
+        $durations[0],$median,$durations[$durations.Count-1],$durations.Count))
+}
+if($events.Count -gt 0) {
+    $ordered=@($events | Sort-Object tick)
+    $first=[DateTime]::FromFileTimeUtc([long]$ordered[0].utc).ToString('o')
+    $last=[DateTime]::FromFileTimeUtc([long]$ordered[$ordered.Count-1].utc).ToString('o')
+    $lines.Add(('PASSIVE_TRACE_RANGE_UTC start={0} end={1}' -f $first,$last))
+}
+$lines.Add('PASSIVE_LIMITATION: timings are per recorded WIC call, NOT full Photos display/render latency.')
+$lines.Add('PASSIVE_LIMITATION: a lossless codec commit does not prove the app subsequently replaced its image file.')
+$lines.Add('PASSIVE_LIMITATION: CopyPixels entries are sampled trace events and may not count every request.')
+$lines.Add('PASSIVE_LIMITATION: without F9 marks the visual glitch intervals cannot be located.')
 $radius=[long]$WindowSeconds*1000
 foreach($mark in $marks) {
     $mt=[long]$mark.tick
