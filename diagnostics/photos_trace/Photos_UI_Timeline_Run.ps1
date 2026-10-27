@@ -1,6 +1,10 @@
 # Windows PowerShell 5.1. Short, opt-in session with safe automatic trace cleanup.
 # No installer or Windows Photos modifications. Does temporarily configure
 # the two documented HKCU WIC numeric trace values for at most 20 minutes.
+param(
+    [ValidateRange(5,180)][int]$DurationSeconds=90,
+    [ValidateRange(100,1000)][int]$IntervalMs=200
+)
 $ErrorActionPreference='Stop'
 $root=$PSScriptRoot
 $start=Join-Path $root 'PhotosTrace_Start.ps1'
@@ -19,7 +23,7 @@ try {
     $owned=$true
     $settings=Get-ItemProperty -LiteralPath 'HKCU:\Software\WicHeic' -ErrorAction Stop
     $tracePath=[string]$settings.TraceFile
-    & $capture -DurationSeconds 90 -IntervalMs 200
+    & $capture -DurationSeconds $DurationSeconds -IntervalMs $IntervalMs
 } finally {
     if($owned){ & $stop }
 }
