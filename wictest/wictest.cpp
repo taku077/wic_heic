@@ -26,6 +26,7 @@
 #include "WICDecoderArbitrationAudit.h"
 #include "WICArbitrationMicroBench.h"
 #include "WICThumbnailWorkerLabProbe.h"
+#include "WICThumbnailConcurrentAutoProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -420,6 +421,7 @@ int main(int argc,char** argv)
             WICDecoderConcurrentProbe::RunPerf();
         } else if(argc==2 && std::strcmp(argv[1],"--thumbnail-worker-lab")==0){
             WICThumbnailWorkerLabProbe::Run();
+            WICThumbnailConcurrentAutoProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--perf-compare")==0){
             WICFormatLatencyProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--stream-ab")==0){
