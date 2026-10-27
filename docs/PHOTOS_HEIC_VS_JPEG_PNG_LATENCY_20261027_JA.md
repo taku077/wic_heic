@@ -154,3 +154,27 @@
 - Windows Actions [#40376611385](https://github.com/taku077/wic_heic/actions/runs/40376611385) **SUCCESS**（実装HEAD `d884da814fee`）。追加したストリームの不要Seek削減、画像ID一覧の再使用、Photosホスト判定のメモ化を**同時に適用**し、実HEIF人工2フレーム300回列挙で寸法とRGB一致を確認。回転50回／同名ファイル安全入替、保存タイミングのペア50/50、MSI隔離導入と登録復元も合格。
 - 同CIの5回中央値（ms）：HEIC初回全画素 **53.525**、準備138.067、90度回転25.701。PNG初回9.649、JPEG初回5.568。別の実行 #40376025882ではHEIC初回43.288、PNG8.461、JPEG4.857。**HEICだけが改善したとは言えず、CIホストの速度ばらつきが残る**。3項目の安全なコード変更は検証できたが、初回HEICを10〜20％短縮する目標は**未達／効果未確認**。
 - 実機に新MSIを導入する必要はない。次は同一ホスト／同じデータ／測定条件を統一した新旧A/B試験、または初回復号そのものの別の最適化候補を検討。差が小さい候補は廃棄一択でなく、後続改善と組合せた場合の効果を評価する。
+
+## 2026-10-27：WIC自動デコーダー探索を初回表示の新たな支配要因として切り分け
+
+従来の `--perf-compare` は、WICの自動選択+HEIF初期化を「open_ms」と一括測定したため、「HEVC復号」か「HEIF解析」か「WIC探索」か判断できなかった。今回は**実画像の復号前**の経路を分離。
+
+- 同一Windows CI #40455936648、公開人工2フレームHEICの6回交互A/B：`IWICImagingFactory::CreateDecoderFromStream`でWindowsへ自動選択を任せると中央値 **139.673ms**。一方、実際の自作 `CLSID_HEICDecoder` を `CoCreateInstance` し、同じ読み取り専用ストリームで直接`IWICBitmapDecoder::Initialize`すると中央値 **0.585ms**。いずれもGetSize、GetFrameなどの画素復号前に計測。**同じWICコードがファイルを読んだ時点では極端に遅くないため、差はWIC探索・仲裁経路に集中**する。
+- 6種類の人工・公開HEICでも自動選択の準備時間は約140msで、2フレーム固有・Exif固有という仮説は後退：#40455787522成功。ただし別CIでは同じ画像でも4〜16msを示す回があり、Windowsホスト状態/競合や発見キャッシュ等による揺らぎは残る。「常に140ms発生」とは断言しない。
+- 同一ホストのIStream旧方式再現`--stream-ab`では、6反復合計で**1,308回の余分なSeekが存在する**ことを確認したが、新方式の中央値が必ず速くなることは証明できなかった。さらに#40456173972の同一実行で、最適化後のRead callback全体は**0.306ms**、Seekは**0.016ms**、Statは**0.005ms**、旧方式に追加したSeekも**0.095ms**（いずれも6回試行の中央値）。~140msの主因はIStreamの呼び出し時間そのものではない。
+- **新しい独立検査：** 既存登録を変更せず`IWICImagingFactory::CreateComponentEnumerator`と`IWICBitmapDecoderInfo::MatchesPattern`で同じ人工HEICに一致するWICデコーダー数・競合数・最終選択が自作かを調べる`--arbitration-audit`を追加。レジストリの値／優先順位／アプリ関連付けは一切変更しない。CI結果が出るまでは結論未定。
+- WICによるデコーダー自動選択は**アプリ側の呼び出し**であり、WICコーデック自身がアプリの呼び出しを直に`CoCreateInstance`へ置き換えられるわけではない。Photosが呼ぶWIC APIや登録競合状況を確認する前に、優先順位・登録パターンを闇雲に変更しない。
+- この約140msとHEVC画素復号の約40〜60msは**独立の負荷項目**。ユーザー実機で画像が消える6〜7秒の直接原因は未確定、速度改善を単純に表示異常の解消と同義にしない。
+
+### 画素コピーの小規模改善
+
+`wic_heic/HeicBitmapFrameDecode.cpp`の`CopyPixels`で、**横幅全体、画素行と宛先のストライドが完全一致する連続RGBだけ**単一の`memcpy`へ変更。切り抜き範囲、paddingのあるstride、非連続のHEVC画像プレーンでは今までどおり行単位転送。50回回転／RGB一致／切り抜きpadding破壊検査などが含まれるCI #40455515405はSUCCESS。転送時間の改善幅・ユーザー体感は未認定。
+
+### 参照情報
+
+- Microsoft WIC discovery and arbitration https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks
+- Microsoft decoder identifying patterns https://learn.microsoft.com/en-us/windows/win32/wic/-wic-decoderregentries
+- Microsoft IWICBitmapDecoderInfo::MatchesPattern https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nn-wincodec-iwicbitmapdecoderinfo
+- Microsoft IWICImagingFactory::CreateDecoderFromStream https://learn.microsoft.com/en-us/windows/win32/api/wincodec/nf-wincodec-iwicimagingfactory-createdecoderfromstream
+- libheif RGB-conversion performance discussion https://github.com/strukturag/libheif/issues/1215
+- libheif RGB-conversion slowdown example https://github.com/strukturag/libheif/issues/472
