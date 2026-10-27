@@ -23,11 +23,12 @@ $instanceRoot="HKCR\CLSID\$cat\Instance"
 $backupFolder=Join-Path $env:RUNNER_TEMP ('WIC_AB_'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $backupFolder -ErrorAction Stop | Out-Null
 $oursBackup=Join-Path $backupFolder 'original-custom.reg'
-$otherBackup=Join-Path $backupFolder 'original-other-instance.reg'
+$otherBackup=Join-Path $backupFolder 'original-custom-instance.reg'
 $registered=$false
 $pushed=$false
 $competitorDetached=$false
 $otherReg=$null
+$ourInstanceReg="$instanceRoot\$ours"
 $baselinePriority=0
 $restored=$false
 function CheckExit([string]$label) {
@@ -58,10 +59,19 @@ try {
     $otherReg="$instanceRoot\$other"
     & reg.exe export $oursReg $oursBackup /y | Out-Null
     CheckExit 'Backup custom decoder registry key'
-    & reg.exe export $otherReg $otherBackup /y | Out-Null
-    CheckExit 'Backup other decoder category instance'
-    $baselineOther=@(& reg.exe query $otherReg /s)
-    CheckExit 'Inspect original other decoder'
+    # Windows' built-in HEIF decoder can be reported by WIC without
+    # registering a removable category Instance subkey. Never manipulate
+    # undocumented native registration or touch its CLSID tree.
+    & reg.exe query $otherReg /s 2>&1 | Out-Null
+    if($LASTEXITCODE -ne 0){
+        Write-Host 'WIC_NATIVE_HEIF_CATEGORY_INSTANCE_ABSENT=1; refusing native registry deletion'
+    } else {
+        Write-Host 'WIC_NATIVE_HEIF_CATEGORY_INSTANCE_PRESENT=1; still leaving native registration untouched'
+    }
+    & reg.exe export $ourInstanceReg $otherBackup /y | Out-Null
+    CheckExit 'Backup own disposable registered WIC category instance'
+    $baselineOther=@(& reg.exe query $ourInstanceReg /s)
+    CheckExit 'Inspect original own WIC category instance'
     $baselinePriority=[int](Get-ItemProperty -LiteralPath $oursPs -Name ArbitrationPriority).ArbitrationPriority
     if ($baselinePriority -ne 0) {
         throw "Custom decoder priority no longer baseline 0: $baselinePriority"
@@ -81,32 +91,35 @@ try {
         if ($priority -ne $baselinePriority) { throw 'Priority restore mismatch' }
     }
     try {
-        # Detach ONLY the WIC category instance, never foreign COM CLSID.
-        & reg.exe delete $otherReg /f | Out-Null
-        CheckExit 'Temporarily detach competing decoder from WIC category'
+        # In the disposable CI runner only, leave the native HEIF decoder
+        # alone and detach OUR category membership (which we own and backed
+        # up). This measures native-alone behavior without touching its
+        # built-in registration. WIC may return unavailable; benchmark logs it.
+        & reg.exe delete $ourInstanceReg /f | Out-Null
+        CheckExit 'Temporarily detach own CI WIC category membership'
         $competitorDetached=$true
-        & reg.exe query $otherReg *> $null
-        if ($LASTEXITCODE -eq 0) { throw 'Competing category instance still present' }
-        Bench 'ONLY_CUSTOM_MATCHING_DECODER'
+        & reg.exe query $ourInstanceReg *> $null
+        if ($LASTEXITCODE -eq 0) { throw 'Own WIC category instance still present' }
+        Bench 'ONLY_WINDOWS_NATIVE_HEIF_MATCH'
     } finally {
         if ($competitorDetached) {
             & reg.exe import $otherBackup | Out-Null
-            CheckExit 'Restore competing WIC category instance'
+            CheckExit 'Restore own WIC category instance'
             $competitorDetached=$false
-            $restoredOther=@(& reg.exe query $otherReg /s)
-            CheckExit 'Verify restored competitor registration'
+            $restoredOther=@(& reg.exe query $ourInstanceReg /s)
+            CheckExit 'Verify own WIC category restoration'
             if ([string]::Join(';',$baselineOther) -cne [string]::Join(';',$restoredOther)) {
-                throw 'Competing decoder registration differs from backup'
+                throw 'Own WIC category registration differs from backup'
             }
         }
     }
     Bench 'RESTORED_BOTH_DECODERS'
     $restored=$true
-    Write-Host 'WIC_ARBITRATION_DISPOSABLE_AB_PASS scenarios=4 priority_restored=1 foreign_instance_restored=1'
+    Write-Host 'WIC_ARBITRATION_DISPOSABLE_AB_PASS scenarios=4 priority_restored=1 own_instance_restored=1 native_registration_untouched=1'
 } finally {
     if ($competitorDetached -and (Test-Path -LiteralPath $otherBackup)) {
         & reg.exe import $otherBackup | Out-Null
-        CheckExit 'Emergency foreign WIC instance restore'
+        CheckExit 'Emergency own WIC instance restore'
     }
     if (Test-Path -LiteralPath $oursBackup) {
         & reg.exe import $oursBackup | Out-Null
