@@ -105,3 +105,20 @@ WicHeic 1.1.28の既存Photos編集・回転保存とWIC登録を維持するた
 通常のWIC回転・保存・デコード、診断ログ2MiB上限、Shell登録の一時変更・ロールバック、MSI隔離インストール／アンインストール後のレジストリ一致も**SUCCESS**。MSIはビルドされただけで**アップロードされておらず、ユーザーへの導入依頼もしていない**。
 
 **次の未検証課題：** 8bit+alpha・10/12bit・grid画像を含む複数画像同時処理のフォールバックと、Windows10 Explorer初回サムネイル（同一キャッシュ条件、複数枚、CPU負荷）での実効比較。現行1.1.28に変更はない。
+
+
+## 2026-10-28：混在3画像の同時復号を検証
+
+専用の`wictest/isolated_shell/Synthetic12MpHeic.cpp`生成器を拡張し、上書き禁止の人工12MP **8bitアルファ付きHEIC**も別ファイルに生成。透過値が領域ごとに変わる人工パターンを使用。既存の人工12MP 8bit不透明HEIC、および人工1080×1920 **10bit HEIC**と組み合わせた。
+
+`wictest/WICThumbnailMixedFormatProbe.h`で3種類の異なるWICフレームを別々のCOM MTAスレッドから同時に縮小。比較基準は同一各HEICの**従来方式・直列復号結果**。3画像とも256px程度のWIC FantサムネイルRGBが完全一致。
+
+**途中のテスト失敗の詳細**：初回 CI #40535048994 は`CoInitializeEx(COINIT_MULTITHREADED)`が`0x80010106 RPC_E_CHANGED_MODE`で失敗。原因は基準画像だけ、既に`CoInitialize()`でSTA初期化済みの`wictest.exe`メインスレッドから復号していたテストのスレッド構成ミス。基準画像も毎回独立のMTAスレッドで生成するよう修正し、RAIIで全COMオブジェクト破棄後に`CoUninitialize`する構造へ変更。**この失敗はWICコーデックの画像処理失敗ではない。**
+
+[修正後のCI #40536775728](https://github.com/taku077/wic_heic/actions/runs/40536775728) は**全工程SUCCESS**。`THUMB_MIXED_PARALLEL_RGB_PARITY_PASS fixtures=3 opaque8=1 alpha8=1 depth10=1 parallel=3 thumbnail_rgb_exact=1`を確認。コーデックの実際の復号時に`alpha=1, luma_bits=8, chroma_bits=8, requested=a, selected=0`が記録され、**RGBA入力を要求しただけの偽のalphaサンプルではない**ことが確認できた。10bitも`requested=a selected=0 luma_bits=10 chroma_bits=10`で元の復号経路へ戻った。
+
+**重要な境界**：現行WIC 1.1.28はHDR・alphaの元サンプルを現状で24bit RGBへ平坦化している。ここでの全画素一致は**WIC RGB出力の一致**であって、alpha値や10bit値の完全保持ではない。12bit実ビットストリーム・異なるプロセス間の負荷制御・Windows10 Explorer初回表示の効能もまだ未検証。現行1.1.28のMSI・Photos編集機能は変更しない。
+
+追加の同一runner混在バッチ処理時間比較と、実際のalpha検出・10bitフォールバックの自動CI必須判定は後続試験で実施（検証完了まで速度向上を断定しない）。
+
+実機MSIは`docs/THUMBNAIL_WINDOWS10_PILOT_GATE_20261028_JA.md`のリリース条件を満たしてから、**旧版1.1.28へ戻せる別バージョンで1度だけ**提供する。
