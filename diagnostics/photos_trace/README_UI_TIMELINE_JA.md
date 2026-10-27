@@ -55,3 +55,7 @@ GitHub内の`diagnostics/photos_trace`を**全ファイルまとめて**Cドラ�
 外部資料：<https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate>、<https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey>、<https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-hotkey>。
 
 実機側はZIP内の7ファイルを同じディレクトリの新版に揃え、旧版と混在させない。1.1.28 MSIの再導入は不要。
+
+### F9ホットキー版・ZIP配布条件
+
+Windows PowerShell 5.1のCIで、グローバルF9登録、キューからの通知取得、合成F9イベントのCSV記録、設定の後片付けを検査する。配布対象はインストール不要の7ファイルで、従来の1.1.28 MSIは同梱しない。**実際のWindows10フォトを前面にした実機動作は別途確認が必要**。診断中はF9を一時的に占有するため、他アプリのF9動作は抑止されることがある。登録ができない場合は安全のため開始時にエラー表示し、別のアプリがF9を使用していないか確認する。
