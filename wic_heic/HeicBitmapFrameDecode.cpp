@@ -433,7 +433,7 @@ void CHeicBitmapFrameDecode::DecodeImage()
     // Lab-only opt-in; no effect in the production WIC 1.1.28 build.
     // "auto" applies a conservative eligibility/concurrency policy. The
     // previous 2/4 force modes remain as the A/B experimental controls.
-#if defined(WIC_HEIC_THUMB_WORKERS_LAB)
+#if defined(WIC_HEIC_THUMB_WORKERS_LAB) || defined(WIC_HEIC_THUMB_ADAPTIVE_PILOT)
     wchar_t labEnabled[12]{};
     wchar_t workerSetting[12]{};
     const DWORD enabledLength=GetEnvironmentVariableW(
@@ -493,7 +493,59 @@ void CHeicBitmapFrameDecode::DecodeImage()
             m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
         }
     } else {
+#if defined(WIC_HEIC_THUMB_ADAPTIVE_PILOT)
+        // Production pilot: never depend on CI-only environment variables.
+        // Use 4 codec workers on one eligible 8-bit opaque >=6MP image,
+        // 2 when another eligible frame is decoding, otherwise default.
+        static std::atomic<unsigned> activePilotDecodes{0};
+        const unsigned already=activePilotDecodes.fetch_add(
+            1u,std::memory_order_acq_rel);
+        struct PilotDecodeGuard {
+            std::atomic<unsigned>& count;
+            ~PilotDecodeGuard(){ count.fetch_sub(1u,std::memory_order_acq_rel); }
+        } guard{activePilotDecodes};
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        const unsigned workers=HeicThumbnailWorkerPolicy::Select(
+            static_cast<unsigned>(m_Handle.get_width()),
+            static_cast<unsigned>(m_Handle.get_height()),
+            m_Handle.get_luma_bits_per_pixel(),
+            m_Handle.get_chroma_bits_per_pixel(),
+            m_Handle.has_alpha_channel(),info.dwNumberOfProcessors,already);
+        // This test-only marker is visible on Actions. No stdout is needed
+        // by Explorer/Photos on users' PCs.
+        if(enabledLength==4 && wcscmp(labEnabled,L"true")==0) {
+            printf("THUMB_PILOT_PRODUCTION_AUTO_SELECTED workers=%u "
+                   "width=%d height=%d alpha=%d luma_bits=%d "
+                   "concurrent_before=%u\n",
+                   workers,m_Handle.get_width(),m_Handle.get_height(),
+                   m_Handle.has_alpha_channel()?1:0,
+                   m_Handle.get_luma_bits_per_pixel(),already);
+        }
+        if(workers==0) {
+            m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
+        } else {
+            heif_decoding_options* opt=heif_decoding_options_alloc();
+            if(!opt)throw std::bad_alloc();
+            struct OptionsGuard {
+                heif_decoding_options* value;
+                ~OptionsGuard(){heif_decoding_options_free(value);}
+            } options{opt};
+            opt->num_codec_threads=static_cast<int>(workers);
+            heif_image* native=nullptr;
+            const heif_error error=heif_decode_image(
+                m_Handle.get_raw_image_handle(),&native,
+                heif_colorspace_RGB,m_chroma,opt);
+            if(error.code!=heif_error_Ok) {
+                if(native)heif_image_release(native);
+                throw heif::Error(error);
+            }
+            if(!native)throw std::runtime_error("pilot decoded HEIC missing");
+            m_Image=heif::Image(native);
+        }
+#else
         m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
+#endif
     }
 #else
     m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
