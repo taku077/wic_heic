@@ -98,8 +98,18 @@ inline void Run(){
     std::array<std::vector<BYTE>,3> reference,concurrent;
     if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",L"0"))
         throw std::runtime_error("Cannot set default HEVC mode");
-    for(int i=0;i<3;i++)
-        reference[i]=Decode(fixture[i],nullptr,nullptr);
+    // wictest.exe's main thread is already COM STA via CoInitialize().
+    // Run EACH baseline on a fresh MTA thread; never change the apartment
+    // model of the existing test host (RPC_E_CHANGED_MODE).
+    for(int i=0;i<3;i++){
+        std::exception_ptr baselineFailure{};
+        std::thread baseline([&,i]{
+            try { reference[i]=Decode(fixture[i],nullptr,nullptr); }
+            catch(...) { baselineFailure=std::current_exception(); }
+        });
+        baseline.join();
+        if(baselineFailure)std::rethrow_exception(baselineFailure);
+    }
     if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",L"a"))
         throw std::runtime_error("Cannot set auto HEVC mode");
     std::atomic<int> ready{0};
