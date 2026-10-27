@@ -22,6 +22,7 @@
 #include "WICPhotosExifOnlyProbe.h"
 #include "WICFormatLatencyProbe.h"
 #include "WICStreamSameHostABProbe.h"
+#include "WICHeifContainerLatencyProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -416,6 +417,8 @@ int main(int argc,char** argv)
             WICFormatLatencyProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--stream-ab")==0){
             WICStreamSameHostABProbe::Run();
+        } else if(argc==2 && std::strcmp(argv[1],"--container-latency")==0){
+            WICHeifContainerLatencyProbe::Run();
         } else if(argc!=1){
             throw std::runtime_error("Unknown synthetic WIC test mode");
         } else {
