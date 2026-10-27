@@ -101,6 +101,31 @@ foreach($mark in $marks) {
     $mt=[long]$mark.tick
     $timestamp=[DateTime]::FromFileTimeUtc([long]$mark.utc_filetime).ToString('o')
     $pidValue=[int]$mark.foreground_pid
+    # Track focus changes independently of the WIC process ID. A user may
+    # mark a visual glitch after another window comes to the foreground.
+    # This DOES NOT identify application names or track text/image content.
+    $preceding=@($samples | Where-Object {[long]$_.tick -le $mt} |
+        Sort-Object {[long]$_.tick})
+    $lastSwitch=$null
+    for($j=1;$j -lt $preceding.Count;$j++) {
+        $from=[int]$preceding[$j-1].foreground_pid
+        $to=[int]$preceding[$j].foreground_pid
+        if($from -ne $to) {
+            $lastSwitch=[pscustomobject]@{
+                from=$from;to=$to;tick=[long]$preceding[$j].tick
+            }
+        }
+    }
+    if($lastSwitch -ne $null) {
+        $delta=[long]($lastSwitch.tick-$mt)
+        $lines.Add(('FOREGROUND_SWITCH_BEFORE_MARK offset_ms={0} from_pid={1} to_pid={2}' -f
+            $delta,$lastSwitch.from,$lastSwitch.to))
+        if([math]::Abs([double]$delta) -lt 3000) {
+            $lines.Add('FOREGROUND_CAUTION: window owner changed within 3s of mark; a WIC event in another PID cannot be attributed to the marked Photos image without additional evidence.')
+        }
+    } else {
+        $lines.Add('FOREGROUND_SWITCH_BEFORE_MARK none_in_recorded_timeline=1')
+    }
     $near=@($events | Where-Object {
         [math]::Abs([double]($_.tick-$mt)) -le $radius
     })
@@ -112,6 +137,9 @@ foreach($mark in $marks) {
         ($_.tick-$_.elapsed) -le $mt
     })
     $related=@($near | ForEach-Object {$_.pid} | Sort-Object -Unique)
+    $matchesPid=@($near | Where-Object {$_.pid -eq $pidValue})
+    $lines.Add(('MARK_PID_WIC_MATCH matched_events={0} confidence=WINDOW_OWNER_ONLY' -f $matchesPid.Count))
+
     $lines.Add(('MARK utc={0} tick={1} foreground_pid={2} window={3}x{4} client={5}x{6}' -f
         $timestamp,$mt,$pidValue,$mark.window_w,$mark.window_h,$mark.client_w,$mark.client_h))
     $lines.Add(('  nearby_wic={0} opens={1} full_decodes={2} sampled_copy_pixels={3} approximate_decode_overlap={4} wic_pids={5}' -f
