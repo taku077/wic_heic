@@ -18,12 +18,63 @@ inline void Check(HRESULT hr,const char* why){
         throw std::runtime_error(why);
     }
 }
+// Concurrently request *new* frames from the same decoder. Unlike the
+// existing CopyPixels stress test, this starts with an empty per-image handle
+// cache so simultaneous first lookups must not allocate or publish twice.
+inline void RunConcurrentGetFrame(IWICImagingFactory* factory) {
+    CComPtr<IWICBitmapDecoder> decoder;
+    Check(factory->CreateDecoderFromFilename(
+        L"samples\\fixture-irot3-exif6-noaux.heic",
+        nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,
+        &decoder),"open concurrent frame source");
+    constexpr int workers=4;
+    constexpr int perWorker=32;
+    std::array<HRESULT,workers> outcomes{};
+    std::atomic<int> ready{0};
+    std::atomic<bool> go{false};
+    std::array<std::thread,workers> threads;
+    IWICBitmapDecoder* const shared=decoder;
+    for(int i=0;i<workers;i++) {
+        threads[i]=std::thread([&,i] {
+            HRESULT hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+            if(FAILED(hr)) {outcomes[i]=hr;ready.fetch_add(1);return;}
+            ready.fetch_add(1);
+            while(!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for(int j=0;j<perWorker;j++) {
+                CComPtr<IWICBitmapFrameDecode> frame;
+                hr=shared->GetFrame(0,&frame);
+                if(FAILED(hr))break;
+                UINT w=0,h=0;
+                hr=frame->GetSize(&w,&h);
+                if(FAILED(hr))break;
+                WICPixelFormatGUID fmt{};
+                hr=frame->GetPixelFormat(&fmt);
+                if(FAILED(hr))break;
+                if(w!=1080 || h!=1920 ||
+                   !IsEqualGUID(fmt,GUID_WICPixelFormat24bppRGB)) {
+                    hr=E_FAIL;
+                    break;
+                }
+            }
+            outcomes[i]=hr;
+            CoUninitialize();
+        });
+    }
+    while(ready.load()!=workers)std::this_thread::yield();
+    go.store(true,std::memory_order_release);
+    for(auto& thread:threads)thread.join();
+    for(auto hr:outcomes)
+        Check(hr,"concurrent fresh GetFrame/dimensions/pixel format");
+    printf("WIC_HEIF_CONCURRENT_GETFRAME_HANDLE_REUSE_PASS workers=4 calls=128\\n");
+}
 inline void RunInMta() {
     Check(CoInitializeEx(nullptr,COINIT_MULTITHREADED),"init MTA coordinator");
     try {
         CComPtr<IWICImagingFactory> factory;
         Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
              CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"create factory");
+        RunConcurrentGetFrame(factory);
         CComPtr<IWICBitmapDecoder> decoder;
         Check(factory->CreateDecoderFromFilename(
              L"samples\\fixture-irot3-exif6-noaux.heic",
