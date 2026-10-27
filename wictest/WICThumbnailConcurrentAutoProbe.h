@@ -41,6 +41,7 @@ inline void Run(){
     auto decode=[&](int i,bool parallel){
         const HRESULT com=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
         bool initialized=SUCCEEDED(com);
+        bool announced=false;
         try {
             Check(com,"COM MTA worker");
             CComPtr<IWICImagingFactory> factory;
@@ -65,6 +66,7 @@ inline void Run(){
             // The barrier simultaneously begins the slow HEVC decode.
             if(parallel){
                 ready.fetch_add(1,std::memory_order_release);
+                announced=true;
                 while(!start.load(std::memory_order_acquire)) Sleep(1);
             }
             images[i].resize(size_t(256)*192u*3u);
@@ -73,7 +75,7 @@ inline void Run(){
         }catch(...){
             errors[i]=std::current_exception();
             // Always release a waiting other worker after setup failure.
-            if(parallel)ready.fetch_add(1,std::memory_order_release);
+            if(parallel && !announced)ready.fetch_add(1,std::memory_order_release);
         }
         if(initialized)CoUninitialize();
     };
