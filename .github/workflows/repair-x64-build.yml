@@ -301,6 +301,14 @@ jobs:
           & $generator $dll $fixture
           if($LASTEXITCODE -ne 0){throw 'Synthetic 12MP HEIC generator failed'}
           if((Get-Item -LiteralPath $fixture).Length -gt 33554432){throw '12MP fixture exceeded 32MiB'}
+          # Distinct 8-bit RGBA sample: never overwrite the opaque fixture.
+          # WIC encoder must preserve a real HEIF alpha auxiliary plane.
+          $alpha=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024_alpha.heic'
+          if(Test-Path -LiteralPath $alpha){throw 'Refuse to overwrite synthetic alpha HEIC'}
+          & $generator $dll $alpha alpha
+          if($LASTEXITCODE -ne 0){throw 'Synthetic 12MP alpha HEIC encode failed'}
+          if((Get-Item -LiteralPath $alpha).Length -gt 33554432){throw 'Alpha HEIC exceeded 32MiB'}
+          Write-Host 'THUMB_WORKERS_12MP_ALPHA_SYNTHETIC_FIXTURE_PASS'
           Write-Host 'THUMB_WORKERS_12MP_SYNTHETIC_FIXTURE_PASS'
 
       - name: Compare 12MP cold HEVC 0 versus 2 versus 4 worker decode with exact RGB
