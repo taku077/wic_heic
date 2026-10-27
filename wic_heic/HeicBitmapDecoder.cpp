@@ -111,6 +111,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
         if (declaredCount<0 ||
             m_TopLevelIds.size()!=static_cast<size_t>(declaredCount))
             return WINCODEC_ERR_BADIMAGE;
+        // Cache only small native image-handle references, never RGB buffers.
+        // Keep auxiliary-image loading lazy, as before.
+        m_TopLevelHandles.resize(m_TopLevelIds.size());
         WicHeicDiagnostic::Emit("DecoderContainerParsed",0,0,0,0,
             "heif-container",S_OK,0,GetTickCount64()-parseStarted);
 	}
@@ -297,7 +300,17 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
 			return E_POINTER;
 		}
 
-        heif::ImageHandle handle=m_Context.get_image_handle(m_TopLevelIds[index]);
+        heif::ImageHandle handle;
+        {
+            // Subsequent requests share the existing native handle without
+            // allocating/looking up a new libheif handle for every GetFrame.
+            // MTA callers synchronize the first lookup for each image.
+            std::lock_guard<std::mutex> guard(m_TopLevelHandleMutex);
+            heif::ImageHandle& cached=m_TopLevelHandles[index];
+            if(cached.empty())
+                cached=m_Context.get_image_handle(m_TopLevelIds[index]);
+            handle=cached;
+        }
 		if (handle.empty()) {
 			return WINCODEC_ERR_FRAMEMISSING;
 		}
@@ -325,8 +338,8 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetFrame(UINT index, __RPC__deref_
         // HEIF (potentially several MiB) on EVERY primary GetFrame in all
         // other consumers, including Explorer, only for Offer() to reject it.
         // Avoid that redundant IStream read without changing Photos saves.
-        if(!m_OfferedRotationSource && handle.is_primary_image()) {
-            m_OfferedRotationSource=true;
+        if(handle.is_primary_image() &&
+           !m_OfferedRotationSource.exchange(true,std::memory_order_acq_rel)) {
             if(PhotosPureRotationBridge::CaptureAllowedHost()) {
                 try {
                     std::vector<uint8_t> source;
