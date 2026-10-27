@@ -191,6 +191,8 @@ jobs:
                   if ($LASTEXITCODE -ne 0) { throw "Synthetic HEIC same-host IStream A/B failed: $LASTEXITCODE" }
                   & $testExe --container-latency
                   if ($LASTEXITCODE -ne 0) { throw "Six HEIF container metadata timing probe failed: $LASTEXITCODE" }
+                  & $testExe --arbitration-audit
+                  if ($LASTEXITCODE -ne 0) { throw "Read-only WIC decoder arbitration audit failed: $LASTEXITCODE" }
                 } finally {
                   $env:WIC_HEIC_TRACE_FILE=$previousTrace
                 }
