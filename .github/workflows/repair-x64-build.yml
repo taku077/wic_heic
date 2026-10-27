@@ -586,6 +586,24 @@ jobs:
           if($text -notmatch 'approximate_decode_overlap=1') {
             throw ('WIC/UI clock correlation test failed: '+$text)
           }
+          # Regression: a late focus switch must be explicit in the report.
+          # A decoder event in the old window PID is not proof about the
+          # new foreground window when F9 was pressed.
+          $focusCsv=Join-Path $root 'synthetic_focus_switch_ci.csv'
+          @(
+            'utc_filetime,tick,event,foreground_pid,window_w,window_h,client_w,client_h,process_cpu_ms,working_set_kib',
+            '134065152000000000,99990,SAMPLE,42,1000,800,980,750,50,2048',
+            '134065152000001000,100010,MARK_F9,43,1000,800,980,750,50,2048'
+          ) | Set-Content -LiteralPath $focusCsv -Encoding ASCII
+          & (Join-Path $root 'Photos_UI_Timeline_Correlate.ps1') -TimelinePath $focusCsv -TracePath $trace -WindowSeconds 1
+          $report=Get-ChildItem -LiteralPath $root -Filter 'Photos_UI_Correlation_*.txt' -File |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $text=Get-Content -LiteralPath $report.FullName -Raw -Encoding UTF8
+          if($text -notmatch 'FOREGROUND_SWITCH_BEFORE_MARK offset_ms=0 from_pid=42 to_pid=43' -or
+             $text -notmatch 'FOREGROUND_CAUTION:' -or
+             $text -notmatch 'MARK_PID_WIC_MATCH matched_events=0') {
+            throw 'Photos foreground switch correlation regression'
+          }
           # A no-F9 user recording still contains actionable aggregate WIC
           # statistics. Check that its report is not just "inconclusive".
           $noMark=Join-Path $root 'synthetic_timeline_no_mark_ci.csv'
