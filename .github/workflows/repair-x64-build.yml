@@ -728,6 +728,14 @@ jobs:
           }
           $version=ReadMsiProperty 'ProductVersion'
           $productName=ReadMsiProperty 'ProductName'
+          $productCode=ReadMsiProperty 'ProductCode'
+          $upgradeCode=ReadMsiProperty 'UpgradeCode'
+          try {
+            $null=[Guid]::Parse($productCode)
+            $null=[Guid]::Parse($upgradeCode)
+          } catch {
+            throw "Missing or invalid MSI major-upgrade identity: Product=$productCode Upgrade=$upgradeCode"
+          }
           if($version -ne '1.1.29' -or $productName -ne 'WicHeic Repair Test') {
             throw "Candidate has unexpected identity: $productName $version"
           }
@@ -786,7 +794,7 @@ jobs:
           if(-not $?) { throw 'Read-only WIC restoration comparison failed' }
 
       # Upload PS5.1 diagnostic only after deliberate diagnostics(release): commit.
-      # No DLL/MSI release and no changes to existing installed 1.1.29.
+      # No DLL/MSI release and no changes to installed user environment.
       - name: Upload no-install Photos UI timing kit
         if: ${{ github.ref == 'refs/heads/fix/photos-118-selfwic-incremental' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'diagnostics(release):') }}
         uses: actions/upload-artifact@v4
