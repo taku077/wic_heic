@@ -36,3 +36,11 @@
 - libde265 HEVC codec workers：https://github.com/strukturag/libde265
 - libvips HEIF埋込サムネイル等：https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c
 - libheifのHEVC/alpha/10bit対応はバックエンドと版依存：https://github.com/strukturag/libheif
+
+## 1.1.29実機試験用MSIの段階
+
+- 専用候補ブランチ：`candidate/thumb-adaptive-1129-win10-pilot`。**WicHeic 1.1.29**。x64 Releaseで`WIC_HEIC_THUMB_ADAPTIVE_PILOT`を有効化し、実機Windows10では研究用環境変数なしでも、`>=6MP`・luma/chromaとも8bit・alphaなしに適応型復号を適用。対象外のHEICは従来復号経路、例外時のワーカー数はRAIIで復元。Windows PhotosのUI操作と回転/保存を壊さないことをCI/実機双方で必須確認。
+- `WIC_HEIC_THUMB_WORKERS_LAB`は研究CIの標準/2/4/auto比較のためだけに併存。`GITHUB_ACTIONS=true`で明示されたモード以外、通常のWindows10では製品自動選択が有効。独立専用`IThumbnailProvider`・レジストリ優先順位の変更は一切含めない。
+- WIC DLLの**非CI・無環境変数**の自動選択経路を人工12MPサムネイルで試験し、標準復号の256px RGBと完全一致すること、CIログに`THUMB_PILOT_PRODUCTION_AUTO_SELECTED workers=4`と`THUMB_PILOT_NOENV_RGB_PARITY_PASS`が出ることをrelease gateとする。
+- **旧版1.1.28のMSIを手元に保存できていることを実機導入前に確認**。失敗した場合はWindowsアプリ設定から1.1.29をアンインストールしてから、手元の1.1.28 MSIを再実行（`MajorUpgrade`が旧版を新版本体から上書きダウングレードするとは仮定しない）。アンインストール時に保護された元写真・Exif・ICCが変わらないことも確認。古いMSIが不明の場合は新版を導入しない。
+- 新しいMSIはGitHub Action成功後、こちら側で取得・展開・ファイルごとのSHA確認・再ZIP化し、最初の1回だけユーザーへ配布。**配布時点では実機Windows10で未検証**であり、必ず1.1.28へ戻す条件を示す。
