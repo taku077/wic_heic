@@ -21,6 +21,7 @@
 #include "WICPhotosReplace50Probe.h"
 #include "WICPhotosExifOnlyProbe.h"
 #include "WICFormatLatencyProbe.h"
+#include "WICStreamSameHostABProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -413,6 +414,8 @@ int main(int argc,char** argv)
             WICPhotosScaleMatrixProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--perf-compare")==0){
             WICFormatLatencyProbe::Run();
+        } else if(argc==2 && std::strcmp(argv[1],"--stream-ab")==0){
+            WICStreamSameHostABProbe::Run();
         } else if(argc!=1){
             throw std::runtime_error("Unknown synthetic WIC test mode");
         } else {
