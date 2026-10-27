@@ -62,8 +62,8 @@ try {
     # Windows' built-in HEIF decoder can be reported by WIC without
     # registering a removable category Instance subkey. Never manipulate
     # undocumented native registration or touch its CLSID tree.
-    & reg.exe query $otherReg /s 2>&1 | Out-Null
-    if($LASTEXITCODE -ne 0){
+    $otherRegistryPath="Registry::HKEY_CLASSES_ROOT\CLSID\$cat\Instance\$other"
+    if(-not (Test-Path -LiteralPath $otherRegistryPath)){
         Write-Host 'WIC_NATIVE_HEIF_CATEGORY_INSTANCE_ABSENT=1; refusing native registry deletion'
     } else {
         Write-Host 'WIC_NATIVE_HEIF_CATEGORY_INSTANCE_PRESENT=1; still leaving native registration untouched'
@@ -98,8 +98,9 @@ try {
         & reg.exe delete $ourInstanceReg /f | Out-Null
         CheckExit 'Temporarily detach own CI WIC category membership'
         $competitorDetached=$true
-        & reg.exe query $ourInstanceReg *> $null
-        if ($LASTEXITCODE -eq 0) { throw 'Own WIC category instance still present' }
+        if (Test-Path -LiteralPath "Registry::HKEY_CLASSES_ROOT\CLSID\$cat\Instance\$ours") {
+            throw 'Own WIC category instance still present'
+        }
         Bench 'ONLY_WINDOWS_NATIVE_HEIF_MATCH'
     } finally {
         if ($competitorDetached) {
