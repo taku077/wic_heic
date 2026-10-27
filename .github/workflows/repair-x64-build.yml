@@ -246,6 +246,14 @@ jobs:
             if ($unregister.ExitCode -ne 0) { Write-Warning "Runner-only COM deregistration failed: $($unregister.ExitCode)" }
           }
 
+      - name: Run isolated and reversible WIC decoder priority / competitor A-B
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          & './diagnostics/wic_arbitration/RunnerOnly_Arbitration_AB.ps1' -TestExe $exe -CodecDll $dll
+
       - name: Confirm HKCU trace reaches real WIC codec without environment override
         shell: pwsh
         run: |
