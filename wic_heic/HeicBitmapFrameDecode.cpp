@@ -7,6 +7,7 @@
 #include "PhotosWicTrace.h"
 #include "ExifOrientationFix.h"
 #include "HeicLosslessNative.h"
+#include "HeicThumbnailWorkerPolicy.h"
 
 CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle,UINT index,UINT count)
 	: m_Count(1)
@@ -429,9 +430,9 @@ void CHeicBitmapFrameDecode::DecodeImage()
     // All measurements are opt-in: the production path never writes a log
     // unless the existing privacy-limited diagnostic was explicitly enabled.
     const ULONGLONG decodeStarted=GetTickCount64();
-    // CI research only: v0.4.0's codec-thread hint, on an isolated
-    // experimental branch. NEVER enable the macro in release MSI builds.
-    // The shipping path below remains unchanged by default.
+    // Lab-only opt-in; no effect in the production WIC 1.1.28 build.
+    // "auto" applies a conservative eligibility/concurrency policy. The
+    // previous 2/4 force modes remain as the A/B experimental controls.
 #if defined(WIC_HEIC_THUMB_WORKERS_LAB)
     wchar_t labEnabled[12]{};
     wchar_t workerSetting[12]{};
@@ -440,27 +441,62 @@ void CHeicBitmapFrameDecode::DecodeImage()
     const DWORD settingLength=GetEnvironmentVariableW(
         L"WIC_HEIC_THUMB_LAB_WORKERS",workerSetting,12);
     if(enabledLength==4 && wcscmp(labEnabled,L"true")==0 &&
-       settingLength==1 && (workerSetting[0]==L'2' ||
-                            workerSetting[0]==L'4')) {
-        heif_decoding_options* opt=heif_decoding_options_alloc();
-        if(!opt) throw std::bad_alloc();
-        opt->num_codec_threads=workerSetting[0]-L'0';
-        heif_image* native=nullptr;
-        const heif_error error=heif_decode_image(
-            m_Handle.get_raw_image_handle(),&native,
-            heif_colorspace_RGB,m_chroma,opt);
-        heif_decoding_options_free(opt);
-        if(error.code!=heif_error_Ok) {
-            if(native)heif_image_release(native);
-            throw heif::Error(error);
+       settingLength==1 &&
+       (workerSetting[0]==L'0' || workerSetting[0]==L'2' ||
+        workerSetting[0]==L'4' || workerSetting[0]==L'a')) {
+        static std::atomic<unsigned> activeDecodeCount{0};
+        // Never leave the counter elevated after libheif exceptions.
+        const unsigned otherDecodes=activeDecodeCount.fetch_add(
+            1u,std::memory_order_acq_rel);
+        struct LabDecodeGuard {
+            std::atomic<unsigned>& count;
+            ~LabDecodeGuard() { count.fetch_sub(1u,std::memory_order_acq_rel); }
+        } activeGuard{activeDecodeCount};
+        unsigned workers=0;
+        if(workerSetting[0]==L'a') {
+            SYSTEM_INFO sys{};
+            GetSystemInfo(&sys);
+            workers=HeicThumbnailWorkerPolicy::Select(
+                static_cast<unsigned>(m_Handle.get_width()),
+                static_cast<unsigned>(m_Handle.get_height()),
+                m_Handle.get_luma_bits_per_pixel(),
+                m_Handle.get_chroma_bits_per_pixel(),
+                m_Handle.has_alpha_channel(),
+                sys.dwNumberOfProcessors,otherDecodes);
+        } else if(workerSetting[0]==L'2' || workerSetting[0]==L'4') {
+            workers=workerSetting[0]-L'0';
         }
-        if(!native)throw std::runtime_error("lab decode returned no image");
-        m_Image=heif::Image(native);
+        printf("THUMB_WORKERS_POLICY_DECISION requested=%c selected=%u "
+               "width=%d height=%d luma_bits=%d chroma_bits=%d alpha=%d "
+               "concurrent_before=%u\n",
+            static_cast<char>(workerSetting[0]),workers,
+            m_Handle.get_width(),m_Handle.get_height(),
+            m_Handle.get_luma_bits_per_pixel(),
+            m_Handle.get_chroma_bits_per_pixel(),
+            m_Handle.has_alpha_channel()?1:0,otherDecodes);
+        if(workers!=0) {
+            heif_decoding_options* opt=heif_decoding_options_alloc();
+            if(!opt) throw std::bad_alloc();
+            opt->num_codec_threads=static_cast<int>(workers);
+            heif_image* native=nullptr;
+            const heif_error error=heif_decode_image(
+                m_Handle.get_raw_image_handle(),&native,
+                heif_colorspace_RGB,m_chroma,opt);
+            heif_decoding_options_free(opt);
+            if(error.code!=heif_error_Ok) {
+                if(native)heif_image_release(native);
+                throw heif::Error(error);
+            }
+            if(!native)throw std::runtime_error("lab decode returned no image");
+            m_Image=heif::Image(native);
+        } else {
+            m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
+        }
     } else {
         m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
     }
 #else
-	m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
+    m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
 #endif
 	m_PlaneInterleaved = m_Image.get_plane2(heif_channel_interleaved, &m_Stride);
 
