@@ -24,7 +24,36 @@ jobs:
   compile-x64:
     runs-on: windows-2022
     timeout-minutes: 75
+
     steps:
+      # Make run id discoverable immediately, even though native Actions
+      # Checks cannot be enumerated by the linked commit-status reader.
+      - name: Expose x64 Actions run id as pending commit status
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $link="https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $body=@{
+            state='pending'
+            context='ci/wic-heic-x64'
+            description='x64 synthetic WIC tests running'
+            target_url=$link
+          } | ConvertTo-Json -Compress
+          $headers=@{
+            Authorization="Bearer $env:GITHUB_TOKEN"
+            Accept='application/vnd.github+json'
+            'X-GitHub-Api-Version'='2022-11-28'
+            'User-Agent'='wic-heic-ci'
+          }
+          $uri="https://api.github.com/repos/$env:GITHUB_REPOSITORY/statuses/$env:GITHUB_SHA"
+          $status=Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -Body $body -ContentType 'application/json'
+          if($status.state -ne 'pending' -or $status.context -ne 'ci/wic-heic-x64') {
+            throw 'Unexpected pending status response'
+          }
+          Write-Host "CI_PENDING_STATUS_PUBLISHED run=$env:GITHUB_RUN_ID"
       - name: Check out pinned submodules
         uses: actions/checkout@v4
         with:
