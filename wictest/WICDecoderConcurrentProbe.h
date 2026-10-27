@@ -31,6 +31,12 @@ inline void RunConcurrentGetFrame(IWICImagingFactory* factory) {
     constexpr int workers=4;
     constexpr int perWorker=32;
     std::array<HRESULT,workers> outcomes{};
+    // Each worker decodes a fresh WIC frame sharing the same cached native
+    // HEIF handle. Compare the entire synthetic RGB raster, not only size.
+    const UINT stride=1080u*3u;
+    const UINT bytes=stride*1920u;
+    std::array<std::vector<BYTE>,workers> pixels;
+    for(auto& out:pixels)out.resize(bytes);
     std::atomic<int> ready{0};
     std::atomic<bool> go{false};
     std::array<std::thread,workers> threads;
@@ -58,6 +64,12 @@ inline void RunConcurrentGetFrame(IWICImagingFactory* factory) {
                     break;
                 }
             }
+            if(SUCCEEDED(hr)) {
+                CComPtr<IWICBitmapFrameDecode> fresh;
+                hr=shared->GetFrame(0,&fresh);
+                if(SUCCEEDED(hr))
+                    hr=fresh->CopyPixels(nullptr,stride,bytes,pixels[i].data());
+            }
             outcomes[i]=hr;
             CoUninitialize();
         });
@@ -66,8 +78,12 @@ inline void RunConcurrentGetFrame(IWICImagingFactory* factory) {
     go.store(true,std::memory_order_release);
     for(auto& thread:threads)thread.join();
     for(auto hr:outcomes)
-        Check(hr,"concurrent fresh GetFrame/dimensions/pixel format");
-    printf("WIC_HEIF_CONCURRENT_GETFRAME_HANDLE_REUSE_PASS workers=4 calls=128\n");
+        Check(hr,"concurrent GetFrame and fresh-frame CopyPixels");
+    for(int i=1;i<workers;i++)
+        if(std::memcmp(pixels[0].data(),pixels[i].data(),bytes)!=0)
+            throw std::runtime_error("concurrent fresh-frame HEIF RGB mismatch");
+    printf("WIC_HEIF_CONCURRENT_GETFRAME_HANDLE_REUSE_PASS workers=4 calls=128"
+           " fresh_decode_rgb_equal=1\n");
 }
 // Exercise repeated *WIC* GetFrame through the same public COM interface
 // Photos uses. No libheif headers/library dependency in wictest.exe.
