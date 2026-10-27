@@ -282,6 +282,56 @@ inline void ProbeRotatorBufferAB(IWICImagingFactory* factory,
            "exact_rgb_equal=1 windows_server_only=1 photos_ui_unverified=1\n",
            format,lazyMs[1],bufferedMs[1],Millis(beforeCache,afterCache));
 }
+// Explorer's standard Shell thumbnail provider may ask a WIC decoder
+// for a container/frame thumbnail before falling back to full-size decode.
+// Probe which API succeeds and the cost of its first RGB pixel, using the
+// same synthetic image sources as the existing three-format benchmark.
+// This does NOT prove that Explorer selected the same route on Windows 10.
+inline void ProbeThumbnailRoute(IWICImagingFactory* factory,
+                                const char* label,const wchar_t* path) {
+    const auto opened=Now();
+    CComPtr<IWICBitmapDecoder> decoder;
+    Need(factory->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,&decoder),"thumbnail route open");
+    const auto decoderReady=Now();
+    CComPtr<IWICBitmapSource> container;
+    const HRESULT containerHr=decoder->GetThumbnail(&container);
+    const auto containerReady=Now();
+    CComPtr<IWICBitmapFrameDecode> frame;
+    Need(decoder->GetFrame(0,&frame),"thumbnail route frame");
+    CComPtr<IWICBitmapSource> frameThumb;
+    const HRESULT frameHr=frame->GetThumbnail(&frameThumb);
+    const auto thumbnailReady=Now();
+    const bool hasContainer=SUCCEEDED(containerHr) && container;
+    const bool hasFrame=SUCCEEDED(frameHr) && frameThumb;
+    IWICBitmapSource* selected=hasContainer?container.p:
+        (hasFrame?frameThumb.p:static_cast<IWICBitmapSource*>(frame.p));
+    if(!selected)throw std::runtime_error("No WIC thumbnail/fallback source");
+    UINT w=0,h=0;
+    Need(selected->GetSize(&w,&h),"thumbnail route selected dimensions");
+    if(w==0 || h==0 || w>65535 || h>65535)
+        throw std::runtime_error("Invalid synthetic thumbnail dimensions");
+    CComPtr<IWICBitmapSource> rgb;
+    Need(WICConvertBitmapSource(GUID_WICPixelFormat24bppBGR,
+        selected,&rgb),"thumbnail route 24-bit BGR conversion");
+    const WICRect rect{0,0,1,1};
+    BYTE firstPixel[3]{};
+    const auto pixelStart=Now();
+    Need(rgb->CopyPixels(&rect,3,3,firstPixel),
+         "thumbnail route first pixel read");
+    const auto pixelEnd=Now();
+    printf("WIC_THUMBNAIL_ROUTE format=%s container_hr=0x%08lx "
+           "frame_hr=0x%08lx selected=%s size=%ux%u "
+           "open_ms=%.3f thumb_query_ms=%.3f first_pixel_ms=%.3f "
+           "actual_explorer_route_unknown=1 fixture=artificial_only\n",
+           label,static_cast<unsigned long>(containerHr),
+           static_cast<unsigned long>(frameHr),
+           hasContainer?"CONTAINER_EMBEDDED":
+                (hasFrame?"FRAME_EMBEDDED":"FULL_FALLBACK"),
+           w,h,Millis(opened,decoderReady),
+           Millis(decoderReady,thumbnailReady),
+           Millis(pixelStart,pixelEnd));
+}
 inline void Run() {
     const wchar_t* original=L"samples\\fixture-irot3-exif6-noaux.heic";
     const DWORD status=GetFileAttributesW(original);
@@ -320,6 +370,7 @@ inline void Run() {
     // Exercise the precise fit -> further zoom -> rotate WIC pixel path
     // once for each equivalent format before the timing comparison.
     for(int format=0;format<3;format++) {
+        ProbeThumbnailRoute(factory,labels[format],paths[format]);
         ProbeFitExtraZoomRotate(factory,labels[format],paths[format]);
         ProbeRotatorBufferAB(factory,labels[format],paths[format]);
     }
