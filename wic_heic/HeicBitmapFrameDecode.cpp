@@ -429,8 +429,39 @@ void CHeicBitmapFrameDecode::DecodeImage()
     // All measurements are opt-in: the production path never writes a log
     // unless the existing privacy-limited diagnostic was explicitly enabled.
     const ULONGLONG decodeStarted=GetTickCount64();
-	// Set both to undefined to use original one
+    // CI research only: v0.4.0's codec-thread hint, on an isolated
+    // experimental branch. NEVER enable the macro in release MSI builds.
+    // The shipping path below remains unchanged by default.
+#if defined(WIC_HEIC_THUMB_WORKERS_LAB)
+    wchar_t labEnabled[12]{};
+    wchar_t workerSetting[12]{};
+    const DWORD enabledLength=GetEnvironmentVariableW(
+        L"GITHUB_ACTIONS",labEnabled,12);
+    const DWORD settingLength=GetEnvironmentVariableW(
+        L"WIC_HEIC_THUMB_LAB_WORKERS",workerSetting,12);
+    if(enabledLength==4 && wcscmp(labEnabled,L"true")==0 &&
+       settingLength==1 && (workerSetting[0]==L'2' ||
+                            workerSetting[0]==L'4')) {
+        heif_decoding_options* opt=heif_decoding_options_alloc();
+        if(!opt) throw std::bad_alloc();
+        opt->num_codec_threads=workerSetting[0]-L'0';
+        heif_image* native=nullptr;
+        const heif_error error=heif_decode_image(
+            m_Handle.get_raw_image_handle(),&native,
+            heif_colorspace_RGB,m_chroma,opt);
+        heif_decoding_options_free(opt);
+        if(error.code!=heif_error_Ok) {
+            if(native)heif_image_release(native);
+            throw heif::Error(error);
+        }
+        if(!native)throw std::runtime_error("lab decode returned no image");
+        m_Image=heif::Image(native);
+    } else {
+        m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
+    }
+#else
 	m_Image = m_Handle.decode_image(heif_colorspace_RGB, m_chroma);
+#endif
 	m_PlaneInterleaved = m_Image.get_plane2(heif_channel_interleaved, &m_Stride);
 
 	DbgLog("Decode: (chroma=%d, bpp=%d, stride=%d)",
