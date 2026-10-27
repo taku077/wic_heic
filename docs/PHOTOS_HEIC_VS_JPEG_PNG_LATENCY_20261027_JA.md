@@ -190,3 +190,30 @@ Windows Actions **[#40456741590](https://github.com/taku077/wic_heic/actions/run
 - 次の改善方向は安全なWIC内部CPU処理の累積改善＋必要なら別環境に隔離した登録・仲裁A/B（ユーザーPC上では実施しない）。大幅な開発変更の前に実機WicHeic1.1.27に近い環境で同条件のA/Bが必須。
 
 参考: Microsoft WIC自動探索と仲裁 https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks
+
+## 2026-10-27: 登録優先順位・コーデック競合の実際のA/B結果（隔離Windows CI）
+
+ユーザー提案「WICの登録優先順位変更／競合デコーダー無効化を一度試して速度効果を見る」を受け、**GitHub使い捨てWindows Server 2022 runnerのみ**で段階比較を実施。実機Windows 10、ユーザーHEIC、既存Windows登録は一切変更していない。Microsoft公式のArbitrationPriority仕様では**数値が大きいほど後順位**（0が優先、10が後順位）。公式 https://learn.microsoft.com/en-us/windows/win32/wic/-wic-generalregentries
+
+**競合の正体はWindows標準HEIFデコーダー:** WIC監査で判明した `{E9A4A80A-44FE-4DE4-8971-7150B10A5199}` はMicrosoft公式 `CLSID_WICHeifDecoder` と一致。 https://learn.microsoft.com/en-us/windows/win32/wic/-wic-guids-clsids
+
+### 安全上の条件・登録変更の範囲
+
+- Microsoft内蔵コーデックはWICの一覧に現れる一方、サードパーティと同じ`HKCR\CLSID\{CATID_WICBitmapDecoders}\Instance\{...}`登録キーが存在せず、`reg export`でバックアップできなかった。**Windows標準HEIFのCLSIDs、COM本体、ネイティブ登録を削除／無効化しない**。最初の試行#40458494714はこの前提違いで失敗、後続試行で安全な方式へ切替。
+- 自作WicHeicの登録だけを一時的に変更。変更前に自作WIC CLSID全体とカテゴリ所属キーを`reg export`でバックアップ。**A:元の登録、B:自作ArbitrationPriorityのみ0→10、C:自作WICのカテゴリ所属のみ一時解除（Windows標準だけ残す）、D:両方元の登録へ復元**。各条件は**別のwictestプロセス**で、公開人工HEICについて自動探索8回の中央値・選択先・復号可否を計測。修復はPS `try/finally` とキー値照合、GitHub Actions Windows runner以外では動作拒否。
+- **Windows Actions [#40459060562](https://github.com/taku077/wic_heic/actions/runs/40459060562) SUCCESS**。4条件実験・自作登録の完全復元・既存の回転保存・MSI隔離導入と元登録への完全復帰まで合格。`WIC_ARBITRATION_DISPOSABLE_AB_PASS scenarios=4 priority_restored=1 own_instance_restored=1 native_registration_untouched=1`。
+
+### 同一CIで実測した結果
+
+| 条件 | WIC自動選択中央値 | 自作デコーダー選択 | 別デコーダー選択 | ファイル復号不可 |
+|---|---:|---:|---:|---:|
+| A 通常登録 | 140.450ms | 8/8 | 0 | 0 |
+| B 自作優先度0→10（低優先化） | 140.458ms | 8/8 | 0 | 0 |
+| C 自作カテゴリ登録を一時解除 | 成功測定なし | 0 | 0 | **8/8** |
+| D 全復元 | 140.575ms | 8/8 | 0 | 0 |
+
+**結論：優先順位変更だけでは速度改善なし。自作WICを解除するとWindows標準HEIFデコーダーだけでは試験用HEICを読み込めず、8回とも失敗した**。Windows標準HEIFコーデックは署名には一致するが、このランナーにはHEVC追加拡張がない可能性があり、「標準HEIFに置き換えれば改善する」とは言えない。Windows 10実機の拡張状態と完全同等ではない点に注意。
+
+**開発判断:** 競合レジストリの安易な優先順位変更／Windows標準デコーダーの無効化は現時点で採用しない。登録値を動かすだけでは約140msの遅延が改善せず、重要なフォールバック経路を失うおそれがある。自作WICの初回HEVC復号と、PhotosのUI非同期処理、デコーダー作成頻度の最適化を優先。Microsoftの仕様上、WICの自動探索経路をPhotosアプリ側から強制変更できると想定しない。安全な成果が見込めたときだけMSIを提示。
+
+出典：Microsoft公式WIC仲裁 https://learn.microsoft.com/en-us/windows/win32/wic/-wic-howwicworks ；Windows `reg`/バックアップ・復元 https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/reg ; https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/reg-export
