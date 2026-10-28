@@ -7,8 +7,27 @@
 #include <vector>
 #include <stdexcept>
 #include <string>
+#include "../wic_heic/PhotosPureRotationBridge.h"
 
 namespace WICPhotosOpaqueRotationProbe {
+inline void CheckSourceLeasePolicy() {
+    using namespace PhotosPureRotationBridge;
+    const auto now=std::chrono::steady_clock::now();
+    Store simulated;
+    simulated.candidates.push_back(Candidate{
+        std::vector<uint8_t>{1,2,3},32,16,now-std::chrono::seconds(31)});
+    Prune(simulated,now);
+    if(simulated.candidates.size()!=1)
+        throw std::runtime_error("Photos source expired before ordinary edit time");
+    simulated.candidates[0].at=now-std::chrono::minutes(11);
+    Prune(simulated,now);
+    if(!simulated.candidates.empty())
+        throw std::runtime_error("Stale Photos source retained beyond safety TTL");
+    if(kMaxSourceCount>8 || kMaxSourceBytes>96u*1024u*1024u)
+        throw std::runtime_error("Photos cache memory bounds unexpectedly expanded");
+    printf("WIC_PHOTOS_SOURCE_LEASE_30SEC_SURVIVES_11MIN_EXPIRES_PASS\\n");
+}
+
 inline void Must(HRESULT hr,const char* label) {
     if(FAILED(hr)){
         printf("WIC_PHOTOS_OPAQUE_FAILURE=%s HRESULT=0x%08X\n",
@@ -381,6 +400,7 @@ inline void RunTwoFrameRotationSequence(IWICImagingFactory* factory,int turns=4)
 }
 
 inline void Run(){
+    CheckSourceLeasePolicy();
     CComPtr<IWICImagingFactory> factory;
     Must(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"WIC factory");
