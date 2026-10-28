@@ -28,8 +28,8 @@ function EmitResult([string[]]$lines,[bool]$quiet) {
     $dest=Join-Path $dir ('HEIC_Diagnosis_{0}_{1}.txt' -f $stamp,$suffix)
     [IO.File]::WriteAllLines($dest,$lines,(New-Object System.Text.UTF8Encoding($true)))
     if($quiet){
-        $lines | ForEach-Object { Write-Output $_ }
-        Write-Output ('LOG_SAVED=True')
+        $lines | ForEach-Object { Write-Host $_ }
+        Write-Host ('LOG_SAVED=True')
     } else {
         Write-Host ('Log: '+$dest)
         try {
