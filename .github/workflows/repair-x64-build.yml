@@ -858,6 +858,40 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Deliberately requested IMG4425 pilot only; all checks above must pass.
+      - name: Prepare IMG4425 pilot MSI checksum and build origin
+        if: ${{ github.ref == 'refs/heads/candidate/img4425-libheif-safe-photos-fallback-20261029' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(img4425):') }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $msi=(Resolve-Path -LiteralPath 'WicHeic-HEIC-x64.msi').Path
+          $sha=(Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash
+          $dll=(Resolve-Path -LiteralPath '(Build)/x64/Release/wic_heic.dll').Path
+          $dllSha=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+          @(
+            "Name: WicHeic-HEIC-x64.msi"
+            "Version: 1.1.29"
+            "libheif: v1.23.7 (12a259a5882dd99d45ec5fc77e296a3b620d1e2e)"
+            "MSI_SHA256: $sha"
+            "DLL_SHA256: $dllSha"
+            "SourceCommit: $env:GITHUB_SHA"
+            "GitHubActionsRun: $env:GITHUB_RUN_ID"
+            "Validation: Windows Server 2022 x64 CI; Win10 Photos REAL DEVICE UNVERIFIED"
+            "HDRFallback: reject risky raster saves after linked source expiry or eviction"
+          ) | Set-Content -LiteralPath 'IMG4425_PILOT_SHA256.txt' -Encoding utf8
+          Get-Content -LiteralPath 'IMG4425_PILOT_SHA256.txt'
+      - name: Upload requested IMG4425 pilot MSI
+        if: ${{ github.ref == 'refs/heads/candidate/img4425-libheif-safe-photos-fallback-20261029' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(img4425):') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: IMG4425_WIC_1129_libheif_1237_PILOT_Win10_UNVERIFIED
+          path: |
+            WicHeic-HEIC-x64.msi
+            IMG4425_PILOT_SHA256.txt
+            docs/IMG4425_LIBHEIF_1237_PILOT_README_JA.txt
+          if-no-files-found: error
+          retention-days: 30
+
       # Push workflows create GitHub Checks, not commit statuses.
       # The linked commit-status reader will query this narrow bridge.
       - name: Report x64 CI result as commit status
