@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 # Windows 10/PowerShell 5.1. Passive observer of FileSystemWatcher and Shell
 # change notifications. Never changes image, codec, Shell cache or registry.
-param([ValidateRange(3,180)][int]$DurationSeconds=90,[switch]$CiSelfTest)
+param([ValidateRange(3,180)][int]$DurationSeconds=90,[switch]$CiSelfTest,[switch]$QuietResult)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -343,7 +343,9 @@ namespace HeicShellWatch20261028 {
    }
    Write-Host 'HEIC_SHELL_WATCH_SYNTHETIC_PASS'
    Write-Host ('SHELL_EVENTS='+@($output|Where-Object {$_ -match 'channel=SHELL'}).Count)
-  } else {
+  } elseif($QuietResult){
+   Write-Output ('SHELL_MONITOR_LOG='+$target)
+ } else {
    Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$outFolder+'"') -ErrorAction SilentlyContinue
    Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$target+'"') -ErrorAction SilentlyContinue
    [System.Windows.Forms.MessageBox]::Show(
