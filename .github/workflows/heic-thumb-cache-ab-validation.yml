@@ -5,6 +5,9 @@ on:
       - fix/grid-rotation-lossless-safety-20261028
     paths:
       - diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1
+      - diagnostics/photos_trace/HEIC_Thumbnail_DoubleClick_GUI.ps1
+      - diagnostics/photos_trace/01_診断開始_ダブルクリック.cmd
+      - diagnostics/photos_trace/README_ダブルクリック診断_JA.txt
       - .github/workflows/heic-thumb-cache-ab-validation.yml
   workflow_dispatch:
 jobs:
@@ -51,3 +54,13 @@ jobs:
           } finally {
             Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
           }
+
+      - name: Validate real CMD double-click entry point in noninteractive synthetic mode
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $start=Join-Path (Get-Location) 'diagnostics\photos_trace\01_診断開始_ダブルクリック.cmd'
+          if(-not (Test-Path -LiteralPath $start)){throw 'Missing double-click entry point'}
+          & $start --ci-selftest
+          if($LASTEXITCODE -ne 0){throw ('GUI double-click CMD self-test failed: '+$LASTEXITCODE)}
+          Write-Host 'THUMB_DOUBLECLICK_CMD_CI_PASS'
