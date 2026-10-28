@@ -252,7 +252,7 @@ namespace HeicShellWatch20261028 {
 }
 '@ -ErrorAction Stop
  }
- $folder=Split-Path -LiteralPath $source -Parent
+ $folder=$item.DirectoryName
  $before=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
  $window=New-Object -TypeName HeicShellWatch20261028.Form -ArgumentList @($source,$DurationSeconds)
  $window.Begin()
