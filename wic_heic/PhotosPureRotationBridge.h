@@ -109,6 +109,16 @@ inline bool DeclineRotation(UINT width,UINT height,const char* reason) {
     WicHeicDiagnostic::Emit("PhotosPureRotateMiss",width,height,0,0,reason);
     return false;
 }
+// After an exact pixel-match was proven, an unrelated decoder may still
+// offer/evict a candidate before the final cache-revision check. If the
+// matched source has linked thumbnail/HDR/auxiliary items, never silently
+// fall through to a single-frame HEVC encode that drops those items.
+// This helper is deliberately NOT used for ordinary pixel edits.
+inline bool UnsafeToDiscardLinkedVisualsAfterExactMatch(
+        const HeicLosslessNative::Bytes& source) {
+    try { return HeicLosslessNative::HasLinkedVisualItems(source); }
+    catch (...) { return true; } // malformed relation graph: fail closed
+}
 inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                         const std::vector<uint8_t>& explicitICC,
                         HeicLosslessNative::Bytes& output,
@@ -257,13 +267,21 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
             std::lock_guard<std::mutex> lock(state.gate);
             // Unbound Photos raster: another offered source invalidates
             // the global uniqueness proof. Never consume a stale candidate.
-            if(state.revision!=revision)
+            if(state.revision!=revision) {
+                if(unsafeRelatedVisualRotation)
+                    *unsafeRelatedVisualRotation=
+                        UnsafeToDiscardLinkedVisualsAfterExactMatch(source);
                 return DeclineRotation(width,height,"candidate-set-changed");
+            }
             const auto it=std::find_if(state.candidates.begin(),
                                       state.candidates.end(),
                 [&](const Candidate& c){return c.original==source;});
-            if(it==state.candidates.end())
+            if(it==state.candidates.end()) {
+                if(unsafeRelatedVisualRotation)
+                    *unsafeRelatedVisualRotation=
+                        UnsafeToDiscardLinkedVisualsAfterExactMatch(source);
                 return DeclineRotation(width,height,"candidate-evicted");
+            }
             state.candidates.erase(it);
             ++state.revision;
         }
