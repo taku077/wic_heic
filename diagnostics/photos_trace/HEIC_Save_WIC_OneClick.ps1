@@ -94,6 +94,11 @@ try {
   )
   [IO.File]::AppendAllLines($trace,[string[]]$fixture,([Text.UTF8Encoding]::new($false)))
  }
+ # Keep the raw numeric WIC trace beside Shell and summary logs.
+ # The user normally ZIPs only the results folder. This fixes that omission.
+ # Trace may contain process IDs and timestamps, but never image paths/pixels.
+ $traceSnapshot=Join-Path $outFolder ([IO.Path]::GetFileName($trace))
+ [IO.File]::Copy($trace,$traceSnapshot,$false)
  & $analyzer -TracePath $trace -ShellLogPath $monitorLog -OutputDirectory $outFolder -CiSelfTest:$CiSelfTest
  $reports=@(Get-ChildItem -LiteralPath $outFolder -File -Filter 'HEIC_Save_WIC_Report_*.txt'|
   Where-Object {$_.LastWriteTime -ge $begin.AddSeconds(-3)}|
@@ -104,7 +109,7 @@ try {
  if($origin){
   $sourceUnchanged=[string]((Get-FileHash -LiteralPath $origin -Algorithm SHA256).Hash -eq $originalSha)
   [IO.File]::AppendAllLines($reportPath,
-   [string[]]@('WORK_COPY_CREATED=True','ORIGINAL_SHA256_UNCHANGED='+$sourceUnchanged),
+   [string[]]@('WORK_COPY_CREATED=True',('ORIGINAL_SHA256_UNCHANGED={0}' -f $sourceUnchanged)),
    ([Text.UTF8Encoding]::new($false)))
  }
  if($CiSelfTest){
