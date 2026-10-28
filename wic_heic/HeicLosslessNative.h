@@ -157,9 +157,13 @@ inline bool HasLinkedVisualItems(const Bytes& source) {
     const auto meta=One(top,"meta");
     const auto nested=Children(source,meta.data+4,meta.end);
     const uint32_t primary=Primary(source,meta);
-    for(const auto& item:nested)if(item.type=="iref")
-        return !LinkedVisualItems(source,item,primary).empty();
-    return false;
+    bool found=false,linked=false;
+    for(const auto& item:nested)if(item.type=="iref") {
+        if(found)Bad("Duplicate HEIF reference box");
+        found=true;
+        linked=!LinkedVisualItems(source,item,primary).empty();
+    }
+    return linked;
 }
 inline void ValidateSharedRotation(
     const Bytes& b,const std::vector<Box>& properties,
