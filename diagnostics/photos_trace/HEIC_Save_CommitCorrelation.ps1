@@ -112,7 +112,7 @@ if($all.Count -eq 0){
 $report.Add('LIMIT=PID is not verified as Windows Photos process.')
 $report.Add('LIMIT=Trace entries can be dropped by concurrency, cap, access rights or codec version.')
 $file=Join-Path $OutputDirectory ('HEIC_Save_WIC_Report_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'_'+[guid]::NewGuid().ToString('N').Substring(0,6)+'.txt')
-[IO.File]::WriteAllLines($file,$report.ToArray(),(New-Object [Text.UTF8Encoding]($true)))
+[IO.File]::WriteAllLines($file,$report.ToArray(),([Text.UTF8Encoding]::new($true)))
 if($CiSelfTest){
  if($commitEnter -ne 3 -or $commitOk -ne 1 -or $commitBad -ne 1 -or $commitIncomplete -ne 1 -or $lossless -ne 1 -or $recompressed -ne 1 -or $rejected -ne 1){
   throw 'Unexpected test fixture grouping or counts.'
