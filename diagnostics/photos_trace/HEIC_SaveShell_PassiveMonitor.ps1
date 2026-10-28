@@ -254,7 +254,7 @@ namespace HeicShellWatch20261028 {
  }
  $folder=Split-Path -LiteralPath $source -Parent
  $before=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
- $window=New-Object HeicShellWatch20261028.Form($source,$DurationSeconds)
+ $window=New-Object -TypeName HeicShellWatch20261028.Form -ArgumentList @($source,$DurationSeconds)
  $window.Begin()
  if($CiSelfTest){
   $window.Show()
