@@ -3,9 +3,14 @@
 1. ZIPファイルを「すべて展開」します。
 2. 「02_保存通知診断_ダブルクリック.cmd」をダブルクリックします。
 3. ファイル選択ダイアログで、監視したいHEICを選択します。
-4. 観測画面を開いたままWindows標準フォトで回転保存してください。
-   約90秒後に自動終了します。途中終了は「終了して結果を保存」。
-5. 起動ファイルと同じフォルダー内に「診断結果」を作り、
+4. 監視画面が表示され、操作手順の案内が出ます。OKを押すと
+   選択したHEICがWindows標準フォトで自動的に開く設計です。
+   ※フォトの自動起動が失敗した場合は警告が出るので手動で開きます。
+5. フォトで90度回転し「保存」してください。回転は自動実行しません。
+   診断画面の「回転・保存が終わったらクリック → 結果を保存」を押します。
+   画像が変更されたことを検知した場合は、約10秒後に自動保存もします。
+   最大90秒で自動終了します。
+6. 起動ファイルと同じフォルダー内に「診断結果」を作り、
    テキストが自動保存され、フォルダーとメモ帳が開きます。
 
 実際に回転保存を行う場合は、元画像を守るため作業コピーを使用してください。
@@ -36,3 +41,10 @@ Photosでファイルを回転保存すれば前後のSHA256が変化するの�
 https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotifyregister
 https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotification_lock
 https://learn.microsoft.com/en-us/dotnet/api/system.io.filesystemwatcher
+
+【修正版で追加した記録】
+GUI_SHOWN：監視ウィンドウを表示したことを表します。
+PHOTOS_LAUNCH=REQUESTED：フォトの起動をWindowsへ依頼しました。
+これはフォトが実際に画像を表示・保存できたことの証明ではありません。
+CIは人工ファイルで画面起動・通知監視までを検証し、Windows 10実機での
+フォトURI起動は引き続き実機確認が必要です。
