@@ -28,7 +28,9 @@ if not "%EXITCODE%"=="0" (
   echo.
   echo Diagnostic launcher exited with an error. Code: %EXITCODE%
 )
-echo.
-echo You may close this window, or press a key to close it.
-pause >nul
+if not "%EXITCODE%"=="0" (
+  echo.
+  echo Press any key to close this error window.
+  pause >nul
+)
 exit /b %EXITCODE%
