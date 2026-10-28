@@ -104,10 +104,12 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                         const std::vector<uint8_t>& explicitICC,
                         HeicLosslessNative::Bytes& output,
                         const std::vector<uint8_t>* requiredContainer=nullptr,
-                        bool* unsafeRelatedVisualRotation=nullptr) {
+                        bool* unsafeRelatedVisualRotation=nullptr,
+                        UINT editedBytesPerPixel=3) {
     output.clear();
     if(unsafeRelatedVisualRotation) *unsafeRelatedVisualRotation=false;
-    if(!width || !height || width>20000 || height>20000)return false;
+    if(!width || !height || width>20000 || height>20000 ||
+       (editedBytesPerPixel!=3 && editedBytesPerPixel!=4))return false;
     std::vector<Candidate> possible;
     uint64_t revision=0;
     // A verified secondary WIC frame supplies the exact COMPLETE source
@@ -146,7 +148,8 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
         }
         int targetStride=0;
         auto* after=edited.get_plane(heif_channel_interleaved,&targetStride);
-        if(!after || targetStride<int(width)*3)return false;
+        if(!after || targetStride<int(width)*int(editedBytesPerPixel))
+            return false;
         bool matched=false;
         uint8_t confirmed=255;
         std::vector<uint8_t> source;
@@ -187,7 +190,14 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                         else {sx=w-1-y;sy=x;}
                         const uint8_t* in=before+size_t(sy)*sourceStride+
                                           size_t(sx)*3;
-                        if(std::memcmp(in,outRow+size_t(x)*3,3)!=0){
+                        const uint8_t* pixel=outRow+
+                            size_t(x)*editedBytesPerPixel;
+                        // Photos may hand back RGBA even when the original
+                        // HEIC is opaque. Match ALL RGB bytes and require
+                        // every alpha byte to remain fully opaque. Never
+                        // discard real transparency as a lossless rotation.
+                        if((editedBytesPerPixel==4 && pixel[3]!=255) ||
+                           std::memcmp(in,pixel,3)!=0) {
                             equal=false;
                             break;
                         }
