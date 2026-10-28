@@ -28,7 +28,9 @@ jobs:
           if($files.Count -lt 1){throw 'Expected output text file'}
           $latest=$files|Sort-Object LastWriteTime -Descending|Select-Object -First 1
           $lines=Get-Content -LiteralPath $latest.FullName -Encoding UTF8
-          if(-not ($lines -match 'HEIC_PASSIVE_FS_SHELL_MONITOR_V1') -or
+          if(-not ($lines -match 'HEIC_PASSIVE_FS_SHELL_MONITOR_V2') -or
+             -not ($lines -match 'GUI_SHOWN=True') -or
+             -not ($lines -match 'PHOTOS_LAUNCH=SKIPPED_CI') -or
              -not ($lines -match 'SHELL_REGISTRATION=OK') -or
              -not ($lines -match 'channel=SHELL event=UPDATEITEM scope=target') -or
              -not ($lines -match 'channel=FS event=CHANGED scope=target')){
