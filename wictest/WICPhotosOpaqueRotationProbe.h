@@ -18,6 +18,22 @@ inline void CheckSourceLeasePolicy() {
         throw std::runtime_error("Photos source edit lease regressed");
     if(kMaxSourceCount>8 || kMaxSourceBytes>96u*1024u*1024u)
         throw std::runtime_error("Photos candidate memory bound regressed");
+    LinkedSourceGeometryGuard risk;
+    if(risk.PossiblyRelated(4032,3024))
+        throw std::runtime_error("Fresh session tainted");
+    risk.Observe(4032,3024);
+    if(!risk.PossiblyRelated(4032,3024) ||
+       !risk.PossiblyRelated(3024,4032) ||
+       risk.PossiblyRelated(1600,1200))
+        throw std::runtime_error("Linked source geometry history failed");
+    risk.Observe(4032,3024);
+    if(risk.dimensions.size()!=1)
+        throw std::runtime_error("Duplicate geometry exhausted bound");
+    for(unsigned i=1;i<=kMaxLinkedSourceGeometries+1;i++)
+        risk.Observe(10000+i,20000+i);
+    if(!risk.overflow || !risk.PossiblyRelated(320,240))
+        throw std::runtime_error("Geometry budget overflow must fail closed");
+    printf("WIC_PHOTOS_LINKED_SOURCE_LEASE_EXPIRY_GUARD_PASS\n");
     printf("WIC_PHOTOS_SOURCE_31SEC_LEASE_AND_11MIN_EXPIRY_PASS\\n");
 }
 inline void Must(HRESULT hr,const char* label) {

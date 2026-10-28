@@ -32,6 +32,7 @@ struct Candidate {
 struct Store {
     std::mutex gate;
     std::vector<Candidate> candidates;
+    LinkedSourceGeometryGuard linkedRisk;
     uint64_t revision=0;
 };
 inline Store& Current() {static Store store;return store;}
@@ -77,8 +78,14 @@ inline bool IsValidHEIF(const std::vector<uint8_t>& bytes) {
 inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
     if(!CaptureAllowedHost())return;
     if(!IsValidHEIF(bytes) || !w || !h || w>20000 || h>20000)return;
+    // A source with auxiliary visuals must stay protected even after its
+    // bounded HEIC bytes expire or nearby Photos preloads evict them.
+    bool hasLinkedVisuals=false;
+    try {hasLinkedVisuals=HeicLosslessNative::HasLinkedVisualItems(bytes);}
+    catch(...) {hasLinkedVisuals=true;}
     auto& state=Current();
     std::lock_guard<std::mutex> lock(state.gate);
+    if(hasLinkedVisuals)state.linkedRisk.Observe(w,h);
     const auto now=std::chrono::steady_clock::now();
     Prune(state,now);
     for(auto& c:state.candidates) {
@@ -131,6 +138,12 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
         auto& state=Current();
         std::lock_guard<std::mutex> lock(state.gate);
         Prune(state,std::chrono::steady_clock::now());
+        // Conservative by design: linked HEIC provenance can outlive its
+        // original pixel-match candidate. False-positive same-size Photos
+        // edits must fail rather than silently lose HDR gain maps.
+        if(unsafeRelatedVisualRotation &&
+           state.linkedRisk.PossiblyRelated(width,height))
+            *unsafeRelatedVisualRotation=true;
         revision=state.revision;
         for(const auto& c:state.candidates){
             const bool swapped=(width==c.height && height==c.width);
@@ -276,6 +289,8 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
             ++state.revision;
         }
         output.swap(result);
+        // A proven byte-preserving rotation is always safe to save.
+        if(unsafeRelatedVisualRotation)*unsafeRelatedVisualRotation=false;
         WicHeicDiagnostic::Emit("PhotosPureRotateLossless",
             width,height,confirmed,1,
             confirmed==0?"exact-rgb-identity":"exact-rgb-rotation");
