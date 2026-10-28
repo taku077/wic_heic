@@ -147,6 +147,20 @@ inline std::vector<uint32_t> LinkedVisualItems(
     }
     return linked;
 }
+// Read-only preflight for native rotation fallback. A Photos pure-rotation
+// raster must not be silently re-encoded if it belongs to a HEIF with a
+// thumbnail or auxiliary image: that would discard associated visual assets.
+// This function does not authorize lossless editing; Transform() retains its
+// strict association/rotation checks.
+inline bool HasLinkedVisualItems(const Bytes& source) {
+    const auto top=Children(source,0,source.size());
+    const auto meta=One(top,"meta");
+    const auto nested=Children(source,meta.data+4,meta.end);
+    const uint32_t primary=Primary(source,meta);
+    for(const auto& item:nested)if(item.type=="iref")
+        return !LinkedVisualItems(source,item,primary).empty();
+    return false;
+}
 inline void ValidateSharedRotation(
     const Bytes& b,const std::vector<Box>& properties,
     const std::vector<Association>& associations,
