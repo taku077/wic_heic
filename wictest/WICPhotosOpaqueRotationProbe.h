@@ -23,8 +23,10 @@ inline std::vector<uint8_t> Read(const wchar_t* path) {
                                 std::istreambuf_iterator<char>());
 }
 inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1, bool halfTurnFixture=false,
-                   bool preloadDifferentHEIC=false) {
-    const wchar_t* outputPath=halfTurnFixture?
+                   bool preloadDifferentHEIC=false,
+                   bool rgbaSource=false) {
+    const wchar_t* outputPath=rgbaSource?
+        L"samples\\out-photos-opaque-rgba-pure-cw90.heic":halfTurnFixture?
         L"samples\\out-photos-opaque-halfturn-exif3-cw90.heic":editOnePixel?
         rotation==0?L"samples\\out-photos-opaque-edited-cw0.heic":
                     L"samples\\out-photos-opaque-edited-cw90.heic":
@@ -96,9 +98,11 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1
     Must(encoder->CreateNewFrame(&dest,nullptr),"Photos-style no-option frame");
     Must(dest->Initialize(nullptr),"Photos-style no-option frame initialize");
     Must(dest->SetSize(ow,oh),"set rotated destination geometry");
-    WICPixelFormatGUID format=GUID_WICPixelFormat24bppRGB;
-    Must(dest->SetPixelFormat(&format),"set 24-bit synthetic raster format");
-    if(!IsEqualGUID(format,GUID_WICPixelFormat24bppRGB))
+    WICPixelFormatGUID format=rgbaSource?
+        GUID_WICPixelFormat32bppRGBA:GUID_WICPixelFormat24bppRGB;
+    Must(dest->SetPixelFormat(&format),"set 24/32-bit synthetic raster format");
+    if(!IsEqualGUID(format,rgbaSource?
+                    GUID_WICPixelFormat32bppRGBA:GUID_WICPixelFormat24bppRGB))
         throw std::runtime_error("Unexpected destination format");
     Must(dest->WriteSource(opaque,nullptr),"write WIC opaque RGB pixels");
     Must(dest->Commit(),"commit WIC HEIC frame");
@@ -117,6 +121,8 @@ inline void RunOne(IWICImagingFactory* factory,bool editOnePixel,BYTE rotation=1
                 "Default Photos-style opaque CW90 missed bit-identical lossless route");
         printf("WIC_PHOTOS_OPAQUE_%sCW%u_LOSSLESS_EQUAL_PASS bytes=%zu\n",
                halfTurnFixture?"IROT2_EXIF3_":"",unsigned(rotation*90),bytes.size());
+        if(rgbaSource)
+            printf("WIC_PHOTOS_OPAQUE_RGBA_CW90_BYTE_EXACT_PASS\\n");
     } else {
         if(bytes==expected)
             throw std::runtime_error(
@@ -382,6 +388,7 @@ inline void Run(){
     RunOne(factory,false,1,true,true);
     RunOne(factory,false,0);
     RunOne(factory,false,1);
+    RunOne(factory,false,1,false,false,true); // Photos opaque 32-bit RGBA source
     RunOne(factory,false,2);
     RunOne(factory,false,3);
     RunOne(factory,true,0);
