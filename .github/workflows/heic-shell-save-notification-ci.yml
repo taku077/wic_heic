@@ -24,7 +24,7 @@ jobs:
           if($launchers.Count -ne 1){throw 'Expected exactly one passive monitor launcher'}
           & $launchers[0].FullName --ci-selftest
           if($LASTEXITCODE -ne 0) {throw ('Synthetic passive monitor failed: '+$LASTEXITCODE)}
-          $files=@(Get-ChildItem -LiteralPath "$root/診断結果" -File -Filter 'HEIC_ShellWatch_*.txt')
+          $files=@(Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'HEIC_ShellWatch_*.txt')
           if($files.Count -lt 1){throw 'Expected output text file'}
           $latest=$files|Sort-Object LastWriteTime -Descending|Select-Object -First 1
           $lines=Get-Content -LiteralPath $latest.FullName -Encoding UTF8
