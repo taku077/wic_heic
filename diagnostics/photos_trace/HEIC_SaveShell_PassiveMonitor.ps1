@@ -318,89 +318,29 @@ namespace HeicShellWatch20261028 {
  }
  $target=Join-Path $outFolder ('HEIC_ShellWatch_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'.txt')
  [IO.File]::WriteAllLines($target,[string[]]$output,(New-Object System.Text.UTF8Encoding($true)))
- if($CiSelfTest){
-  if(-not ($output -match '^GUI_SHOWN=True{throw 'Shell notification register failed.'}
-  if(-not ($output -match 'channel=FS event=CHANGED scope=target')){
-    throw 'FileSystemWatcher failed to observe synthetic update.'
+  if($CiSelfTest){
+   if(-not ($output -match '^GUI_SHOWN=True$')){throw 'Monitor Shown was not recorded.'}
+   if(-not ($output -match '^PHOTOS_LAUNCH=SKIPPED_CI$')){throw 'Mock Photos launch failed.'}
+   if($window.PhotosUriForTest -notmatch '^ms-photos:viewer[?]fileName='){
+    throw 'Microsoft Photos viewer URI is invalid.'
+   }
+   if(-not ($output -match '^SHELL_REGISTRATION=OK$')){throw 'Shell notification registration failed.'}
+   if(-not ($output -match 'channel=FS event=CHANGED scope=target')){
+    throw 'FileSystemWatcher did not detect synthetic file update.'
+   }
+   if(-not ($output -match 'channel=SHELL event=UPDATEITEM scope=target')){
+    throw 'Shell observer did not detect synthetic UPDATEITEM.'
+   }
+   Write-Host 'HEIC_SHELL_WATCH_SYNTHETIC_PASS'
+   Write-Host ('SHELL_EVENTS='+@($output|Where-Object {$_ -match 'channel=SHELL'}).Count)
+  } else {
+   Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$outFolder+'"') -ErrorAction SilentlyContinue
+   Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$target+'"') -ErrorAction SilentlyContinue
+   [System.Windows.Forms.MessageBox]::Show(
+    '診断結果を保存しました。'+[Environment]::NewLine+
+    $target+[Environment]::NewLine+'診断ツールは画像やキャッシュを書き換えていません。',
+    'HEIC保存通知診断','OK','Information')|Out-Null
   }
-  if(-not ($output -match 'channel=SHELL event=UPDATEITEM scope=target')){
-    throw 'Shell change watcher failed to observe synthetic update.'
-  }
-  Write-Host 'HEIC_SHELL_WATCH_SYNTHETIC_PASS'
-  Write-Host ('FS_LOG_CREATED=True shell_events='+@($output|Where-Object {$_ -match 'channel=SHELL'}).Count)
- } else {
-  Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$outFolder+'"') -ErrorAction SilentlyContinue
-  Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$target+'"') -ErrorAction SilentlyContinue
-  [System.Windows.Forms.MessageBox]::Show('診断結果を保存しました。'+[Environment]::NewLine+
-   $target+[Environment]::NewLine+'この診断は画像もキャッシュも変更しません。',
-   'HEIC保存通知診断','OK','Information')|Out-Null
- }
-} finally {
- if($testFolder -and (Test-Path -LiteralPath $testFolder)){
-  Remove-Item -LiteralPath $testFolder -Recurse -Force -ErrorAction SilentlyContinue
- }
-}
-)){throw 'Monitoring GUI Shown event not recorded'}
-  if(-not ($output -match '^PHOTOS_LAUNCH=SKIPPED_CI{throw 'Shell notification register failed.'}
-  if(-not ($output -match 'channel=FS event=CHANGED scope=target')){
-    throw 'FileSystemWatcher failed to observe synthetic update.'
-  }
-  if(-not ($output -match 'channel=SHELL event=UPDATEITEM scope=target')){
-    throw 'Shell change watcher failed to observe synthetic update.'
-  }
-  Write-Host 'HEIC_SHELL_WATCH_SYNTHETIC_PASS'
-  Write-Host ('FS_LOG_CREATED=True shell_events='+@($output|Where-Object {$_ -match 'channel=SHELL'}).Count)
- } else {
-  Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$outFolder+'"') -ErrorAction SilentlyContinue
-  Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$target+'"') -ErrorAction SilentlyContinue
-  [System.Windows.Forms.MessageBox]::Show('診断結果を保存しました。'+[Environment]::NewLine+
-   $target+[Environment]::NewLine+'この診断は画像もキャッシュも変更しません。',
-   'HEIC保存通知診断','OK','Information')|Out-Null
- }
-} finally {
- if($testFolder -and (Test-Path -LiteralPath $testFolder)){
-  Remove-Item -LiteralPath $testFolder -Recurse -Force -ErrorAction SilentlyContinue
- }
-}
-)){throw 'Mock Photos launch did not run'}
-  if($window.PhotosUriForTest -notmatch '^ms-photos:viewer[?]fileName='){throw 'Photos URI invalid'}
-  if(-not ($output -match '^SHELL_REGISTRATION=OK{throw 'Shell notification register failed.'}
-  if(-not ($output -match 'channel=FS event=CHANGED scope=target')){
-    throw 'FileSystemWatcher failed to observe synthetic update.'
-  }
-  if(-not ($output -match 'channel=SHELL event=UPDATEITEM scope=target')){
-    throw 'Shell change watcher failed to observe synthetic update.'
-  }
-  Write-Host 'HEIC_SHELL_WATCH_SYNTHETIC_PASS'
-  Write-Host ('FS_LOG_CREATED=True shell_events='+@($output|Where-Object {$_ -match 'channel=SHELL'}).Count)
- } else {
-  Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$outFolder+'"') -ErrorAction SilentlyContinue
-  Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$target+'"') -ErrorAction SilentlyContinue
-  [System.Windows.Forms.MessageBox]::Show('診断結果を保存しました。'+[Environment]::NewLine+
-   $target+[Environment]::NewLine+'この診断は画像もキャッシュも変更しません。',
-   'HEIC保存通知診断','OK','Information')|Out-Null
- }
-} finally {
- if($testFolder -and (Test-Path -LiteralPath $testFolder)){
-  Remove-Item -LiteralPath $testFolder -Recurse -Force -ErrorAction SilentlyContinue
- }
-}
-)){throw 'Shell notification register failed.'}
-  if(-not ($output -match 'channel=FS event=CHANGED scope=target')){
-    throw 'FileSystemWatcher failed to observe synthetic update.'
-  }
-  if(-not ($output -match 'channel=SHELL event=UPDATEITEM scope=target')){
-    throw 'Shell change watcher failed to observe synthetic update.'
-  }
-  Write-Host 'HEIC_SHELL_WATCH_SYNTHETIC_PASS'
-  Write-Host ('FS_LOG_CREATED=True shell_events='+@($output|Where-Object {$_ -match 'channel=SHELL'}).Count)
- } else {
-  Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$outFolder+'"') -ErrorAction SilentlyContinue
-  Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$target+'"') -ErrorAction SilentlyContinue
-  [System.Windows.Forms.MessageBox]::Show('診断結果を保存しました。'+[Environment]::NewLine+
-   $target+[Environment]::NewLine+'この診断は画像もキャッシュも変更しません。',
-   'HEIC保存通知診断','OK','Information')|Out-Null
- }
 } finally {
  if($testFolder -and (Test-Path -LiteralPath $testFolder)){
   Remove-Item -LiteralPath $testFolder -Recurse -Force -ErrorAction SilentlyContinue
