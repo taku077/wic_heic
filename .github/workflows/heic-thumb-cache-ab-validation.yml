@@ -42,6 +42,9 @@ jobs:
             if(-not ($result -match 'COMPARE=IDENTICAL_CACHED_VS_FORCED_EXTRACTION')) {
               throw 'Primed cache and independent thumbnail extraction are not pixel-identical'
             }
+            if(-not ($result -match 'PIXEL_COMPARE=OK rgb_mae_64=0.00 ')) {
+              throw 'RGB image similarity diagnostic must give zero for identical synthetic thumbs'
+            }
             if(-not ($result -match 'FORCE_REEXTRACT status=OK')) {
               throw 'Forced extraction failed for synthetic PNG'
             }
