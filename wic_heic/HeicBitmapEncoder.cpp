@@ -320,14 +320,28 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
                     f->m_LosslessBytes.swap(matched);
                     f->m_LosslessReady=true;
                 } else if(unsafeRelatedVisualRotation) {
-                    // A verified pure rotation of a composite HEIF must
-                    // never silently discard its thumbnail/HDR/aux graph
-                    // by falling through to single-frame raster HEVC.
+                    // A verified composite HEIF must not lose HDR/thumbnail.
                     WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,
                         "pure-rotation-related-visual-unsafe",
                         WINCODEC_ERR_UNSUPPORTEDOPERATION);
                     return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,
                                   "related-visual-unsafe");
+                } else if(PhotosPureRotationBridge::RefuseUnverifiedPhotosRasterSave(
+                              PhotosPureRotationBridge::IsWindowsPhotosHost(),
+                              false)) {
+                    // Source identity cannot be recovered from an arbitrary
+                    // Photos RGB bitmap after source lease expiry or eviction.
+                    // Fail closed; NEVER substitute single-frame HEVC which
+                    // strips unknown HDR auxiliary and embedded thumbnails.
+                    // Other WIC applications (including format conversions)
+                    // are intentionally NOT restricted by this Photos policy.
+                    WicHeicDiagnostic::Emit("EncoderCommitRejected",
+                        f->m_Width,f->m_Height,0,0,
+                        "photos-original-unverified-protect-linked-visuals",
+                        WINCODEC_ERR_UNSUPPORTEDOPERATION,operation,
+                        GetTickCount64()-beginTick);
+                    return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,
+                                  "photos-source-unverified");
                 }
             }
         }
