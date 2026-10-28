@@ -18,6 +18,12 @@ inline void CheckSourceLeasePolicy() {
         throw std::runtime_error("Photos source edit lease regressed");
     if(kMaxSourceCount>8 || kMaxSourceBytes>96u*1024u*1024u)
         throw std::runtime_error("Photos candidate memory bound regressed");
+    if(!RefuseUnverifiedPhotosRasterSave(true,false) ||
+       RefuseUnverifiedPhotosRasterSave(false,false) ||
+       RefuseUnverifiedPhotosRasterSave(true,true)) {
+        throw std::runtime_error("Photos-only metadata guard policy regressed");
+    }
+    printf("WIC_PHOTOS_UNKNOWN_SOURCE_FAIL_CLOSED_POLICY_PASS\n");
     printf("WIC_PHOTOS_SOURCE_31SEC_LEASE_AND_11MIN_EXPIRY_PASS\\n");
 }
 inline void Must(HRESULT hr,const char* label) {
