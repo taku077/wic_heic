@@ -45,6 +45,10 @@ jobs:
             $shellLogs=@(Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'HEIC_ShellWatch_*.txt')
             if($shellLogs.Count -lt 1){throw 'Shell observer output missing'}
             $lastShell=$shellLogs|Sort-Object LastWriteTime -Descending|Select-Object -First 1
+            $traceCopies=@(Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'WIC_Photos_Trace_*.txt')
+            if($traceCopies.Count -lt 2){throw 'Raw WIC trace was not copied into the results folder'}
+            $raw=@(Get-Content -LiteralPath ($traceCopies | Sort-Object LastWriteTime -Descending | Select-Object -Last 1).FullName -Encoding UTF8)
+            if(-not ($raw -match 'EncoderCommitRejected')){throw 'Expected raw WIC fixture missing'}
             $shell=Get-Content -LiteralPath $lastShell.FullName -Encoding UTF8
             if(-not ($shell -match 'channel=FS event=CHANGED scope=target') -or
                -not ($shell -match 'channel=SHELL event=UPDATEITEM scope=target')){
