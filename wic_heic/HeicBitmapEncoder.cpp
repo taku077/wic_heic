@@ -308,11 +308,22 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
                f->m_BitmapTransform==0 && f->m_HeifCompressionMethod==0 &&
                IsEqualGUID(f->m_PixelFormat,GUID_WICPixelFormat24bppRGB)) {
                 HeicLosslessNative::Bytes matched;
+                bool unsafeRelatedVisualRotation=false;
                 if(PhotosPureRotationBridge::TryRotation(
                         f->m_Frame,f->m_Width,f->m_Height,
-                        f->m_RasterICC,matched)) {
+                        f->m_RasterICC,matched,nullptr,
+                        &unsafeRelatedVisualRotation)) {
                     f->m_LosslessBytes.swap(matched);
                     f->m_LosslessReady=true;
+                } else if(unsafeRelatedVisualRotation) {
+                    // A verified pure rotation of a composite HEIF must
+                    // never silently discard its thumbnail/HDR/aux graph
+                    // by falling through to single-frame raster HEVC.
+                    WicHeicDiagnostic::Emit("EncoderCommitRejected",0,0,0,0,
+                        "pure-rotation-related-visual-unsafe",
+                        WINCODEC_ERR_UNSUPPORTEDOPERATION);
+                    return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,
+                                  "related-visual-unsafe");
                 }
             }
         }
