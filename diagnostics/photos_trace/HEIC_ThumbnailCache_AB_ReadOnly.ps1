@@ -1,12 +1,14 @@
-# Windows PowerShell 5.1. Compare the existing Shell thumbnail cache with
-# extraction without adding a thumbnail to the cache. No MSI/registry changes.
+# Windows PowerShell 5.1. Snapshot cached thumbnail without mutating image.
+# Optional forced extraction intentionally updates the Shell thumbnail cache.
+# The forced phase runs only with the explicit user-supplied switch.
 # Never writes to the HEIC, modifies original pixels, or prints file paths/EXIF.
 [CmdletBinding()]
 param(
  [string]$ImagePath,
  [ValidateRange(64,512)][int]$Size=256,
  [switch]$CiSyntheticOnly,
- [switch]$CiPrimeCache
+ [switch]$CiPrimeCache,
+ [switch]$ForceReextractAfterSnapshot
 )
 $ErrorActionPreference='Stop'
 if(($CiSyntheticOnly -or $CiPrimeCache) -and $env:GITHUB_ACTIONS -ne 'true') {
@@ -143,7 +145,7 @@ namespace WicShellCacheAB20261028 {
 }
 '@ -ErrorAction Stop
 }
-Write-Output 'HEIC_THUMBNAIL_CACHE_AB_V1'
+Write-Output 'HEIC_THUMBNAIL_CACHE_SNAPSHOT_V2'
 Write-Output ('image_bytes_before={0} requested_thumbnail_size={1}' -f $originalLength,$Size)
 # Artificial CI-only priming is required to test a true cached hit.
 # No real HEIC can be primed through this parameter.
@@ -155,20 +157,32 @@ if($CiPrimeCache) {
 # 0x01: read only an already cached thumbnail. No extraction.
 $a=[WicShellCacheAB20261028.Inspect]::One($file.FullName,[uint32]$Size,1,'CACHE_ONLY')
 Write-Output ('CACHE_ONLY status={0} dims={1}x{2} flags=0x{3:X8} pixels_sha20={4} elapsed_ms={5}' -f $a.Status,$a.Width,$a.Height,$a.Flags,$a.Digest,$a.ElapsedMs)
-# 0x20: extract, but do not add thumbnail to system cache.
-$b=[WicShellCacheAB20261028.Inspect]::One($file.FullName,[uint32]$Size,32,'EXTRACT_NO_CACHE')
-Write-Output ('EXTRACT_NO_CACHE status={0} dims={1}x{2} flags=0x{3:X8} pixels_sha20={4} elapsed_ms={5}' -f $b.Status,$b.Width,$b.Height,$b.Flags,$b.Digest,$b.ElapsedMs)
-if($a.Status -eq 'OK' -and $b.Status -eq 'OK') {
- if($a.Width -eq $b.Width -and $a.Height -eq $b.Height -and $a.Digest -eq $b.Digest) {
-  Write-Output 'COMPARE=IDENTICAL_AT_REQUESTED_SIZE'
- } else {
-  Write-Output 'COMPARE=DIFFERENT_CACHED_AND_EXTRACTED_BITMAPS'
- }
-} else { Write-Output 'COMPARE=INCONCLUSIVE_CHECK_HRESULTS' }
+# 0x20 is NOT used as a 'fresh' reference: CI showed it can return
+# WTS_CACHED, so a naive comparison gives a false sense of correctness.
+# True bypass requires WTS_FORCEEXTRACTION=0x04. This explicitly changes
+# the thumbnail cache; never run it without the opt-in switch.
+if($ForceReextractAfterSnapshot) {
+ Write-Output 'WARNING=FORCE_REEXTRACTION_WILL_REFRESH_WINDOWS_SHELL_THUMBNAIL_CACHE'
+ $b=[WicShellCacheAB20261028.Inspect]::One($file.FullName,[uint32]$Size,4,'FORCE_REEXTRACT')
+ Write-Output ('FORCE_REEXTRACT status={0} dims={1}x{2} flags=0x{3:X8} pixels_sha20={4} elapsed_ms={5}' -f $b.Status,$b.Width,$b.Height,$b.Flags,$b.Digest,$b.ElapsedMs)
+ if($a.Status -eq 'OK' -and $b.Status -eq 'OK') {
+  if($a.Width -eq $b.Width -and $a.Height -eq $b.Height -and $a.Digest -eq $b.Digest) {
+   Write-Output 'COMPARE=IDENTICAL_CACHED_VS_FORCED_EXTRACTION'
+  } else {
+   Write-Output 'COMPARE=DIFFERENT_CACHED_VS_FORCED_EXTRACTION'
+  }
+ } else { Write-Output 'COMPARE=INCONCLUSIVE_CHECK_HRESULTS' }
+} else {
+ Write-Output 'COMPARE=NOT_PERFORMED_CACHE_SNAPSHOT_ONLY'
+ Write-Output 'NOTE=Use -ForceReextractAfterSnapshot only if Shell cache refresh is acceptable.'
+}
 $file.Refresh()
 $unchanged=($file.Length -eq $originalLength -and
             $file.LastWriteTimeUtc.Ticks -eq $originalWriteTicks)
 Write-Output ('INPUT_LENGTH_AND_MTIME_UNCHANGED={0}' -f $unchanged)
 if(-not $unchanged){throw 'File changed during observation; result invalid'}
 Write-Output 'NOTE=No cache deletion, registry change or image-file write was performed.'
-Write-Output 'NOTE=Different output may reflect independent extraction paths, image scaling or stale cache; not proof of corrupt HEIC.'
+if($ForceReextractAfterSnapshot) {
+ Write-Output 'NOTE=Shell thumbnail cache may have changed due to forced extraction.'
+}
+Write-Output 'NOTE=Different bitmaps indicate mismatch at requested size, not proof of corrupt HEIC.'
