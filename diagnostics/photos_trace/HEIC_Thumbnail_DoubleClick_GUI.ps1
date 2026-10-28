@@ -85,7 +85,7 @@ try {
 
     $originalHash=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
     $lines=New-Object 'System.Collections.Generic.List[string]'
-    $lines.Add('HEIC_THUMBNAIL_DIAG_GUI_V2')
+    $lines.Add('HEIC_THUMBNAIL_DIAG_GUI_V3')
     $lines.Add('ExecutionMode='+$(if($force){'CACHE_THEN_FORCE_REEXTRACT'}else{'CACHE_ONLY'}))
     $lines.Add('OriginalFilePathAndExif=NOT_LOGGED')
     $lines.Add('TimestampUTC='+[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))
