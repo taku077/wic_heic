@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 # Windows 10/PowerShell 5.1. Passive observer of FileSystemWatcher and Shell
 # change notifications. Never changes image, codec, Shell cache or registry.
-param([ValidateRange(3,180)][int]$DurationSeconds=90,[switch]$CiSelfTest,[switch]$QuietResult)
+param([ValidateRange(3,180)][int]$DurationSeconds=90,[switch]$CiSelfTest,[switch]$QuietResult,[string]$ImagePath='')
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -17,6 +17,8 @@ try {
   [void][IO.Directory]::CreateDirectory($testFolder)
   $source=Join-Path $testFolder 'synthetic.png'
   [IO.File]::WriteAllBytes($source,[byte[]](1,2,3,4,5,6,7))
+ } elseif(-not [string]::IsNullOrWhiteSpace($ImagePath)){
+  $source=$ImagePath
  } else {
   $dialog=New-Object System.Windows.Forms.OpenFileDialog
   try {
