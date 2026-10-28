@@ -59,8 +59,9 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          $start=Join-Path (Get-Location) 'diagnostics\photos_trace\01_診断開始_ダブルクリック.cmd'
-          if(-not (Test-Path -LiteralPath $start)){throw 'Missing double-click entry point'}
+          $launchers=@(Get-ChildItem -LiteralPath 'diagnostics/photos_trace' -File -Filter '01_*.cmd')
+          if($launchers.Count -ne 1){throw 'Expected exactly one double-click CMD launcher'}
+          $start=$launchers[0].FullName
           & $start --ci-selftest
           if($LASTEXITCODE -ne 0){throw ('GUI double-click CMD self-test failed: '+$LASTEXITCODE)}
           Write-Host 'THUMB_DOUBLECLICK_CMD_CI_PASS'
