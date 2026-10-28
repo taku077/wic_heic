@@ -135,16 +135,26 @@ namespace HeicShellWatch20261028 {
     "\r\n※ 回転保存は選択画像を変更します。大切な原本は保護してください。",
     "操作案内：回転して保存",MessageBoxButtons.OK,MessageBoxIcon.Information);
    try {
-    var p=new ProcessStartInfo(PhotosUriForTest){UseShellExecute=true};
-    Process.Start(p);
+    // This reproduces the user's proven Explorer HEIC double-click behavior.
+    // URI activation has known Photos-version regressions where only the
+    // Gallery opens, so use the existing image file association FIRST.
+    Process.Start(new ProcessStartInfo(path){UseShellExecute=true,Verb="open"});
     Record("UI","PHOTOS_LAUNCH_REQUESTED","target");
+    Record("UI","LAUNCH_METHOD_FILE_ASSOCIATION","target");
    } catch(Exception ex) {
-    Record("UI","PHOTOS_LAUNCH_FAILED_"+ex.GetType().Name,"target");
-    MessageBox.Show(this,
+    Record("UI","FILE_ASSOCIATION_FAILED_"+ex.GetType().Name,"target");
+    try {
+     Process.Start(new ProcessStartInfo(PhotosUriForTest){UseShellExecute=true});
+     Record("UI","PHOTOS_LAUNCH_REQUESTED","target");
+     Record("UI","LAUNCH_METHOD_PHOTOS_URI_FALLBACK","target");
+    } catch(Exception second) {
+     Record("UI","PHOTOS_LAUNCH_FAILED_"+second.GetType().Name,"target");
+     MessageBox.Show(this,
       "フォトの自動起動に失敗しました。"+
-      "\r\n選択画像をフォトで手動で開いてから回転保存してください。"+
-      "\r\nエラー種別："+ex.GetType().Name,
+      "\r\n選択画像を手動でフォトで開き、回転保存してください。"+
+      "\r\nエラー種別："+second.GetType().Name,
       "フォト起動エラー",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+    }
    }
   }
   void Record(string category,string status,string scope) {
