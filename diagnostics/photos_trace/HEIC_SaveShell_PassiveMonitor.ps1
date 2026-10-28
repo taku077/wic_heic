@@ -18,29 +18,10 @@ try {
   $source=Join-Path $testFolder 'synthetic.png'
   [IO.File]::WriteAllBytes($source,[byte[]](1,2,3,4,5,6,7))
  } else {
-  $dialog=New-Object System.Windows.Forms.OpenFileDialog
-  try {
-   $dialog.Title='保存通知の診断：監視するHEICを選択'
-   $dialog.Filter='HEIC/HEIF (*.heic;*.heif)|*.heic;*.heif'
-   $dialog.CheckFileExists=$true
-   $dialog.Multiselect=$false
-   if($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK){exit 0}
-   $source=$dialog.FileName
-  } finally {$dialog.Dispose()}
- }
- $item=Get-Item -LiteralPath $source -ErrorAction Stop
- if($item.PSIsContainer -or
-    ((-not $CiSelfTest) -and $item.Extension -notin @('.heic','.heif'))){
-   throw 'Unexpected source file.'
- }
- if($item.FullName -notmatch '^[A-Za-z]:\\'){throw 'Local fixed/drive path required.'}
- $node=$item
- while($null -ne $node){
-  if(($node.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
-   throw 'Reparse-point paths are not supported.'
-  }
-  if($node -is [IO.FileInfo]){$node=$node.Directory}
-  else {$node=$node.Parent}
+  # The file picker MUST be opened by the already-visible monitoring form.
+  # In v1 the picker appeared before any form existed and ShowDialog could
+  # subsequently be hidden under the foreground app.
+  $source=''
  }
  if(-not ('HeicShellWatch20261028.Form' -as [type])){
   Add-Type -ReferencedAssemblies @('System.Windows.Forms','System.Drawing','System.Core') -TypeDefinition @'
@@ -84,7 +65,7 @@ namespace HeicShellWatch20261028 {
   static extern void SHChangeNotify(int eventCode,uint flags,string path,IntPtr unused);
   readonly List<string> records=new List<string>();
   readonly object sync=new object();
-  readonly string path,folder;
+  string path,folder;
   readonly Label info=new Label();
   readonly Button stop=new Button();
   readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
@@ -98,23 +79,80 @@ namespace HeicShellWatch20261028 {
   readonly int duration;
   bool finished=false;
   public string[] Output {get;private set;}
+  public string SourcePath {get {return path;}}
+  public string InitialSha256 {get;private set;}
   public Form(string file,int seconds){
-   path=Path.GetFullPath(file);folder=Path.GetDirectoryName(path);duration=seconds;
-   Text="HEIC 保存・Shell通知の観測（読み取り専用）";
-   Width=570;Height=245;StartPosition=FormStartPosition.CenterScreen;
+   path=String.IsNullOrWhiteSpace(file)?"":Path.GetFullPath(file);
+   folder=String.IsNullOrWhiteSpace(path)?"":Path.GetDirectoryName(path);
+   duration=seconds;
+   Text="HEIC 保存通知診断 - 監視画面";
+   Width=660;Height=285;StartPosition=FormStartPosition.CenterScreen;
+   ShowInTaskbar=true;
+   TopMost=true;
    Font=new Font("Meiryo UI",10f);
    FormBorderStyle=FormBorderStyle.FixedDialog;
    MaximizeBox=false;
-   info.Left=20;info.Top=20;info.Width=520;info.Height=120;
-   info.Text="監視を準備しています。";
+   info.Left=20;info.Top=20;info.Width=605;info.Height=155;
+   info.Text="監視画面を開きました。写真の選択画面を表示します。";
+   info.AutoSize=false;
    Controls.Add(info);
    stop.Text="終了して結果を保存";
-   stop.Width=230;stop.Height=40;stop.Left=165;stop.Top=145;
+   stop.Width=230;stop.Height=40;stop.Left=205;stop.Top=180;
    stop.Click+=(s,e)=>Close();
    Controls.Add(stop);
    timer.Interval=250;
    timer.Tick+=(s,e)=>Tick();
+   Shown+=(s,e)=>SelectSourceAndStart();
    FormClosing+=(s,e)=>Finish();
+  }
+  void SelectSourceAndStart(){
+   // Shown means the parent diagnostic window is already visible.
+   // The native OpenFileDialog is owned by this window, preventing a
+   // disappearing/behind-other-windows GUI after the selection closes.
+   try {
+    if(String.IsNullOrEmpty(path)) {
+     using(var dialog=new OpenFileDialog()){
+      dialog.Title="HEIC保存通知診断：監視する画像を選択";
+      dialog.Filter="HEIC/HEIF (*.heic;*.heif)|*.heic;*.heif";
+      dialog.CheckFileExists=true;dialog.Multiselect=false;
+      dialog.RestoreDirectory=true;
+      if(dialog.ShowDialog(this)!=DialogResult.OK){Close();return;}
+      path=Path.GetFullPath(dialog.FileName);
+      folder=Path.GetDirectoryName(path);
+     }
+    }
+    var file=new FileInfo(path);
+    if(!file.Exists || String.IsNullOrWhiteSpace(folder) ||
+       path.Length<4 || path[1]!=':' || path[2]!='\\')
+     throw new IOException("File missing or unsupported path");
+    // Real input must be a HEIC. The CI-only synthetic PNG is allowed only
+    // inside the runner's isolated temporary directory.
+    if(!String.Equals(Path.GetExtension(path),".heic",StringComparison.OrdinalIgnoreCase) &&
+       !String.Equals(Path.GetExtension(path),".heif",StringComparison.OrdinalIgnoreCase) &&
+       !(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")=="true" &&
+         String.Equals(Path.GetExtension(path),".png",StringComparison.OrdinalIgnoreCase)))
+      throw new IOException("Expected HEIC/HEIF");
+    if((file.Attributes&FileAttributes.ReparsePoint)!=0)
+      throw new IOException("Linked file not allowed");
+    for(DirectoryInfo p=file.Directory;p!=null;p=p.Parent)
+      if((p.Attributes&FileAttributes.ReparsePoint)!=0)
+        throw new IOException("Linked folder not allowed");
+    using(var sha=SHA256.Create())
+    using(var fs=new FileStream(path,FileMode.Open,FileAccess.Read,
+         FileShare.ReadWrite|FileShare.Delete))
+     InitialSha256=BitConverter.ToString(sha.ComputeHash(fs)).Replace("-","");
+    Record("UI","WINDOW_VISIBLE","target");
+    Begin();
+    info.Text="監視を開始しました。フォトで画像を90度回転し、保存してください。";
+    TopMost=false;
+    BringToFront();
+    Activate();
+   } catch(Exception ex) {
+    MessageBox.Show(this,"診断を開始できませんでした（"+ex.GetType().Name+"）。"+
+      "\r\n写真本体は変更していません。","診断エラー",
+      MessageBoxButtons.OK,MessageBoxIcon.Error);
+    Close();
+   }
   }
   void Record(string category,string status,string scope) {
    string line=DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")+
@@ -216,7 +254,8 @@ namespace HeicShellWatch20261028 {
    if(clock.Elapsed.TotalSeconds>=duration)Close();
   }
   void RefreshInfo(){
-   info.Text="HEICファイルとShell通知を観測中（ファイルは変更しません）"+
+   info.Text="● 監視中：フォトで画像を回転して「保存」してください"+
+    "\r\n画像を開くだけでは変更通知は発生しないことがあります"+
     "\r\n経過: "+(clock.ElapsedMilliseconds/1000)+" / "+duration+"秒"+
     "\r\nファイル更新イベント: "+fsTarget+"  / ほか: "+fsOther+
     "\r\nShell通知: 対象 "+shellTarget+"  フォルダー "+shellFolder+"  ほか "+shellOther+
@@ -230,7 +269,8 @@ namespace HeicShellWatch20261028 {
    if(folderPidl!=IntPtr.Zero){Marshal.FreeCoTaskMem(folderPidl);folderPidl=IntPtr.Zero;}
    Record("SESSION","END","target");
    var lines=new List<string>();
-   lines.Add("HEIC_PASSIVE_FS_SHELL_MONITOR_V1");
+   lines.Add("HEIC_PASSIVE_FS_SHELL_MONITOR_V2");
+   lines.Add("GUI_SHOWN="+(records.Exists(x=>x.Contains("channel=UI event=WINDOW_VISIBLE"))?"True":"False"));
    lines.Add("SHELL_REGISTRATION="+shellRegistration);
    lines.Add("FS_TARGET_EVENTS="+fsTarget);
    lines.Add("FS_OTHER_EVENTS="+fsOther);
@@ -252,27 +292,33 @@ namespace HeicShellWatch20261028 {
 }
 '@ -ErrorAction Stop
  }
- $folder=$item.DirectoryName
- $before=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+ # Both CI and real users enter through the same modal Form.ShowDialog().
+ # In V1 the timer started BEFORE the GUI was shown; in V2 Shown owns startup.
  $window=New-Object -TypeName HeicShellWatch20261028.Form -ArgumentList @($source,$DurationSeconds)
- $window.Begin()
- if($CiSelfTest){
-  $window.Show()
-  for($i=0;$i -lt 35 -and $window.Visible;$i++){
-   [System.Windows.Forms.Application]::DoEvents()
-   if($i -eq 4){
+ if($CiSelfTest) {
+  $simTimer=New-Object System.Windows.Forms.Timer
+  $simTimer.Interval=250
+  $ticks=0
+  $simTimer.add_Tick({
+   $ticks++
+   if($ticks -eq 4) {
     [IO.File]::AppendAllText($source,'abc')
     [HeicShellWatch20261028.Form]::CiSyntheticNotify($source)
    }
-   Start-Sleep -Milliseconds 100
-  }
-  if($window.Visible){$window.Close()}
+   if($ticks -ge 12){$simTimer.Stop();$window.Close()}
+  })
+  try {
+   $simTimer.Start()
+   [void]$window.ShowDialog()
+  } finally {$simTimer.Stop();$simTimer.Dispose()}
  } else {
   [void]$window.ShowDialog()
  }
+ $source=$window.SourcePath
+ if([string]::IsNullOrWhiteSpace($source)){exit 0}
  $output=@($window.Output)
  $after=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
- $output+=('INPUT_SHA256_CHANGED='+[string]($before -ne $after))
+ $output+=('INPUT_SHA256_CHANGED='+[string]($window.InitialSha256 -ne $after))
  $outFolder=Join-Path $PSScriptRoot '診断結果'
  if(-not (Test-Path -LiteralPath $outFolder)){
   [void][IO.Directory]::CreateDirectory($outFolder)
@@ -280,7 +326,50 @@ namespace HeicShellWatch20261028 {
  $target=Join-Path $outFolder ('HEIC_ShellWatch_'+(Get-Date -Format 'yyyyMMdd_HHmmss_fff')+'.txt')
  [IO.File]::WriteAllLines($target,[string[]]$output,(New-Object System.Text.UTF8Encoding($true)))
  if($CiSelfTest){
-  if(-not ($output -match '^SHELL_REGISTRATION=OK$')){throw 'Shell notification register failed.'}
+  if(-not ($output -match '^GUI_SHOWN=True{throw 'Shell notification register failed.'}
+  if(-not ($output -match 'channel=FS event=CHANGED scope=target')){
+    throw 'FileSystemWatcher failed to observe synthetic update.'
+  }
+  if(-not ($output -match 'channel=SHELL event=UPDATEITEM scope=target')){
+    throw 'Shell change watcher failed to observe synthetic update.'
+  }
+  Write-Host 'HEIC_SHELL_WATCH_SYNTHETIC_PASS'
+  Write-Host ('FS_LOG_CREATED=True shell_events='+@($output|Where-Object {$_ -match 'channel=SHELL'}).Count)
+ } else {
+  Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$outFolder+'"') -ErrorAction SilentlyContinue
+  Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$target+'"') -ErrorAction SilentlyContinue
+  [System.Windows.Forms.MessageBox]::Show('診断結果を保存しました。'+[Environment]::NewLine+
+   $target+[Environment]::NewLine+'この診断は画像もキャッシュも変更しません。',
+   'HEIC保存通知診断','OK','Information')|Out-Null
+ }
+} finally {
+ if($testFolder -and (Test-Path -LiteralPath $testFolder)){
+  Remove-Item -LiteralPath $testFolder -Recurse -Force -ErrorAction SilentlyContinue
+ }
+}
+)){throw 'Monitoring window was not visibly shown.'}
+  if(-not ($output -match '^SHELL_REGISTRATION=OK{throw 'Shell notification register failed.'}
+  if(-not ($output -match 'channel=FS event=CHANGED scope=target')){
+    throw 'FileSystemWatcher failed to observe synthetic update.'
+  }
+  if(-not ($output -match 'channel=SHELL event=UPDATEITEM scope=target')){
+    throw 'Shell change watcher failed to observe synthetic update.'
+  }
+  Write-Host 'HEIC_SHELL_WATCH_SYNTHETIC_PASS'
+  Write-Host ('FS_LOG_CREATED=True shell_events='+@($output|Where-Object {$_ -match 'channel=SHELL'}).Count)
+ } else {
+  Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$outFolder+'"') -ErrorAction SilentlyContinue
+  Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$target+'"') -ErrorAction SilentlyContinue
+  [System.Windows.Forms.MessageBox]::Show('診断結果を保存しました。'+[Environment]::NewLine+
+   $target+[Environment]::NewLine+'この診断は画像もキャッシュも変更しません。',
+   'HEIC保存通知診断','OK','Information')|Out-Null
+ }
+} finally {
+ if($testFolder -and (Test-Path -LiteralPath $testFolder)){
+  Remove-Item -LiteralPath $testFolder -Recurse -Force -ErrorAction SilentlyContinue
+ }
+}
+)){throw 'Shell notification register failed.'}
   if(-not ($output -match 'channel=FS event=CHANGED scope=target')){
     throw 'FileSystemWatcher failed to observe synthetic update.'
   }
