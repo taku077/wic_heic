@@ -30,8 +30,15 @@ jobs:
           } finally { $bitmap.Dispose() }
           try {
             $before=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
-            $result=@(& ./diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1 -ImagePath $path -Size 128 -CiSyntheticOnly)
+            $result=@(& ./diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1 -ImagePath $path -Size 128 -CiSyntheticOnly -CiPrimeCache)
             $result | ForEach-Object { Write-Host $_ }
+            if(-not ($result -match 'CI_SYNTHETIC_PRIME=OK') -or
+               -not ($result -match 'CACHE_ONLY status=OK')) {
+              throw 'Synthetic primed thumbnail cache-hit test failed'
+            }
+            if(-not ($result -match 'COMPARE=IDENTICAL_AT_REQUESTED_SIZE')) {
+              throw 'Primed cache and independent thumbnail extraction are not pixel-identical'
+            }
             if(-not ($result -match 'EXTRACT_NO_CACHE status=OK')) {
               throw 'Fresh thumbnail extraction diagnostic failed for synthetic PNG'
             }
