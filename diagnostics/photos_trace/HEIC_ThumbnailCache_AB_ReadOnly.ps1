@@ -88,8 +88,38 @@ namespace WicShellCacheAB20261028 {
   public int Height {get;set;}
   public int Flags {get;set;}
   public long ElapsedMs {get;set;}
+  // 64x64 RGB analytical samples remain IN MEMORY and are never logged.
+  public byte[] SampleRgb {get;set;}
  }
  public static class Inspect {
+  // Return bounded numerical similarity only. No sampled pixel array is
+  // persisted, transmitted or printed.
+  public static string CompareSamples(Result a,Result b) {
+   if(a==null||b==null||a.SampleRgb==null||b.SampleRgb==null)
+    return "PIXEL_COMPARE=UNAVAILABLE";
+   if(a.Width!=b.Width||a.Height!=b.Height)
+    return "PIXEL_COMPARE=DIFFERENT_DIMENSIONS";
+   const int side=64;
+   double direct=0,rot180=0;int pixelsChanged=0;
+   for(int y=0;y<side;y++)for(int x=0;x<side;x++){
+    int i=3*(y*side+x);
+    int j=3*((side-1-y)*side+(side-1-x));
+    int delta=0;
+    for(int c=0;c<3;c++){
+     int d=Math.Abs((int)a.SampleRgb[i+c]-(int)b.SampleRgb[i+c]);
+     direct+=d;delta+=d;
+     rot180+=Math.Abs((int)a.SampleRgb[i+c]-(int)b.SampleRgb[j+c]);
+    }
+    if(delta>60)pixelsChanged++;
+   }
+   string fmt="F2";
+   var culture=System.Globalization.CultureInfo.InvariantCulture;
+   return String.Format(culture,
+    "PIXEL_COMPARE=OK rgb_mae_64={0} rgb_mae_if_180deg_64={1} pixels_gt20_percent_64={2}",
+    (direct/(side*side*3)).ToString(fmt,culture),
+    (rot180/(side*side*3)).ToString(fmt,culture),
+    (100.0*pixelsChanged/(side*side)).ToString(fmt,culture));
+  }
   [DllImport("shell32.dll",CharSet=CharSet.Unicode,PreserveSig=true)]
   private static extern int SHCreateItemFromParsingName(string path,
    IntPtr bindContext,ref Guid iid,out IntPtr item);
@@ -128,6 +158,22 @@ namespace WicShellCacheAB20261028 {
      r.Digest=BitConverter.ToString(sha.ComputeHash(memory.ToArray()))
       .Replace("-","").Substring(0,20);
      r.Width=bitmap.Width;r.Height=bitmap.Height;
+     // Compare visible colors rather than only the exact PNG SHA256.
+     // Windows may store cached thumbs as compressed JPEG/PNG/BMP.
+     using(var sample=new Bitmap(64,64,PixelFormat.Format24bppRgb))
+     using(var draw=Graphics.FromImage(sample)){
+      draw.Clear(Color.White);
+      draw.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+      draw.DrawImage(bitmap,new Rectangle(0,0,64,64),
+        new Rectangle(0,0,bitmap.Width,bitmap.Height),GraphicsUnit.Pixel);
+      byte[] vals=new byte[64*64*3];
+      for(int y=0;y<64;y++)for(int x=0;x<64;x++){
+       Color c=sample.GetPixel(x,y);
+       int i=3*(y*64+x);
+       vals[i]=c.R;vals[i+1]=c.G;vals[i+2]=c.B;
+      }
+      r.SampleRgb=vals;
+     }
     }
     r.Status="OK";return r;
    } catch(Exception ex) {
@@ -145,7 +191,7 @@ namespace WicShellCacheAB20261028 {
 }
 '@ -ErrorAction Stop
 }
-Write-Output 'HEIC_THUMBNAIL_CACHE_SNAPSHOT_V2'
+Write-Output 'HEIC_THUMBNAIL_CACHE_SNAPSHOT_V3'
 Write-Output ('image_bytes_before={0} requested_thumbnail_size={1}' -f $originalLength,$Size)
 # Artificial CI-only priming is required to test a true cached hit.
 # No real HEIC can be primed through this parameter.
@@ -171,7 +217,11 @@ if($ForceReextractAfterSnapshot) {
   } else {
    Write-Output 'COMPARE=DIFFERENT_CACHED_VS_FORCED_EXTRACTION'
   }
- } else { Write-Output 'COMPARE=INCONCLUSIVE_CHECK_HRESULTS' }
+  Write-Output ([WicShellCacheAB20261028.Inspect]::CompareSamples($a,$b))
+ } else {
+  Write-Output 'COMPARE=INCONCLUSIVE_CHECK_HRESULTS'
+  Write-Output 'PIXEL_COMPARE=UNAVAILABLE'
+ }
 } else {
  Write-Output 'COMPARE=NOT_PERFORMED_CACHE_SNAPSHOT_ONLY'
  Write-Output 'NOTE=Use -ForceReextractAfterSnapshot only if Shell cache refresh is acceptable.'
@@ -185,4 +235,6 @@ Write-Output 'NOTE=No cache deletion, registry change or image-file write was pe
 if($ForceReextractAfterSnapshot) {
  Write-Output 'NOTE=Shell thumbnail cache may have changed due to forced extraction.'
 }
-Write-Output 'NOTE=Different bitmaps indicate mismatch at requested size, not proof of corrupt HEIC.'
+Write-Output 'NOTE=Hash differences can result from cached-image recompression; inspect RGB sampled errors.'
+Write-Output 'NOTE=rgb_mae_64 near 0 means nearly the same visible content. A much smaller rgb_mae_if_180deg_64 than rgb_mae_64 can indicate 180-degree disagreement.'
+Write-Output 'NOTE=Different bitmaps do not prove a rotation, stale cache, or corrupt HEIC.'
