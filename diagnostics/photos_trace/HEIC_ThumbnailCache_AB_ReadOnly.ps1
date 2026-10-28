@@ -17,7 +17,7 @@ if([string]::IsNullOrWhiteSpace($ImagePath)){
  try {
   $dlg.Filter='HEIC/HEIF copy (*.heic;*.heif)|*.heic;*.heif'
   $dlg.CheckFileExists=$true; $dlg.Multiselect=$false
-  $dlg.Title='読み取り専用で調べるHEICのコピーを選択'
+  $dlg.Title='Select a COPY of the HEIC for read-only diagnosis'
   if($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
    throw 'File selection cancelled'
   }
