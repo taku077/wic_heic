@@ -268,12 +268,14 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
                 } else if(!primary->m_LosslessReady &&
                           primary->m_HasPixels &&
                           primary->m_WrittenLines==primary->m_Height &&
-                          IsEqualGUID(primary->m_PixelFormat,GUID_WICPixelFormat24bppRGB)) {
+                          (IsEqualGUID(primary->m_PixelFormat,GUID_WICPixelFormat24bppRGB) ||
+                    IsEqualGUID(primary->m_PixelFormat,GUID_WICPixelFormat32bppRGBA))) {
                     // Only an exact full-pixel 0/90/180/270 match of the
                     // specific original supplied by the second frame qualifies.
                     if(!PhotosPureRotationBridge::TryRotation(
                             primary->m_Frame,primary->m_Width,primary->m_Height,
-                            primary->m_RasterICC,complete,&original))
+                            primary->m_RasterICC,complete,&original,nullptr,
+                            IsEqualGUID(primary->m_PixelFormat,GUID_WICPixelFormat32bppRGBA)?4u:3u))
                         return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-pixel-mismatch");
                 } else {
                     return Finish(WINCODEC_ERR_UNSUPPORTEDOPERATION,"two-frame-edited");
@@ -306,13 +308,15 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::Commit(void)
             if(f->m_OptionsInitialized && !f->m_LosslessReady &&
                f->m_HasPixels && f->m_WrittenLines==f->m_Height &&
                f->m_BitmapTransform==0 && f->m_HeifCompressionMethod==0 &&
-               IsEqualGUID(f->m_PixelFormat,GUID_WICPixelFormat24bppRGB)) {
+               (IsEqualGUID(f->m_PixelFormat,GUID_WICPixelFormat24bppRGB) ||
+                IsEqualGUID(f->m_PixelFormat,GUID_WICPixelFormat32bppRGBA))) {
                 HeicLosslessNative::Bytes matched;
                 bool unsafeRelatedVisualRotation=false;
                 if(PhotosPureRotationBridge::TryRotation(
                         f->m_Frame,f->m_Width,f->m_Height,
                         f->m_RasterICC,matched,nullptr,
-                        &unsafeRelatedVisualRotation)) {
+                        &unsafeRelatedVisualRotation,
+                        IsEqualGUID(f->m_PixelFormat,GUID_WICPixelFormat32bppRGBA)?4u:3u)) {
                     f->m_LosslessBytes.swap(matched);
                     f->m_LosslessReady=true;
                 } else if(unsafeRelatedVisualRotation) {
