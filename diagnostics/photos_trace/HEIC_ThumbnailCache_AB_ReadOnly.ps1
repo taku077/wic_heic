@@ -5,11 +5,15 @@
 param(
  [string]$ImagePath,
  [ValidateRange(64,512)][int]$Size=256,
- [switch]$CiSyntheticOnly
+ [switch]$CiSyntheticOnly,
+ [switch]$CiPrimeCache
 )
 $ErrorActionPreference='Stop'
-if($CiSyntheticOnly -and $env:GITHUB_ACTIONS -ne 'true') {
- throw 'Synthetic-only mode is restricted to GitHub Actions.'
+if(($CiSyntheticOnly -or $CiPrimeCache) -and $env:GITHUB_ACTIONS -ne 'true') {
+ throw 'CI synthetic mode and cache priming are restricted to GitHub Actions.'
+}
+if($CiPrimeCache -and -not $CiSyntheticOnly) {
+ throw 'Cache priming is allowed only on an artificial image in CI.'
 }
 if([string]::IsNullOrWhiteSpace($ImagePath)){
  Add-Type -AssemblyName System.Windows.Forms
@@ -141,6 +145,13 @@ namespace WicShellCacheAB20261028 {
 }
 Write-Output 'HEIC_THUMBNAIL_CACHE_AB_V1'
 Write-Output ('image_bytes_before={0} requested_thumbnail_size={1}' -f $originalLength,$Size)
+# Artificial CI-only priming is required to test a true cached hit.
+# No real HEIC can be primed through this parameter.
+if($CiPrimeCache) {
+ $primed=[WicShellCacheAB20261028.Inspect]::One($file.FullName,[uint32]$Size,0,'CI_SYNTHETIC_PRIME')
+ if($primed.Status -ne 'OK') { throw 'Synthetic cache priming failed' }
+ Write-Output 'CI_SYNTHETIC_PRIME=OK'
+}
 # 0x01: read only an already cached thumbnail. No extraction.
 $a=[WicShellCacheAB20261028.Inspect]::One($file.FullName,[uint32]$Size,1,'CACHE_ONLY')
 Write-Output ('CACHE_ONLY status={0} dims={1}x{2} flags=0x{3:X8} pixels_sha20={4} elapsed_ms={5}' -f $a.Status,$a.Width,$a.Height,$a.Flags,$a.Digest,$a.ElapsedMs)
