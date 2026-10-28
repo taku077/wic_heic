@@ -127,8 +127,10 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetPalette(__RPC__in_opt IWICPalet
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetThumbnail(__RPC__in_opt IWICBitmapSource *pIThumbnail)
 {
-	WicHeicDiagnostic::Emit("EncoderSetThumbnail",0,0,0,0,pIThumbnail?"thumbnail-rejected":"none",WINCODEC_ERR_UNSUPPORTEDOPERATION);
-	return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+	// WIC specifies a dedicated no-container-thumbnail HRESULT for this optional API.
+	// Do not accept and silently discard the thumbnail.
+	WicHeicDiagnostic::Emit("EncoderSetThumbnail",0,0,0,0,pIThumbnail?"thumbnail-rejected":"none",WINCODEC_ERR_CODECNOTHUMBNAIL);
+	return WINCODEC_ERR_CODECNOTHUMBNAIL;
 }
 
 HRESULT STDMETHODCALLTYPE CHeicBitmapEncoder::SetPreview(__RPC__in_opt IWICBitmapSource *pIPreview)

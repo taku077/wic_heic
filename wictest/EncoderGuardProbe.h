@@ -29,8 +29,8 @@ inline void Run() {
     Check(fac->CreateStream(&stream),"Create stream");
     Check(stream->InitializeFromFilename(L"samples\\guard-writepixels.heic",GENERIC_WRITE),"Open test output");
     Check(enc->Initialize(stream,WICBitmapEncoderNoCache),"Init encoder");
-    if(enc->SetThumbnail(source)!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
-        throw std::runtime_error("guard: top-level thumbnail unexpectedly accepted");
+    if(enc->SetThumbnail(source)!=WINCODEC_ERR_CODECNOTHUMBNAIL)
+        throw std::runtime_error("guard: container-level unsupported thumbnail HRESULT must conform to WIC contract");
     if(enc->SetColorContexts(0,nullptr)!=WINCODEC_ERR_UNSUPPORTEDOPERATION)
         throw std::runtime_error("guard: top-level color contexts unexpectedly accepted");
     CComPtr<IWICMetadataQueryWriter> unavailableWriter;
