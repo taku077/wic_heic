@@ -1,6 +1,6 @@
 ﻿#requires -Version 5.1
 # Windows 10, Windows PowerShell 5.1, GUI launcher.
-# User-controlled HEIC copy only. No installation, elevation, or codec changes.
+# HEIC file is read-only. Windows Shell thumbnail cache may be updated after snapshot.
 [CmdletBinding()]
 param([switch]$CiSelfTest)
 $ErrorActionPreference='Stop'
@@ -9,10 +9,10 @@ Add-Type -AssemblyName System.Drawing
 
 function ChooseLogDirectory {
     $root=[Environment]::GetFolderPath('MyDocuments')
-    foreach($base in @($root,$env:TEMP)) {
+    foreach($base in @($PSScriptRoot,$root,$env:TEMP)) {
         if([string]::IsNullOrWhiteSpace($base)){continue}
         try {
-            $folder=Join-Path $base 'HEIC_Thumbnail_Diagnostics'
+            $folder=Join-Path $base '診断結果'
             if(-not [IO.Directory]::Exists($folder)){
                 [void][IO.Directory]::CreateDirectory($folder)
             }
@@ -32,6 +32,7 @@ function EmitResult([string[]]$lines,[bool]$quiet) {
         Write-Host ('LOG_SAVED=True')
     } else {
         Write-Host ('Log: '+$dest)
+        try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"'+$dir+'"') -ErrorAction Stop } catch { }
         try {
             Start-Process -FilePath 'notepad.exe' -ArgumentList ('"'+$dest+'"') -ErrorAction Stop
         } catch {
@@ -68,7 +69,7 @@ try {
     } else {
         $dlg=New-Object System.Windows.Forms.OpenFileDialog
         try {
-            $dlg.Title='HEICサムネイル診断：元画像ではなくコピーを選択'
+            $dlg.Title='HEICサムネイル診断：画像を選択（読み取り専用）'
             $dlg.Filter='HEIC画像 (*.heic;*.heif)|*.heic;*.heif'
             $dlg.Multiselect=$false
             $dlg.CheckFileExists=$true
@@ -79,26 +80,12 @@ try {
             }
             $target=$dlg.FileName
         } finally {$dlg.Dispose()}
-        $choice=[System.Windows.Forms.MessageBox]::Show(
-          'まず古い向きのサムネイルを確認し、F5を押す前に実行してください。'+[Environment]::NewLine+
-          '対象は必ずHEICのコピーにしてください。'+[Environment]::NewLine+[Environment]::NewLine+
-          '「はい」：キャッシュの記録後に画像を強制再抽出して比較（Windowsのサムネイルキャッシュを更新する可能性あり）'+[Environment]::NewLine+
-          '「いいえ」：既存キャッシュの読み取りだけ（既定・安全）'+[Environment]::NewLine+
-          '「キャンセル」：診断しない',
-          'HEICサムネイル診断の方法',
-          [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
-          [System.Windows.Forms.MessageBoxIcon]::Question,
-          [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
-        if($choice -eq [System.Windows.Forms.DialogResult]::Cancel) {
-            Write-Host 'User cancelled before diagnostic.'
-            exit 0
-        }
-        $force=$choice -eq [System.Windows.Forms.DialogResult]::Yes
+        $force=$true
     }
 
     $originalHash=(Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
     $lines=New-Object 'System.Collections.Generic.List[string]'
-    $lines.Add('HEIC_THUMBNAIL_DIAG_GUI_V1')
+    $lines.Add('HEIC_THUMBNAIL_DIAG_GUI_V2')
     $lines.Add('ExecutionMode='+$(if($force){'CACHE_THEN_FORCE_REEXTRACT'}else{'CACHE_ONLY'}))
     $lines.Add('OriginalFilePathAndExif=NOT_LOGGED')
     $lines.Add('TimestampUTC='+[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))
@@ -107,10 +94,8 @@ try {
     try {
         if($CiSelfTest) {
             $engineData=@(& $engine -ImagePath $target -Size 256 -CiSyntheticOnly -CiPrimeCache -ForceReextractAfterSnapshot)
-        } elseif($force) {
-            $engineData=@(& $engine -ImagePath $target -Size 256 -ForceReextractAfterSnapshot)
         } else {
-            $engineData=@(& $engine -ImagePath $target -Size 256)
+            $engineData=@(& $engine -ImagePath $target -Size 256 -ForceReextractAfterSnapshot)
         }
         foreach($line in $engineData){$lines.Add([string]$line)}
     } catch {
@@ -134,8 +119,8 @@ try {
             $ico=[System.Windows.Forms.MessageBoxIcon]::Warning
         } else {
             $message='診断が終了しました。メモ帳に結果を表示しました。'+[Environment]::NewLine+
-                    '保存先：ドキュメント内の HEIC_Thumbnail_Diagnostics フォルダー（書込不可の場合はTEMP）。'+[Environment]::NewLine+
-                    '結果を確認後、必要ならExplorerでF5を押してください。'
+                    '保存先：$dest'+[Environment]::NewLine+
+                    'HEIC本体は変更していません。サムネイルキャッシュは更新された可能性があります。'
             $ico=[System.Windows.Forms.MessageBoxIcon]::Information
         }
         [System.Windows.Forms.MessageBox]::Show($message,'HEICサムネイル診断',
