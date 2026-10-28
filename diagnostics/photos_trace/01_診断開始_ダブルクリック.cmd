@@ -17,6 +17,11 @@ if not exist "%~dp0HEIC_ThumbnailCache_AB_ReadOnly.ps1" (
   pause
   exit /b 4
 )
+if /I "%~1"=="--ci-selftest" (
+  if /I not "%GITHUB_ACTIONS%"=="true" exit /b 6
+  "%PSEXE%" -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0HEIC_Thumbnail_DoubleClick_GUI.ps1" -CiSelfTest
+  exit /b %ERRORLEVEL%
+)
 "%PSEXE%" -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0HEIC_Thumbnail_DoubleClick_GUI.ps1"
 set "EXITCODE=%ERRORLEVEL%"
 if not "%EXITCODE%"=="0" (
