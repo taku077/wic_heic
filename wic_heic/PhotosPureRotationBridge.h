@@ -34,12 +34,19 @@ struct Store {
     uint64_t revision=0;
 };
 inline Store& Current() {static Store store;return store;}
+// Photos users may inspect a photo for several minutes before rotating it.
+// The old 30-second lease silently forced opaque Photos saves down the
+// metadata-stripping raster fallback. Keep this bounded by both source count
+// and total HEIF bytes, not by an extremely short fixed interaction deadline.
+constexpr auto kSourceTtl=std::chrono::minutes(10);
+constexpr size_t kMaxSourceCount=8;
+constexpr size_t kMaxSourceBytes=96u*1024u*1024u;
 inline void Prune(Store& state,std::chrono::steady_clock::time_point now) {
     const auto oldSize=state.candidates.size();
     state.candidates.erase(
         std::remove_if(state.candidates.begin(),state.candidates.end(),
             [&](const Candidate& c) {
-                return now-c.at>std::chrono::seconds(30);
+                return now-c.at>kSourceTtl;
             }),
         state.candidates.end());
     if(state.candidates.size()!=oldSize)++state.revision;
@@ -88,9 +95,8 @@ inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
     ++state.revision;
     size_t total=0;
     for(const auto& c:state.candidates)total+=c.original.size();
-    constexpr size_t maxBytes=64u*1024u*1024u;
-    constexpr size_t maxCount=4;
-    while(state.candidates.size()>maxCount || total>maxBytes) {
+    while(state.candidates.size()>kMaxSourceCount ||
+          total>kMaxSourceBytes) {
         total-=state.candidates.front().original.size();
         state.candidates.erase(state.candidates.begin());
         ++state.revision;
