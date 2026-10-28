@@ -15,6 +15,7 @@ on:
       - fix/photos-118-selfwic-incremental
       - experiment/thumb-hevc-workers-1128-isolated
       - candidate/thumb-adaptive-1129-win10-pilot
+      - fix/grid-rotation-lossless-safety-20261028
   workflow_dispatch:
 
 permissions:
