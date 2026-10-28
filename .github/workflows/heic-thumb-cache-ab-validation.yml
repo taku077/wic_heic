@@ -1,0 +1,46 @@
+name: HEIC thumbnail-cache A/B diagnostic smoke
+on:
+  push:
+    branches:
+      - fix/grid-rotation-lossless-safety-20261028
+    paths:
+      - diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1
+      - .github/workflows/heic-thumb-cache-ab-validation.yml
+  workflow_dispatch:
+jobs:
+  cache-ab-synthetic:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell 5.1 source-only synthetic PNG thumbnail comparison
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Add-Type -AssemblyName System.Drawing
+          $path=Join-Path $env:RUNNER_TEMP ('wic_heic_cacheab_'+[Guid]::NewGuid().ToString('N')+'.png')
+          $bitmap=New-Object System.Drawing.Bitmap(240,160)
+          try {
+            $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $graphics.Clear([System.Drawing.Color]::CornflowerBlue)
+              $graphics.FillRectangle([System.Drawing.Brushes]::White,20,25,45,80)
+            } finally { $graphics.Dispose() }
+            $bitmap.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)
+          } finally { $bitmap.Dispose() }
+          try {
+            $before=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            $result=@(& ./diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1 -ImagePath $path -Size 128 -CiSyntheticOnly)
+            $result | ForEach-Object { Write-Host $_ }
+            if(-not ($result -match 'EXTRACT_NO_CACHE status=OK')) {
+              throw 'Fresh thumbnail extraction diagnostic failed for synthetic PNG'
+            }
+            if(-not ($result -match 'INPUT_LENGTH_AND_MTIME_UNCHANGED=True')) {
+              throw 'Input changed unexpectedly'
+            }
+            $after=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            if($before -ne $after) { throw 'Image bytes mutated by diagnostic' }
+            Write-Host 'THUMB_CACHE_AB_SYNTHETIC_READ_ONLY_PASS'
+          } finally {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+          }
