@@ -257,13 +257,21 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
             std::lock_guard<std::mutex> lock(state.gate);
             // Unbound Photos raster: another offered source invalidates
             // the global uniqueness proof. Never consume a stale candidate.
-            if(state.revision!=revision)
+            if(state.revision!=revision) {
+                if(unsafeRelatedVisualRotation)
+                    *unsafeRelatedVisualRotation=
+                        HeicLosslessNative::MustPreserveLinkedVisualsAfterMatchedCandidateLost(source);
                 return DeclineRotation(width,height,"candidate-set-changed");
+            }
             const auto it=std::find_if(state.candidates.begin(),
                                       state.candidates.end(),
                 [&](const Candidate& c){return c.original==source;});
-            if(it==state.candidates.end())
+            if(it==state.candidates.end()) {
+                if(unsafeRelatedVisualRotation)
+                    *unsafeRelatedVisualRotation=
+                        HeicLosslessNative::MustPreserveLinkedVisualsAfterMatchedCandidateLost(source);
                 return DeclineRotation(width,height,"candidate-evicted");
+            }
             state.candidates.erase(it);
             ++state.revision;
         }
