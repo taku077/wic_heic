@@ -165,6 +165,15 @@ inline bool HasLinkedVisualItems(const Bytes& source) {
     }
     return linked;
 }
+// A full-pixel pure rotation has already matched this original container,
+// but another decoder may change the ephemeral candidate set before commit.
+// Do not discard genuine related thumbnail/HDR/auxiliary assets in that case.
+// A malformed association graph must also fail closed.
+inline bool MustPreserveLinkedVisualsAfterMatchedCandidateLost(
+        const Bytes& source) {
+    try {return HasLinkedVisualItems(source);}
+    catch (...) {return true;}
+}
 inline void ValidateSharedRotation(
     const Bytes& b,const std::vector<Box>& properties,
     const std::vector<Association>& associations,

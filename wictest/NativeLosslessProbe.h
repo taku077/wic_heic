@@ -1,6 +1,5 @@
 #pragma once
 #include "../wic_heic/HeicLosslessNative.h"
-#include "../wic_heic/PhotosPureRotationBridge.h"
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -81,11 +80,11 @@ inline void Run() {
         for(int j=0;j<4;j++)it[j]=static_cast<unsigned char>(tag[j]);
         if(!HeicLosslessNative::HasLinkedVisualItems(withRelated))
             throw std::runtime_error("Related HEIF image not detected for safety guard");
-        if(!PhotosPureRotationBridge::UnsafeToDiscardLinkedVisualsAfterExactMatch(withRelated))
+        if(!HeicLosslessNative::MustPreserveLinkedVisualsAfterMatchedCandidateLost(withRelated))
             throw std::runtime_error("Concurrent source revision could silently discard linked HDR/thumbnail");
-        if(PhotosPureRotationBridge::UnsafeToDiscardLinkedVisualsAfterExactMatch(initial))
+        if(HeicLosslessNative::MustPreserveLinkedVisualsAfterMatchedCandidateLost(initial))
             throw std::runtime_error("Simple HEIC wrongly marked as linked-visual-unsafe");
-        if(!PhotosPureRotationBridge::UnsafeToDiscardLinkedVisualsAfterExactMatch(
+        if(!HeicLosslessNative::MustPreserveLinkedVisualsAfterMatchedCandidateLost(
                 HeicLosslessNative::Bytes{0,1,2,3}))
             throw std::runtime_error("Invalid source graph must be treated as unsafe");
         bool rejected=false;
