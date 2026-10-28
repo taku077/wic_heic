@@ -104,6 +104,11 @@ inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
 // 0 = unchanged after 360 degrees; 1 = clockwise 90; 2 = 180; 3 = CW270.
 // No interpolation, crop, colour adjustment or metadata edit is permitted.
 // For 0 degrees return byte-identical HEIF; never encode a noop raster.
+// Failure reasons are fixed tokens only. They never expose image pixels or paths.
+inline bool DeclineRotation(UINT width,UINT height,const char* reason) {
+    WicHeicDiagnostic::Emit("PhotosPureRotateMiss",width,height,0,0,reason);
+    return false;
+}
 inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                         const std::vector<uint8_t>& explicitICC,
                         HeicLosslessNative::Bytes& output,
@@ -132,7 +137,7 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
             const bool normal=(width==c.width && height==c.height);
             if(swapped || normal)possible.push_back(c);
         }
-        if(possible.empty())return false;
+        if(possible.empty())return DeclineRotation(width,height,"no-source-candidate");
     }
     try {
         if(requiredContainer) {
@@ -210,14 +215,15 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                 if(equal){
                     // Same pixel result from different HEIF metadata (or a
                     // symmetric image/angle) is ambiguous: never guess.
-                    if(matched)return false;
+                    if(matched)return DeclineRotation(width,height,"ambiguous-rotation");
                     matched=true;
                     confirmed=transform;
                     source=candidate.original;
                 }
             }
         }
-        if(!matched || (requiredContainer && source!=*requiredContainer))return false;
+        if(!matched || (requiredContainer && source!=*requiredContainer))
+            return DeclineRotation(width,height,"pixels-or-color-mismatch");
         HeicLosslessNative::Bytes result;
         if(confirmed==0) {
             result=source;
@@ -241,20 +247,23 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                         *unsafeRelatedVisualRotation=true;
                     }
                 }
-                return false;
+                return DeclineRotation(width,height,"native-rotation-refused");
             }
         }
-        if(result.size()!=source.size())return false;
+        if(result.size()!=source.size())
+            return DeclineRotation(width,height,"lossless-result-size");
         if(!requiredContainer) {
             auto& state=Current();
             std::lock_guard<std::mutex> lock(state.gate);
             // Unbound Photos raster: another offered source invalidates
             // the global uniqueness proof. Never consume a stale candidate.
-            if(state.revision!=revision)return false;
+            if(state.revision!=revision)
+                return DeclineRotation(width,height,"candidate-set-changed");
             const auto it=std::find_if(state.candidates.begin(),
                                       state.candidates.end(),
                 [&](const Candidate& c){return c.original==source;});
-            if(it==state.candidates.end())return false;
+            if(it==state.candidates.end())
+                return DeclineRotation(width,height,"candidate-evicted");
             state.candidates.erase(it);
             ++state.revision;
         }
@@ -265,7 +274,7 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
         return true;
     } catch(...) {
         output.clear();
-        return false;
+        return DeclineRotation(width,height,"exception-or-decoder-failure");
     }
 }
 
