@@ -9,6 +9,7 @@
 // aux structures all FALL BACK to normal raster encode.
 // There is deliberately no external protocol, registry, or disk cache.
 #include "HeicLosslessNative.h"
+#include "PhotosSourceLeasePolicy.h"
 #include "PhotosWicTrace.h"
 #include <vector>
 #include <mutex>
@@ -38,9 +39,6 @@ inline Store& Current() {static Store store;return store;}
 // The old 30-second lease silently forced opaque Photos saves down the
 // metadata-stripping raster fallback. Keep this bounded by both source count
 // and total HEIF bytes, not by an extremely short fixed interaction deadline.
-constexpr auto kSourceTtl=std::chrono::minutes(10);
-constexpr size_t kMaxSourceCount=8;
-constexpr size_t kMaxSourceBytes=96u*1024u*1024u;
 inline void Prune(Store& state,std::chrono::steady_clock::time_point now) {
     const auto oldSize=state.candidates.size();
     state.candidates.erase(
