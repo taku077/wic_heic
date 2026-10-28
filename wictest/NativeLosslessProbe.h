@@ -78,11 +78,14 @@ inline void Run() {
         auto it=std::search(withRelated.begin(),withRelated.end(),marker,marker+4);
         if(it==withRelated.end())throw std::runtime_error("Synthetic EXIF reference missing");
         for(int j=0;j<4;j++)it[j]=static_cast<unsigned char>(tag[j]);
+        if(!HeicLosslessNative::HasLinkedVisualItems(withRelated))
+            throw std::runtime_error("Related HEIF image not detected for safety guard");
         bool rejected=false;
         try { auto unsafe=HeicLosslessNative::Transform(withRelated,1);(void)unsafe; }
         catch(const std::runtime_error&) { rejected=true; }
         if(!rejected)throw std::runtime_error("Unsafe thumbnail/HDR rotation accepted");
     }
+    printf("NATIVE_RELATED_VISUAL_FALLBACK_GUARD_DETECTED_PASS\\n");
     // In-memory synthetic HEIF reference graph: a thumbnail (item 50)
     // references primary (item 49) and BOTH share exactly one irot property.
     // This layout is safe: one irot change rotates both, with unchanged HEVC.
