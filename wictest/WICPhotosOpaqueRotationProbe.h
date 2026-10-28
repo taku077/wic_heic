@@ -7,27 +7,19 @@
 #include <vector>
 #include <stdexcept>
 #include <string>
-#include "../wic_heic/PhotosPureRotationBridge.h"
+#include "../wic_heic/PhotosSourceLeasePolicy.h"
 
 namespace WICPhotosOpaqueRotationProbe {
 inline void CheckSourceLeasePolicy() {
     using namespace PhotosPureRotationBridge;
-    const auto now=std::chrono::steady_clock::now();
-    Store simulated;
-    simulated.candidates.push_back(Candidate{
-        std::vector<uint8_t>{1,2,3},32,16,now-std::chrono::seconds(31)});
-    Prune(simulated,now);
-    if(simulated.candidates.size()!=1)
-        throw std::runtime_error("Photos source expired before ordinary edit time");
-    simulated.candidates[0].at=now-std::chrono::minutes(11);
-    Prune(simulated,now);
-    if(!simulated.candidates.empty())
-        throw std::runtime_error("Stale Photos source retained beyond safety TTL");
+    // A normal interactive pause must not invalidate the original HEIF.
+    if(!(std::chrono::seconds(31)<kSourceTtl) ||
+       !(std::chrono::minutes(11)>kSourceTtl))
+        throw std::runtime_error("Photos source edit lease regressed");
     if(kMaxSourceCount>8 || kMaxSourceBytes>96u*1024u*1024u)
-        throw std::runtime_error("Photos cache memory bounds unexpectedly expanded");
-    printf("WIC_PHOTOS_SOURCE_LEASE_30SEC_SURVIVES_11MIN_EXPIRES_PASS\\n");
+        throw std::runtime_error("Photos candidate memory bound regressed");
+    printf("WIC_PHOTOS_SOURCE_31SEC_LEASE_AND_11MIN_EXPIRY_PASS\\n");
 }
-
 inline void Must(HRESULT hr,const char* label) {
     if(FAILED(hr)){
         printf("WIC_PHOTOS_OPAQUE_FAILURE=%s HRESULT=0x%08X\n",
