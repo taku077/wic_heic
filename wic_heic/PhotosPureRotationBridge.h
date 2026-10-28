@@ -103,8 +103,10 @@ inline void Offer(const std::vector<uint8_t>& bytes,UINT w,UINT h) {
 inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
                         const std::vector<uint8_t>& explicitICC,
                         HeicLosslessNative::Bytes& output,
-                        const std::vector<uint8_t>* requiredContainer=nullptr) {
+                        const std::vector<uint8_t>* requiredContainer=nullptr,
+                        bool* unsafeRelatedVisualRotation=nullptr) {
     output.clear();
+    if(unsafeRelatedVisualRotation) *unsafeRelatedVisualRotation=false;
     if(!width || !height || width>20000 || height>20000)return false;
     std::vector<Candidate> possible;
     uint64_t revision=0;
@@ -202,8 +204,32 @@ inline bool TryRotation(heif::Image& edited,UINT width,UINT height,
             }
         }
         if(!matched || (requiredContainer && source!=*requiredContainer))return false;
-        auto result=(confirmed==0)?source:
-            HeicLosslessNative::Transform(source,confirmed);
+        HeicLosslessNative::Bytes result;
+        if(confirmed==0) {
+            result=source;
+        } else {
+            try {
+                result=HeicLosslessNative::Transform(source,confirmed);
+            } catch(const std::runtime_error&) {
+                // Exact RGB rotation has been proven, but the lossless
+                // container editor rejected the structure. If a related
+                // thumbnail/HDR/aux image exists, do NOT fall through to
+                // a silent one-frame HEVC re-encode that discards it.
+                // Ordinary simple HEIC and actual raster edits retain
+                // their existing fallback paths.
+                if(unsafeRelatedVisualRotation) {
+                    try {
+                        *unsafeRelatedVisualRotation=
+                            HeicLosslessNative::HasLinkedVisualItems(source);
+                    } catch(...) {
+                        // Unparseable relationship data after a validated
+                        // exact rotation is also unsafe to discard.
+                        *unsafeRelatedVisualRotation=true;
+                    }
+                }
+                return false;
+            }
+        }
         if(result.size()!=source.size())return false;
         if(!requiredContainer) {
             auto& state=Current();
