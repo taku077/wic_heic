@@ -221,6 +221,18 @@ inline void RunOrientationGate() {
     // A deliberately edited in-memory property FOURCC is NOT a valid rotated
     // HEIC; it only proves no unknown orientation metadata is passed through.
     Need(!WicShellLabSafety::SimplePreviewSafe(b),"Transform metadata accepted");
+    // Existing small HEIC fixtures with real, valid irot3+Exif6 metadata.
+    // Unlike the in-memory fourCC mutation above, these are genuine HEIFs.
+    for(const wchar_t* leaf : {L"wictest/samples/fixture-irot3-exif6.heic",
+                               L"wictest/samples/fixture-irot3-exif6-noaux.heic"}) {
+        CComPtr<IWICStream> oriented;
+        Need(SUCCEEDED(factory->CreateStream(&oriented)) &&
+             SUCCEEDED(oriented->InitializeFromFilename(leaf,GENERIC_READ)),
+             "Real orientation fixture missing");
+        Need(!WicShellLabSafety::FromStream(oriented),
+             "Real EXIF6/irot3 HEIC accidentally accepted by fast path");
+    }
+    std::puts("CI_SHELL_REAL_IROT3_EXIF6_FAIL_CLOSED_PASS");
     std::puts("CI_SHELL_ORIENTATION_METADATA_FAIL_CLOSED_PASS");
 }
 inline void RunFallback() {
