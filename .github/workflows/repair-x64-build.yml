@@ -501,6 +501,11 @@ jobs:
           $ext=Join-Path $root ('.heic\ShellEx\'+$handler)
           $system=Join-Path $root ('SystemFileAssociations\.heic\ShellEx\'+$handler)
           $keys=@($server,$ext,$system)
+          # Isolated COM surrogate may not see HKCU-only class registration.
+          # Only experiment with a fresh HKLM class if there is no existing key.
+          $machineServer=Join-Path 'HKLM:\SOFTWARE\Classes\CLSID' $cls
+          $machineInproc=Join-Path $machineServer 'InprocServer32'
+          $machineOwned=$false
           $traceOn=$false
           try {
             # No override or deletion of pre-existing per-user settings.
@@ -550,9 +555,33 @@ jobs:
             $traceOn=$true
             $trace=[string](Get-ItemProperty 'HKCU:\Software\WicHeic').TraceFile
             $out=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $labFixture -Size 256 -ForceReextractAfterSnapshot)
-            $out | ForEach-Object {Write-Host $_}
-            if(-not (($out -join ' ') -match 'FORCE_REEXTRACT status=OK')){
-              throw 'Shell unable to extract synthetic HEIC'
+            $out | ForEach-Object {Write-Host $_ }
+            $hkcuSuccess=(($out -join ' ') -match 'FORCE_REEXTRACT status=OK')
+            Write-Host "SHELL_USER_CLASS_ONLY_RESULT success=$hkcuSuccess"
+            if(-not $hkcuSuccess){
+              # Strictly disposable Windows runner: compare HKLM COM class only.
+              # Never overwrite an existing machine registration.
+              if(Test-Path -LiteralPath $machineServer){
+                throw "Machine COM CLSID exists; refusing to overwrite: $machineServer"
+              }
+              $machineOwned=$true
+              New-Item -Path $machineInproc -Force | Out-Null
+              Set-Item -Path $machineInproc -Value $lab
+              New-ItemProperty -Path $machineInproc -Name 'ThreadingModel' -Value 'Apartment' -PropertyType String | Out-Null
+              $systemVisible=(Get-Item -LiteralPath $machineInproc).GetValue('')
+              if($systemVisible -ine $lab){throw 'HKLM registration verification failed'}
+              [WicHeicShellAssociation.Notify]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
+              Start-Sleep -Milliseconds 450
+              $machineFixture=Join-Path $env:RUNNER_TEMP 'wicfast_shell_lab_machine_4032x3024.heic'
+              if(Test-Path -LiteralPath $machineFixture){throw 'Refusing existing machine fixture'}
+              Copy-Item -LiteralPath $fixture -Destination $machineFixture -ErrorAction Stop
+              $after=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $machineFixture -Size 256 -ForceReextractAfterSnapshot)
+              $after | ForEach-Object {Write-Host $_}
+              $machineSuccess=(($after -join ' ') -match 'FORCE_REEXTRACT status=OK')
+              Write-Host "SHELL_MACHINE_CLASS_RESULT success=$machineSuccess"
+              if(-not $machineSuccess) {
+                throw ('Shell still unable to extract with system COM class. HKCU='+($out -join ' | ')+' HKLM='+($after -join ' | '))
+              }
             }
             $log=Get-Content -LiteralPath $trace -Raw
             $provider=([regex]::Matches($log,'event=ShellLabProviderEnter ')).Count
@@ -565,6 +594,14 @@ jobs:
             Write-Host 'SHELL_REGISTERED_EMBEDDED_HEVC_FAST_PATH_PASS'
           } finally {
             if($traceOn){& './diagnostics/photos_trace/PhotosTrace_Stop.ps1'}
+            if($machineOwned -and (Test-Path -LiteralPath $machineServer)){
+              $now=(Get-Item -LiteralPath $machineInproc).GetValue('')
+              if($now -ieq $lab){Remove-Item -LiteralPath $machineServer -Recurse -Force}
+              else {Write-Warning 'Do not delete changed HKLM test class'}
+            }
+            if(Test-Path -LiteralPath (Join-Path $env:RUNNER_TEMP 'wicfast_shell_lab_machine_4032x3024.heic')){
+              Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'wicfast_shell_lab_machine_4032x3024.heic') -Force
+            }
             # Keys were absent before this job and are removed ONLY if their
             # default values still equal our known test CLSID or DLL path.
             foreach($key in @($ext,$system)){
