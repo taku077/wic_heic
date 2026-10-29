@@ -53,6 +53,47 @@ jobs:
             if($entry.Length -lt 1024){throw 'WPR ETL too small'}
           } finally {$z.Dispose()}
           Write-Host 'WPR_MANUAL_ONEPASS_WINDOWS_PS51_PASS'
+      - name: Simulate a Windows 10-like WPR save failure and preserve partial diagnostics
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $script='./diagnostics/photos_trace/COM_CPU_WPR_Manual.ps1'
+          $failed=$false
+          try {
+            & $script -CiSmoke -CiForceStopFailure
+          } catch {
+            $failed=$true
+            Write-Host ('EXPECTED_INJECTED_STOP_FAILURE '+$_.Exception.Message)
+          }
+          if(-not $failed){throw 'Fault injection did not fail closed'}
+          $folder=Get-ChildItem -LiteralPath 'diagnostics/photos_trace' -Directory -Filter 'COM_CPU_WPR_Manual_*' |
+             Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if(-not $folder){throw 'Failure capture directory missing'}
+          $status=Get-Content -LiteralPath (Join-Path $folder.FullName 'Capture_Manifest.txt') -Raw
+          if($status -notmatch 'ResultStatus=FAILED_PARTIAL' -or
+             $status -notmatch 'WPRStopExitCode=777' -or
+             $status -notmatch 'CPU_Stacks.etl unavailable'){
+             throw 'Fault injection lost WPR failure details'
+          }
+          $parent=Split-Path $folder.FullName -Parent
+          $statusLogs=Get-ChildItem $parent -File -Filter 'WPR_Child_Status_*.txt'
+          if(-not($statusLogs | Where-Object {
+            (Get-Content $_.FullName -Raw) -match 'WPR STOP exit=777'
+          })) {throw 'No persistent WPR stop diagnostics'}
+          foreach($name in @('Process_CPU_1s.csv','WIC_Decode_Events.txt','CPU_WIC_Summary.txt')){
+            if(-not(Test-Path -LiteralPath (Join-Path $folder.FullName $name))){
+               throw "Partial capture lost: $name"
+            }
+          }
+          $zip=$folder.FullName+'.zip'
+          if(-not(Test-Path -LiteralPath $zip)){throw 'Failure ZIP missing'}
+          $settings=Get-ItemProperty -Path 'HKCU:\Software\WicHeic' -ErrorAction SilentlyContinue
+          if($settings -and (($settings.PSObject.Properties.Name -contains 'TraceFile') -or
+                            ($settings.PSObject.Properties.Name -contains 'TraceUntilFileTime'))){
+             throw 'Failure scenario left WIC trace registry settings'
+          }
+          Write-Host 'WPR_FAULT_INJECTION_PRESERVED_LOGS_PASS'
+
       - name: Package only reviewed diagnostic source (no MSI, no HEIC)
         shell: powershell
         run: |
