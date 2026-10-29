@@ -40,7 +40,7 @@ public:
     }
     HRESULT STDMETHODCALLTYPE LockServer(BOOL) override {return S_OK;}
 };
-extern "C" __declspec(dllexport) HRESULT __stdcall DllGetClassObject(
+extern "C" HRESULT __stdcall WicHeicLab_DllGetClassObject(
     REFCLSID clsid,REFIID iid,void** output){
     if(!output)return E_POINTER;
     *output=nullptr;
@@ -51,7 +51,7 @@ extern "C" __declspec(dllexport) HRESULT __stdcall DllGetClassObject(
     factory->Release();
     return hr;
 }
-extern "C" __declspec(dllexport) HRESULT __stdcall DllCanUnloadNow(){
+extern "C" HRESULT __stdcall WicHeicLab_DllCanUnloadNow(){
     // CI lab keeps code loaded until Shell's isolated process terminates.
     return S_FALSE;
 }

@@ -34,6 +34,7 @@
    <RuntimeLibrary>MultiThreaded</RuntimeLibrary><ExceptionHandling>Sync</ExceptionHandling>
   </ClCompile>
   <Link>
+    <ModuleDefinitionFile>HeicShellThumbnailLab.def</ModuleDefinitionFile>
     <SubSystem>Windows</SubSystem>
     <AdditionalDependencies>windowscodecs.lib;ole32.lib;gdi32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
   </Link>

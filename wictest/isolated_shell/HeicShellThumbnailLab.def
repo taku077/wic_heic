@@ -1,0 +1,4 @@
+LIBRARY HeicShellThumbnailLab
+EXPORTS
+  DllGetClassObject=WicHeicLab_DllGetClassObject
+  DllCanUnloadNow=WicHeicLab_DllCanUnloadNow
