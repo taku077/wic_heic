@@ -11,24 +11,27 @@ foreach($file in @($CpuFile,$TraceFile)) {
 }
 $rows=@(Import-Csv -LiteralPath $CpuFile | Where-Object { $_.PID -match '^\d+$' })
 $events=New-Object 'System.Collections.Generic.List[object]'
-foreach($line in [IO.File]::ReadAllLines($TraceFile)) {
- if(-not $line.StartsWith('WIC_HEIC_TRACE v1 ')) {continue}
- $fields=@{}
- foreach($m in [regex]::Matches($line,'(?<key>[A-Za-z_]+)=(?<value>[^\s]+)')){
-     $fields[$m.Groups['key'].Value]=$m.Groups['value'].Value
+$recognized=0
+foreach($rawLine in [IO.File]::ReadAllLines($TraceFile)) {
+ $line=$rawLine.TrimStart([char]0xFEFF).Trim()
+ if(-not $line.Contains('WIC_HEIC_TRACE v1 ')) {continue}
+ $recognized++
+ $pidMatch=[regex]::Match($line,'(?:^|\s)pid=(\d+)(?:\s|$)')
+ $eventMatch=[regex]::Match($line,'(?:^|\s)event=([A-Za-z_]+)(?:\s|$)')
+ $timeMatch=[regex]::Match($line,'(?:^|\s)utc_filetime=(\d+)(?:\s|$)')
+ $elapsedMatch=[regex]::Match($line,'(?:^|\s)elapsed_ms=(\d+)(?:\s|$)')
+ if(-not ($pidMatch.Success -and $eventMatch.Success -and $timeMatch.Success)) {
+     throw 'Malformed WIC trace: PID, event or UTC field missing'
  }
- if(-not ($fields.ContainsKey('pid') -and $fields.ContainsKey('event') -
-           $fields.ContainsKey('utc_filetime'))) {continue}
  try {
-     $pidNum=[int]$fields['pid']
-     $at=[DateTime]::FromFileTimeUtc([long]$fields['utc_filetime'])
-     $duration=0
-     if($fields.ContainsKey('elapsed_ms')){$duration=[long]$fields['elapsed_ms']}
+     $pidNum=[int]::Parse($pidMatch.Groups[1].Value)
+     $at=[DateTime]::FromFileTimeUtc([long]::Parse($timeMatch.Groups[1].Value))
+     $duration=0L
+     if($elapsedMatch.Success){$duration=[long]::Parse($elapsedMatch.Groups[1].Value)}
      $events.Add([pscustomobject]@{
-       PID=$pidNum;Event=$fields['event'];Utc=$at;ElapsedMs=$duration
+       PID=$pidNum;Event=$eventMatch.Groups[1].Value;Utc=$at;ElapsedMs=$duration
      })
  } catch {
-     # Fail visibly instead of falsely reporting no HEIC decoder events.
      throw ('Malformed WIC event: '+$_.Exception.Message)
  }
 }
@@ -37,6 +40,7 @@ $lines=New-Object 'System.Collections.Generic.List[string]'
 $lines.Add('COM CPU / WIC time correlation - informational, not module CPU attribution')
 $lines.Add('CpuSamplingRows='+$rows.Count)
 $lines.Add('WicEvents='+$events.Count)
+$lines.Add('WicTraceRecognizedLines='+$recognized)
 $lines.Add('WicFullDecodes='+$decode.Count)
 $lines.Add('NOTE: An empty WIC trace does not imply that no HEIC decode occurred.')
 $lines.Add('NOTE: WIC elapsed_ms is wall time; do not compare it directly with CPU seconds.')
