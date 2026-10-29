@@ -90,3 +90,14 @@ Cross-check references: https://learn.microsoft.com/en-us/windows/win32/shell/re
 - Current 1.1.30 remains the real-device version. No extra end-user WPR capture is needed yet. Optimize safely rather than meeting a theoretical end-state or distributing every minor checkpoint.
 
 References: https://learn.microsoft.com/en-us/windows/win32/api/thumbcache/nn-thumbcache-ithumbnailprovider ; https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c ; https://learn.microsoft.com/en-us/windows/win32/shell/building-thumbnail-providers .
+
+## 2026-10-30: ICC-bearing embedded HEIC is safely forced onto old WIC path
+
+- Added genuine 4032x3024 HEVC primary carrying the repository's synthetic sRGB ICC file, with its normal embedded 320x240 HEVC preview. Generator verifies the primary actually retains an ICC after encoding; no private image data involved.
+- CI run [#40914759428](https://github.com/taku077/wic_heic/actions/runs/40914759428), commit `a6ff4830299d9c72436bf1d2b4de1c1057b52e11`: **SUCCESS**. Three direct native fallback cases: 1024px request, no embedded preview, ICC-bearing primary. All produced intended outputs and exactly three primary full decodes.
+- CI run [#40915571966](https://github.com/taku077/wic_heic/actions/runs/40915571966), commit `649674a44316a73008995ac888f8f87f9d5a9ed3`: **SUCCESS**. Actual HKLM-registered isolated Shell IThumbnailCache also fetched a genuine ICC-bearing HEIC and logged `SHELL_REGISTERED_ICC_FULL_WIC_FALLBACK_PASS` (one primary full decode + one `icc-primary` fallback).
+- Same CI's eight/ eight synthetic forced thumbnail timing medians: **68ms existing WIC**, **8ms registered handler**, ratio **0.118** (88.2% lower synthetic per-file latency). This is a single run, still order/cache influenced, and **not** an observed Windows 10 Explorer folder improvement.
+- HKLM temporary COM class and ShellEx registration rollback gate again passed (`SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS`); no actual product MSI change.
+- Safety caveat: confirmed fallback for ICC does not itself verify ICC color transform precision. It preserves the existing 1.1.30 WIC source path rather than introducing a new shortcut.
+- **Release blockers remain**: controlled EXIF/irot orientation correctness in both primary/embedded HEVC, 8/10/12bit and alpha/grid/HDR/gain-map handling or conservative fallback, and separate safely reversible product MSI registry upgrade/uninstall. The current installer uses `SelfRegCost=1`; a new ShellEx value cannot simply overwrite other handlers and be deleted on uninstall.
+- Keep production WicHeic 1.1.30 until explicit Windows 10 pilot. Do not ask the user to repeat the earlier WPR ETL capture.
