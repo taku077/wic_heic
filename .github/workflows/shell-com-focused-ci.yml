@@ -129,6 +129,27 @@ jobs:
           $machineInproc=Join-Path $machineServer 'InprocServer32'
           $machineOwned=$false
           $traceOn=$false
+          # Same runner / same fixture / fresh filenames / forced extraction,
+          # rather than comparing isolated one-off cold and warm timings.
+          $baselineSamples=New-Object 'System.Collections.Generic.List[double]'
+          $getSample={
+            param($file)
+            $rows=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $file -Size 256 -ForceReextractAfterSnapshot)
+            $line=@($rows | Where-Object {$_ -match '^FORCE_REEXTRACT status=OK'}) | Select-Object -Last 1
+            if(-not $line){throw ('Shell benchmark extraction failed: '+($rows -join ' | '))}
+            $m=[regex]::Match([string]$line,'elapsed_ms=(\d+)')
+            if(-not $m.Success){throw 'Missing Shell elapsed_ms from extraction'}
+            return [double]$m.Groups[1].Value
+          }
+          for($k=0;$k -lt 8;$k++){
+            $name=Join-Path $env:RUNNER_TEMP ("wicfast_bench_default_{0:D2}.heic" -f $k)
+            if(Test-Path -LiteralPath $name){throw 'Default benchmark fixture already exists'}
+            Copy-Item -LiteralPath $fixture -Destination $name
+            try {$baselineSamples.Add([double](& $getSample $name))}
+            finally {Remove-Item -LiteralPath $name -Force -ErrorAction SilentlyContinue}
+          }
+          $baselineMedian=@($baselineSamples | Sort-Object)[3..4] | Measure-Object -Average
+          Write-Host ('SHELL_A_B_DEFAULT_MEDIAN_MS={0:F2} samples=8' -f $baselineMedian.Average)
           try {
             # No override or deletion of pre-existing per-user settings.
             foreach($key in $keys){
@@ -214,6 +235,21 @@ jobs:
             if($embedded -lt 1){throw 'Registered Shell handler did not use embedded HEVC thumbnail'}
             if($full -ne 0){throw 'Registered Shell handler decoded full 12MP primary'}
             Write-Host 'SHELL_REGISTERED_EMBEDDED_HEVC_FAST_PATH_PASS'
+            $fastSamples=New-Object 'System.Collections.Generic.List[double]'
+            for($k=0;$k -lt 8;$k++){
+              $name=Join-Path $env:RUNNER_TEMP ("wicfast_bench_registered_{0:D2}.heic" -f $k)
+              if(Test-Path -LiteralPath $name){throw 'Registered benchmark fixture already exists'}
+              Copy-Item -LiteralPath $fixture -Destination $name
+              try {$fastSamples.Add([double](& $getSample $name))}
+              finally {Remove-Item -LiteralPath $name -Force -ErrorAction SilentlyContinue}
+            }
+            $fastMedian=@($fastSamples | Sort-Object)[3..4] | Measure-Object -Average
+            $ratio=if($baselineMedian.Average -gt 0){$fastMedian.Average/$baselineMedian.Average}else{999}
+            Write-Host ('SHELL_A_B_REGISTERED_MEDIAN_MS={0:F2} samples=8 ratio={1:F3}' -f $fastMedian.Average,$ratio)
+            # A performance regression is a release blocker, not a reason
+            # to erase successful functional Shell activation results.
+            if($ratio -ge 0.85){throw ('Shell thumbnail optimization did not beat baseline by 15% median: ratio='+$ratio)}
+            Write-Host 'SHELL_8_FILE_MEDIAN_SPEEDUP_GATE_PASS'
           } finally {
             if($traceOn){& './diagnostics/photos_trace/PhotosTrace_Stop.ps1'}
             if($machineOwned -and (Test-Path -LiteralPath $machineServer)){
