@@ -108,6 +108,17 @@ inline void RunPilotAutoWithoutOverride(IWICImagingFactory* factory,
         "pilot decoder init");
     CComPtr<IWICBitmapFrameDecode> frame;
     Check(decoder->GetFrame(0,&frame),"pilot frame");
+    // Generated 12MP HEIC has no embedded thumbnail. Check that the
+    // fallback contract clears out pointers before a full-resolution read.
+    IWICBitmapSource* decoderThumb=reinterpret_cast<IWICBitmapSource*>(uintptr_t(1));
+    const HRESULT dhr=decoder->GetThumbnail(&decoderThumb);
+    if(dhr!=WINCODEC_ERR_CODECNOTHUMBNAIL || decoderThumb!=nullptr)
+        throw std::runtime_error("Decoder thumbnail absence contract");
+    IWICBitmapSource* frameThumb=reinterpret_cast<IWICBitmapSource*>(uintptr_t(1));
+    const HRESULT fhr=frame->GetThumbnail(&frameThumb);
+    if(fhr!=WINCODEC_ERR_CODECNOTHUMBNAIL || frameThumb!=nullptr)
+        throw std::runtime_error("Frame thumbnail absence contract");
+    printf("THUMB_NO_EMBEDDED_FALLBACK_PASS source=12MP decoder_null=1 frame_null=1\n");
     CComPtr<IWICBitmapScaler> scaler;
     Check(factory->CreateBitmapScaler(&scaler),"pilot scaler");
     Check(scaler->Initialize(frame,256,192,WICBitmapInterpolationModeFant),

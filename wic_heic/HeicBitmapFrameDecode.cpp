@@ -362,12 +362,13 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetThumbnail(__RPC__deref_out_
 		DbgLog("Frame::GetThumbnail@1");
 		int index = 0;
 
-		if (!ppIThumbnail) {
-			return E_POINTER;
-		}
+		if (!ppIThumbnail) return E_POINTER;
+		*ppIThumbnail = nullptr;
 
 		std::vector<heif_item_id> ids = m_Handle.get_list_of_thumbnail_IDs();
 		if (!ids.size()) {
+			WicHeicDiagnostic::Emit("FrameThumbnailUnavailable",0,0,0,0,
+				"no-embedded-thumbnail",WINCODEC_ERR_CODECNOTHUMBNAIL);
 			return WINCODEC_ERR_CODECNOTHUMBNAIL;
 		}
 
@@ -376,6 +377,9 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapFrameDecode::GetThumbnail(__RPC__deref_out_
 			return WINCODEC_ERR_CODECNOTHUMBNAIL;
 		}
 
+		WicHeicDiagnostic::Emit("FrameThumbnailEmbedded",
+			static_cast<UINT>(thumbHandle.get_width()),
+			static_cast<UINT>(thumbHandle.get_height()),0,0,"embedded");
 		DbgLog("GetThumbnail@handle: hasAlpha=%d, chromaBpp=%d, lumaBpp=%d, width=%d, height=%d, primary=%d",
 			thumbHandle.has_alpha_channel(),
 			thumbHandle.get_chroma_bits_per_pixel(),

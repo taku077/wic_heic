@@ -222,22 +222,23 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::GetThumbnail(__RPC__deref_out_opt 
 	{
 		DbgLog("GetThumbnail@1");
 
-		if (!m_Reader) {
-			return WINCODEC_ERR_WRONGSTATE;
-		}
+		if (!ppIThumbnail) return E_POINTER;
+		*ppIThumbnail = nullptr;
+		if (!m_Reader) return WINCODEC_ERR_WRONGSTATE;
 
 		heif::ImageHandle handle = m_Context.get_primary_image_handle();
-
-		if (!ppIThumbnail) {
-			return E_POINTER;
-		}
-
 		std::vector<heif_item_id> thumbIds = handle.get_list_of_thumbnail_IDs();
 		if (!thumbIds.size()) {
+			WicHeicDiagnostic::Emit("DecoderThumbnailUnavailable",0,0,0,0,
+				"no-embedded-thumbnail",WINCODEC_ERR_CODECNOTHUMBNAIL);
 			return WINCODEC_ERR_CODECNOTHUMBNAIL;
 		}
 
 		heif::ImageHandle thumbHandle = handle.get_thumbnail(thumbIds[0]);
+		if (thumbHandle.empty()) return WINCODEC_ERR_CODECNOTHUMBNAIL;
+		WicHeicDiagnostic::Emit("DecoderThumbnailEmbedded",
+			static_cast<UINT>(thumbHandle.get_width()),
+			static_cast<UINT>(thumbHandle.get_height()),0,0,"embedded");
 
 		DbgLog("GetThumbnail@handle: hasAlpha=%d, chromaBpp=%d, lumaBpp=%d, width=%d, height=%d, primary=%d",
 			thumbHandle.has_alpha_channel(),

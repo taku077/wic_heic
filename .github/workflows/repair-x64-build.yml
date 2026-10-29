@@ -339,6 +339,7 @@ jobs:
                 'THUMB_MIXED_BATCH_LATENCY',
                 'THUMB_PILOT_PRODUCTION_AUTO_SELECTED workers=4 width=4032 height=3024 alpha=0 luma_bits=8',
                 'THUMB_PILOT_NOENV_RGB_PARITY_PASS',
+                'THUMB_NO_EMBEDDED_FALLBACK_PASS',
                 'THUMB_WORKERS_POLICY_DECISION requested=a selected=0 width=4032 height=3024 luma_bits=8 chroma_bits=8 alpha=1',
                 'THUMB_WORKERS_POLICY_DECISION requested=a selected=0 width=1080 height=1920 luma_bits=10 chroma_bits=10 alpha=0'
               )) {
