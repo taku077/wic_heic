@@ -19,14 +19,65 @@ inline bool SimplePreviewSafe(const Bytes& bytes) noexcept {
   auto ipco=One(parts,"ipco");
   auto properties=Children(bytes,ipco.data,ipco.end);
   auto entries=Associations(bytes,One(parts,"ipma"));
+  // HEIF permits grid, overlay, alpha and HDR auxiliary item structures.
+  // The quick 8-bit HEVC embedded path is only safe for a single hvc1 primary.
+  // Other item forms defer to the existing full WIC decoder.
+  auto info=One(sub,"iinf");
+  const unsigned infoVersion=static_cast<unsigned>(Read(bytes,info.data,1));
+  if(infoVersion>1)return false;
+  const size_t countSize=infoVersion?4:2;
+  const auto itemBoxes=Children(bytes,info.data+4+countSize,info.end);
+  if(Read(bytes,info.data+4,countSize)!=itemBoxes.size())return false;
+  unsigned primaryItems=0;
+  for(const auto& item:itemBoxes) {
+   if(item.type!="infe")continue;
+   const unsigned v=static_cast<unsigned>(Read(bytes,item.data,1));
+   if(v!=2 && v!=3)continue;
+   const size_t idSize=(v==2?2:4);
+   const auto id=Read(bytes,item.data+4,idSize);
+   if(id==primary) {
+    primaryItems++;
+    const size_t itemTypeAt=item.data+4+idSize+2;
+    if(Read(bytes,itemTypeAt,4)!=0x68766331u)return false; // hvc1
+   }
+  }
+  if(primaryItems!=1)return false;
+  // An alpha, gain-map, tiled grid or other image relation must never be
+  // flattened into an apparently opaque 8-bit preview. A plain thmb link is
+  // allowed because we verify the actual thumbnail geometry separately.
+  for(const auto& item:sub) if(item.type=="iref") {
+   const unsigned v=static_cast<unsigned>(Read(bytes,item.data,1));
+   if(v>1)return false;
+   const size_t idWidth=v?4:2;
+   for(const auto& rel:Children(bytes,item.data+4,item.end)) {
+    if(rel.type=="auxl"||rel.type=="dimg"||rel.type=="tmap")return false;
+    // Unknown relationships may alter the displayed primary image.
+    if(rel.type!="thmb" && rel.type!="cdsc")return false;
+    size_t pos=rel.data+idWidth;
+    const unsigned count=static_cast<unsigned>(Read(bytes,pos,2));
+    pos+=2;
+    if(count>65535 || count*idWidth>rel.end-pos ||
+       pos+size_t(count)*idWidth!=rel.end)return false;
+   }
+  }
   unsigned matches=0;
+  bool hevcConfig=false;
   for(const auto& e:entries) if(e.id==primary) {
    if(++matches!=1)return false;
    for(uint32_t index:e.props) {
     if(index<1 || index>properties.size())return false;
     const auto& prop=properties[index-1];
-    if(prop.type=="irot" || prop.type=="imir" || prop.type=="clap" ||
-       prop.type=="auxC" || prop.type=="clli" || prop.type=="mdcv")return false;
+    if(prop.type!="hvcC" && prop.type!="ispe" && prop.type!="pixi" &&
+       prop.type!="colr")return false;
+    if(prop.type=="hvcC") {
+     // ISO/IEC 14496-15 HEVCDecoderConfigurationRecord:
+     // offsets 17 and 18 carry bitDepthLumaMinus8/chromaMinus8.
+     if(prop.end-prop.data<23 || Read(bytes,prop.data,1)!=1)return false;
+     if((Read(bytes,prop.data+17,1)&7)!=0 ||
+        (Read(bytes,prop.data+18,1)&7)!=0)return false;
+     if(hevcConfig)return false;
+     hevcConfig=true;
+    }
     if(prop.type=="pixi") {
      size_t p=prop.data;
      if(p+5>prop.end)return false;
@@ -36,7 +87,7 @@ inline bool SimplePreviewSafe(const Bytes& bytes) noexcept {
     }
    }
   }
-  if(matches!=1)return false;
+  if(matches!=1 || !hevcConfig)return false;
   // EXIF orientation has vendor-dependent semantics relative to HEIF irot;
   // do not accelerate until equivalence is independently established.
   for(const auto& box:sub)if(box.type=="iinf")

@@ -221,6 +221,67 @@ inline void RunOrientationGate() {
     // A deliberately edited in-memory property FOURCC is NOT a valid rotated
     // HEIC; it only proves no unknown orientation metadata is passed through.
     Need(!WicShellLabSafety::SimplePreviewSafe(b),"Transform metadata accepted");
+    // On unmodified input, distinguish a simple hvc1 primary from a HEIF
+    // grid without decoding any pixels. This is a valid-fail-closed mutation
+    // test (not a valid grid image fixture).
+    {
+        auto changed=HeicLosslessNative::Bytes{};
+        Need(SUCCEEDED(stream->Seek(zero,STREAM_SEEK_SET,nullptr)),"Restore source");
+        // Build a fresh copy rather than keeping the in-memory 'irot' patch.
+        auto original=HeicLosslessNative::Bytes(static_cast<size_t>(stat.cbSize.QuadPart));
+        got=0;
+        Need(SUCCEEDED(stream->Read(original.data(),static_cast<ULONG>(original.size()),&got))
+             && got==original.size(),"Reload original");
+        auto originalTop=HeicLosslessNative::Children(original,0,original.size());
+        auto originalMeta=HeicLosslessNative::One(originalTop,"meta");
+        auto originalParts=HeicLosslessNative::Children(original,originalMeta.data+4,originalMeta.end);
+        const auto primaryId=HeicLosslessNative::Primary(original,originalMeta);
+        const auto iinf=HeicLosslessNative::One(originalParts,"iinf");
+        const auto v=HeicLosslessNative::Read(original,iinf.data,1);
+        auto items=HeicLosslessNative::Children(original,iinf.data+4+(v?4:2),iinf.end);
+        bool modified=false;
+        for(const auto& entry:items) {
+            if(entry.type!="infe")continue;
+            const auto ve=HeicLosslessNative::Read(original,entry.data,1);
+            if(ve!=2 && ve!=3)continue;
+            const size_t width=ve==2?2:4;
+            if(HeicLosslessNative::Read(original,entry.data+4,width)!=primaryId)continue;
+            const size_t offset=entry.data+4+width+2;
+            changed=original;
+            for(int k=0;k<4;k++)changed[offset+k]="grid"[k];
+            modified=true;break;
+        }
+        Need(modified && !WicShellLabSafety::SimplePreviewSafe(changed),
+             "Non-hvc1 primary incorrectly accepted");
+        std::puts("CI_SHELL_GRID_PRIMARY_FAIL_CLOSED_PASS");
+        const auto relation=std::find_if(originalParts.begin(),originalParts.end(),
+            [](const HeicLosslessNative::Box& box){return box.type=="iref";});
+        if(relation!=originalParts.end()) {
+            auto refs=HeicLosslessNative::Children(original,relation->data+4,relation->end);
+            bool changedRelation=false;
+            for(const auto& ref:refs) if(ref.type=="thmb") {
+                changed=original;
+                for(int k=0;k<4;k++)changed[ref.begin+4+k]="auxl"[k];
+                changedRelation=true;break;
+            }
+            Need(changedRelation && !WicShellLabSafety::SimplePreviewSafe(changed),
+                 "Alpha auxiliary reference incorrectly accepted");
+            std::puts("CI_SHELL_AUXILIARY_REFERENCE_FAIL_CLOSED_PASS");
+        }
+        auto iprp=HeicLosslessNative::One(originalParts,"iprp");
+        auto iprpParts=HeicLosslessNative::Children(original,iprp.data,iprp.end);
+        auto ipco=HeicLosslessNative::One(iprpParts,"ipco");
+        auto propBoxes=HeicLosslessNative::Children(original,ipco.data,ipco.end);
+        bool configChanged=false;
+        for(const auto& prop:propBoxes) if(prop.type=="hvcC") {
+            changed=original;
+            changed[prop.data+17]=uint8_t(changed[prop.data+17]|2);
+            configChanged=true;break;
+        }
+        Need(configChanged && !WicShellLabSafety::SimplePreviewSafe(changed),
+             "10-bit HEVC configuration accepted as 8-bit");
+        std::puts("CI_SHELL_10BIT_HEVC_CONFIG_FAIL_CLOSED_PASS");
+    }
     // Existing small HEIC fixtures with real, valid irot3+Exif6 metadata.
     // Unlike the in-memory fourCC mutation above, these are genuine HEIFs.
     for(const wchar_t* leaf : {L"wictest/samples/fixture-irot3-exif6.heic",
