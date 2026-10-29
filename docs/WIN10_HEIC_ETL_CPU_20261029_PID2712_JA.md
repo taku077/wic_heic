@@ -56,3 +56,15 @@ No private raw ETL, module paths, or photos are committed here.
 - For future iteration, split the focused Shell lab from the 40-step full regression CI; the latter should be rerun as a final pre-release gate instead of on each shell registry experiment.
 
 Cross-check references: https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts ; https://learn.microsoft.com/en-us/windows/win32/shell/thumbnail-providers ; https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c .
+
+## 2026-10-30: Actual isolated Shell provider succeeds with HKLM COM registration
+
+- Commit `6989c685f7f05433526c7e5f8858660e7fb63440`, Actions #40910367554: **SUCCESS, 42 steps**.
+- Direct COM activation with HKCU registered class succeeded, but isolated `IThumbnailCache` extraction failed (`SHELL_USER_CLASS_ONLY_RESULT success=False`).
+- With a **fresh test-only HKLM SOFTWARE\\Classes\\CLSID** entry for exactly the same COM DLL and a new disposable fixture filename, `SHELL_MACHINE_CLASS_RESULT success=True`.
+- Actual Shell invocation recorded `SHELL_REGISTERED_LAB_RESULT provider=1 embedded=1 full_12mp=0`, followed by `SHELL_REGISTERED_EMBEDDED_HEVC_FAST_PATH_PASS` and `SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS`.
+- On that Windows CI run, existing default Shell extraction was 206ms and registered embedded path 33ms. **One observation per path, differing cache state; don't claim a stable 6x speedup or Win10 result.**
+- This shows that SYSTEM-LEVEL CLASS REGISTRATION was sufficient on the disposable Windows Server 2022 runner; does **not** prove HKCU is inherently unsupported on Windows 10, nor that HKLM alone solves every system variant.
+- No user system changes, no new MSI. Next required work: ensure **no-embedded fallback and high-resolution 1024px fallback**, EXIF/irot/color/ICC/HDR/alpha/grid handling, proper one-time 1.1.31 MSI machine-class registration with rollback, and sustained performance A/B.
+- A separate focused Windows workflow branch `experiment/shell-com-focused-20261030` is being prepared to iterate without repeating full MSI/rotation verification each edit; full 42-step CI remains a final release gate.
+- Microsoft registration documentation: https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts and https://learn.microsoft.com/en-us/windows/win32/shell/thumbnail-providers
