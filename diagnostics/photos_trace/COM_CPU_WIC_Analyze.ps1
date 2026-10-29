@@ -28,7 +28,8 @@ foreach($line in [IO.File]::ReadAllLines($TraceFile)) {
        PID=$pidNum;Event=$fields['event'];Utc=$at;ElapsedMs=$duration
      })
  } catch {
-     # An invalid or incomplete line is excluded rather than assumed valid.
+     # Fail visibly instead of falsely reporting no HEIC decoder events.
+     throw ('Malformed WIC event: '+$_.Exception.Message)
  }
 }
 $decode=@($events | Where-Object {$_.Event -eq 'DecoderFullDecode'})
