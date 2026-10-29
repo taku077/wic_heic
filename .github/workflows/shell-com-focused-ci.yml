@@ -1,0 +1,229 @@
+name: Focused Shell COM activation diagnosis (no MSI)
+on:
+  push:
+    branches:
+      - experiment/shell-com-focused-20261030
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shell:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Restore native project NuGet dependencies
+        shell: pwsh
+        run: |
+          msbuild wic_heic.sln /t:Restore /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Restore failed'}
+      - name: Compute fixed native submodule signature
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join "\n"
+          $hash=[System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))
+          $key=[Convert]::ToHexString($hash).Substring(0,20)
+          "CODEC_DEPS=$key" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: actions/cache/restore@v4
+        id: deps
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build native libs only if cache absent
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            if(Test-Path 'C:\Program Files\NASM\nasm.exe'){$env:PATH="C:\Program Files\NASM;$env:PATH"}
+            else { choco install nasm -y --no-progress; if($LASTEXITCODE -ne 0){throw 'NASM unavailable'} }
+          }
+          foreach($part in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$part.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Native $part build failed"}
+          }
+      - name: Compile test WIC DLL
+        shell: pwsh
+        run: |
+          msbuild wic_heic/wic_heic.vcxproj /m /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'WIC DLL build failed'}
+
+      - name: Generate real HEVC container with embedded 320x240 thumbnail
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/SyntheticEmbeddedHevcThumb.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Cannot build independent HEVC thumb fixture generator'}
+          $exe=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/SyntheticEmbeddedHevcThumb.exe').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_embedded_4032x3024.heic'
+          if(Test-Path -LiteralPath $fixture){throw 'Refuse existing synthetic embedded fixture'}
+          & $exe $fixture
+          if($LASTEXITCODE -ne 0){throw 'Cannot write artificial HEVC embedded thumbnail'}
+          if(-not(Test-Path -LiteralPath $fixture)){throw 'Embedded HEVC fixture missing'}
+
+
+      - name: Verify actual isolated Shell activation of custom HEIC thumbnail handler
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeicShellThumbnailLab.vcxproj /p:Configuration=Release /p:Platform=x64 /m:1
+          if($LASTEXITCODE -ne 0){throw 'CI COM thumbnail lab DLL did not build'}
+          $lab=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/HeicShellThumbnailLab.dll').Path
+          $wic=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_embedded_4032x3024.heic'
+          $labFixture=Join-Path $env:RUNNER_TEMP 'wicfast_shell_lab_4032x3024.heic'
+          if(Test-Path -LiteralPath $labFixture){throw 'Refuse existing CI Shell fixture'}
+          Copy-Item -LiteralPath $fixture -Destination $labFixture -ErrorAction Stop
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $wic)) -Wait -PassThru
+          if($reg.ExitCode -ne 0){throw 'WIC test registration failed'}
+          $cls='{98E34B24-DAFA-44C7-89A4-5FB39F72B791}'
+          $handler='{E357FCCD-A995-4576-B01F-234630154E96}'
+          $root='HKCU:\Software\Classes'
+          $server=Join-Path $root ('CLSID\'+$cls)
+          $ext=Join-Path $root ('.heic\ShellEx\'+$handler)
+          $system=Join-Path $root ('SystemFileAssociations\.heic\ShellEx\'+$handler)
+          $keys=@($server,$ext,$system)
+          # Isolated COM surrogate may not see HKCU-only class registration.
+          # Only experiment with a fresh HKLM class if there is no existing key.
+          $machineServer=Join-Path 'HKLM:\SOFTWARE\Classes\CLSID' $cls
+          $machineInproc=Join-Path $machineServer 'InprocServer32'
+          $machineOwned=$false
+          $traceOn=$false
+          try {
+            # No override or deletion of pre-existing per-user settings.
+            foreach($key in $keys){
+              if(Test-Path -LiteralPath $key){throw "Refusing to overwrite an existing Shell registration: $key"}
+            }
+            $inproc=Join-Path $server 'InprocServer32'
+            New-Item -Path $inproc -Force | Out-Null
+            Set-Item -Path $inproc -Value $lab
+            New-ItemProperty -Path $inproc -Name 'ThreadingModel' -Value 'Apartment' -PropertyType String | Out-Null
+            foreach($key in @($ext,$system)){
+              New-Item -Path $key -Force | Out-Null
+              Set-Item -Path $key -Value $cls
+            }
+            # Official Shell requirement: announce changed file associations.
+            # A previous CI phase already used the same ".heic" extension
+            # with the Windows default handler. Refresh the provider mapping.
+            if(-not ('WicHeicShellAssociation.Notify' -as [type])){
+              $signature='[System.Runtime.InteropServices.DllImport("shell32.dll")] public static extern void SHChangeNotify(uint eventId,uint flags,System.IntPtr item1,System.IntPtr item2);'
+              Add-Type -Namespace WicHeicShellAssociation -Name Notify -MemberDefinition $signature
+            }
+            [WicHeicShellAssociation.Notify]::SHChangeNotify(
+              0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
+            Start-Sleep -Milliseconds 350
+            Write-Host 'SHELL_ASSOCIATIONS_REFRESHED_AFTER_REGISTER'
+            # Verify the class is genuinely registered before asking Shell.
+            $merged="Registry::HKEY_CLASSES_ROOT\CLSID\$cls\InprocServer32"
+            if(-not(Test-Path -LiteralPath $merged)) {
+              throw "New COM class not present in HKCR: $cls"
+            }
+            $registered=(Get-Item -LiteralPath $merged).GetValue('')
+            $model=(Get-Item -LiteralPath $merged).GetValue('ThreadingModel')
+            Write-Host "SHELL_LAB_COM_REGISTRY_CHECK binary_match=$([string]::Equals($registered,$lab,[StringComparison]::OrdinalIgnoreCase)) threading=$model"
+            if($registered -ine $lab -or $model -ne 'Apartment'){
+              throw 'Registered DLL path/threading model mismatch'
+            }
+            try {
+              $classType=[type]::GetTypeFromCLSID([guid]$cls,$true)
+              $object=[Activator]::CreateInstance($classType)
+              if($null -eq $object){throw 'COM object null'}
+              [void][Runtime.InteropServices.Marshal]::ReleaseComObject($object)
+              Write-Host 'SHELL_LAB_DIRECT_COM_ACTIVATION_PASS'
+            } catch {
+              throw ('Direct lab COM activation failed before Shell: '+$_.Exception.ToString())
+            }
+            & './diagnostics/photos_trace/PhotosTrace_Start.ps1'
+            $traceOn=$true
+            $trace=[string](Get-ItemProperty 'HKCU:\Software\WicHeic').TraceFile
+            $out=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $labFixture -Size 256 -ForceReextractAfterSnapshot)
+            $out | ForEach-Object {Write-Host $_ }
+            $hkcuSuccess=(($out -join ' ') -match 'FORCE_REEXTRACT status=OK')
+            Write-Host "SHELL_USER_CLASS_ONLY_RESULT success=$hkcuSuccess"
+            if(-not $hkcuSuccess){
+              # Strictly disposable Windows runner: compare HKLM COM class only.
+              # Never overwrite an existing machine registration.
+              if(Test-Path -LiteralPath $machineServer){
+                throw "Machine COM CLSID exists; refusing to overwrite: $machineServer"
+              }
+              $machineOwned=$true
+              New-Item -Path $machineInproc -Force | Out-Null
+              Set-Item -Path $machineInproc -Value $lab
+              New-ItemProperty -Path $machineInproc -Name 'ThreadingModel' -Value 'Apartment' -PropertyType String | Out-Null
+              $systemVisible=(Get-Item -LiteralPath $machineInproc).GetValue('')
+              if($systemVisible -ine $lab){throw 'HKLM registration verification failed'}
+              [WicHeicShellAssociation.Notify]::SHChangeNotify(0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
+              Start-Sleep -Milliseconds 450
+              $machineFixture=Join-Path $env:RUNNER_TEMP 'wicfast_shell_lab_machine_4032x3024.heic'
+              if(Test-Path -LiteralPath $machineFixture){throw 'Refusing existing machine fixture'}
+              Copy-Item -LiteralPath $fixture -Destination $machineFixture -ErrorAction Stop
+              $after=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $machineFixture -Size 256 -ForceReextractAfterSnapshot)
+              $after | ForEach-Object {Write-Host $_}
+              $machineSuccess=(($after -join ' ') -match 'FORCE_REEXTRACT status=OK')
+              Write-Host "SHELL_MACHINE_CLASS_RESULT success=$machineSuccess"
+              if(-not $machineSuccess) {
+                throw ('Shell still unable to extract with system COM class. HKCU='+($out -join ' | ')+' HKLM='+($after -join ' | '))
+              }
+            }
+            $log=Get-Content -LiteralPath $trace -Raw
+            $provider=([regex]::Matches($log,'event=ShellLabProviderEnter ')).Count
+            $embedded=([regex]::Matches($log,'event=DecoderThumbnailEmbedded ')).Count
+            $full=([regex]::Matches($log,'event=DecoderFullDecode width=4032 height=3024')).Count
+            Write-Host "SHELL_REGISTERED_LAB_RESULT provider=$provider embedded=$embedded full_12mp=$full"
+            if($provider -lt 1){throw 'Shell did not invoke isolated registered thumbnail provider'}
+            if($embedded -lt 1){throw 'Registered Shell handler did not use embedded HEVC thumbnail'}
+            if($full -ne 0){throw 'Registered Shell handler decoded full 12MP primary'}
+            Write-Host 'SHELL_REGISTERED_EMBEDDED_HEVC_FAST_PATH_PASS'
+          } finally {
+            if($traceOn){& './diagnostics/photos_trace/PhotosTrace_Stop.ps1'}
+            if($machineOwned -and (Test-Path -LiteralPath $machineServer)){
+              $now=(Get-Item -LiteralPath $machineInproc).GetValue('')
+              if($now -ieq $lab){Remove-Item -LiteralPath $machineServer -Recurse -Force}
+              else {Write-Warning 'Do not delete changed HKLM test class'}
+            }
+            if(Test-Path -LiteralPath (Join-Path $env:RUNNER_TEMP 'wicfast_shell_lab_machine_4032x3024.heic')){
+              Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'wicfast_shell_lab_machine_4032x3024.heic') -Force
+            }
+            # Keys were absent before this job and are removed ONLY if their
+            # default values still equal our known test CLSID or DLL path.
+            foreach($key in @($ext,$system)){
+              if(Test-Path -LiteralPath $key){
+                $v=(Get-Item -LiteralPath $key).GetValue('')
+                if($v -eq $cls){Remove-Item -LiteralPath $key -Force}
+                else {Write-Warning "Refusing to delete unexpected Shell registry value: $key"}
+              }
+            }
+            if(Test-Path -LiteralPath $server){
+              $v=(Get-Item -LiteralPath $inproc).GetValue('')
+              if($v -eq $lab){Remove-Item -LiteralPath $server -Recurse -Force}
+              else {Write-Warning 'Refusing to remove modified CI COM class key'}
+            }
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $wic)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0){Write-Warning 'WIC lab cleanup returned nonzero'}
+            if('WicHeicShellAssociation.Notify' -as [type]){
+              [WicHeicShellAssociation.Notify]::SHChangeNotify(
+                0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
+            }
+            if(Test-Path -LiteralPath $labFixture){
+              Remove-Item -LiteralPath $labFixture -Force
+            }
+          }
+          foreach($key in $keys){if(Test-Path -LiteralPath $key){throw "Cleanup did not remove isolated test key: $key"}}
+          Write-Host 'SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS'
+
+
+      - name: Upload detailed Shell diagnostic traces when available
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Focused-Shell-Activation-Logs
+          path: |
+            diagnostics/photos_trace/WIC_Photos_Trace_*.txt
+            diagnostics/photos_trace/HEIC_ThumbnailCache_*.txt
+          if-no-files-found: ignore
+          retention-days: 14
