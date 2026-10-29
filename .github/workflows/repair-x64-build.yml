@@ -447,6 +447,35 @@ jobs:
             if($unreg.ExitCode -ne 0){Write-Warning 'WIC unregister failure'}
           }
 
+      - name: Direct isolated IThumbnailProvider/IInitializeWithStream pilot (not registered)
+        if: github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $exe=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $trace=Join-Path $env:RUNNER_TEMP 'wicfast_provider_trace.txt'
+          if(Test-Path -LiteralPath $trace){throw 'Refuse existing trace'}
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($reg.ExitCode -ne 0){throw 'Temporary registration failed'}
+          try {
+            $env:WIC_HEIC_TRACE_FILE=$trace
+            & $exe --shell-thumb-provider-pilot
+            if($LASTEXITCODE -ne 0){throw 'IThumbnailProvider contract failed'}
+            $events=Get-Content -LiteralPath $trace -Raw
+            if(-not $events.Contains('event=DecoderThumbnailEmbedded width=320 height=240')){
+              throw 'Prototype did not use compressed embedded thumbnail'
+            }
+            if($events.Contains('event=DecoderFullDecode width=4032 height=3024')){
+              throw 'Prototype unexpectedly used main 12MP pixels'
+            }
+            Write-Host 'CI_SHELL_THUMB_PROVIDER_NO_FULL_DECODE_PASS'
+          } finally {
+            Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0){Write-Warning 'WIC test registration cleanup error'}
+          }
+
       - name: Run isolated and reversible WIC decoder priority / competitor A-B
         shell: pwsh
         run: |
