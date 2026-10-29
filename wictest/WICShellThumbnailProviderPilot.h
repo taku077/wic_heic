@@ -11,6 +11,7 @@
 #include <atomic>
 #include <new>
 #include <memory>
+#include <cmath>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -82,6 +83,31 @@ public:
         UINT width=0,height=0;
         hr=thumb->GetSize(&width,&height);
         if(FAILED(hr))return hr;
+        // Do not trust a malformed or color-managed embedded thumbnail merely
+        // because libheif successfully decoded it. Geometry must agree with
+        // the primary image, and the ICC-managed primary uses the existing WIC
+        // full-image pipeline until color equivalence is independently proven.
+        // This is metadata-only; GetFrame/GetSize/GetColorContexts do not
+        // decompress the primary pixels.
+        if(thumb && (!frame || thumb.p != static_cast<IWICBitmapSource*>(frame.p))){
+            hr=ensureFrame();
+            if(FAILED(hr))return hr;
+            UINT masterW=0,masterH=0;
+            hr=frame->GetSize(&masterW,&masterH);
+            if(FAILED(hr))return hr;
+            if(!width||!height||!masterW||!masterH) return WINCODEC_ERR_BADIMAGE;
+            const double sourceAspect=double(masterW)/double(masterH);
+            const double embeddedAspect=double(width)/double(height);
+            UINT iccCount=0;
+            const HRESULT iccResult=frame->GetColorContexts(0,nullptr,&iccCount);
+            if((sourceAspect>0 && std::abs(sourceAspect-embeddedAspect)>0.015) ||
+               FAILED(iccResult) || iccCount>0){
+                thumb=frame;
+                width=masterW;height=masterH;
+                WicHeicDiagnostic::Emit("ShellLabFullFallback",requested,0,0,0,
+                    iccCount>0?"icc-primary": "embedded-aspect-or-color-unknown");
+            }
+        }
         if(max(width,height)<requested){
             hr=ensureFrame();
             if(FAILED(hr))return hr;
