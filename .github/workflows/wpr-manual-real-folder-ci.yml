@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - diagnostic/wpr-manual-real-heic-20261029
+      - diagnostic/wpr-stop-evidence-20261029
   workflow_dispatch:
 permissions:
   contents: read
