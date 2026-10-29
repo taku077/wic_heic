@@ -476,6 +476,81 @@ jobs:
             if($unreg.ExitCode -ne 0){Write-Warning 'WIC test registration cleanup error'}
           }
 
+      # Disposable CI runner only. Registers the local lab DLL with HKCU,
+      # never HKLM; refuse existing keys and always restore in finally.
+      # Keep Shell's default process isolation ENABLED.
+      - name: Verify actual isolated Shell activation of custom HEIC thumbnail handler
+        if: github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/HeicShellThumbnailLab.vcxproj /p:Configuration=Release /p:Platform=x64 /m:1
+          if($LASTEXITCODE -ne 0){throw 'CI COM thumbnail lab DLL did not build'}
+          $lab=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/HeicShellThumbnailLab.dll').Path
+          $wic=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_embedded_4032x3024.heic'
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $wic)) -Wait -PassThru
+          if($reg.ExitCode -ne 0){throw 'WIC test registration failed'}
+          $cls='{98E34B24-DAFA-44C7-89A4-5FB39F72B791}'
+          $handler='{E357FCCD-A995-4576-B01F-234630154E96}'
+          $root='HKCU:\Software\Classes'
+          $server=Join-Path $root ('CLSID\'+$cls)
+          $ext=Join-Path $root ('.heic\ShellEx\'+$handler)
+          $system=Join-Path $root ('SystemFileAssociations\.heic\ShellEx\'+$handler)
+          $keys=@($server,$ext,$system)
+          $traceOn=$false
+          try {
+            # No override or deletion of pre-existing per-user settings.
+            foreach($key in $keys){
+              if(Test-Path -LiteralPath $key){throw "Refusing to overwrite an existing Shell registration: $key"}
+            }
+            $inproc=Join-Path $server 'InprocServer32'
+            New-Item -Path $inproc -Force | Out-Null
+            Set-Item -Path $inproc -Value $lab
+            New-ItemProperty -Path $inproc -Name 'ThreadingModel' -Value 'Both' -PropertyType String | Out-Null
+            foreach($key in @($ext,$system)){
+              New-Item -Path $key -Force | Out-Null
+              Set-Item -Path $key -Value $cls
+            }
+            & './diagnostics/photos_trace/PhotosTrace_Start.ps1'
+            $traceOn=$true
+            $trace=[string](Get-ItemProperty 'HKCU:\Software\WicHeic').TraceFile
+            $out=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $fixture -Size 256 -ForceReextractAfterSnapshot)
+            $out | ForEach-Object {Write-Host $_}
+            if(-not (($out -join ' ') -match 'FORCE_REEXTRACT status=OK')){
+              throw 'Shell unable to extract synthetic HEIC'
+            }
+            $log=Get-Content -LiteralPath $trace -Raw
+            $provider=([regex]::Matches($log,'event=ShellLabProviderEnter ')).Count
+            $embedded=([regex]::Matches($log,'event=DecoderThumbnailEmbedded ')).Count
+            $full=([regex]::Matches($log,'event=DecoderFullDecode width=4032 height=3024')).Count
+            Write-Host "SHELL_REGISTERED_LAB_RESULT provider=$provider embedded=$embedded full_12mp=$full"
+            if($provider -lt 1){throw 'Shell did not invoke isolated registered thumbnail provider'}
+            if($embedded -lt 1){throw 'Registered Shell handler did not use embedded HEVC thumbnail'}
+            if($full -ne 0){throw 'Registered Shell handler decoded full 12MP primary'}
+            Write-Host 'SHELL_REGISTERED_EMBEDDED_HEVC_FAST_PATH_PASS'
+          } finally {
+            if($traceOn){& './diagnostics/photos_trace/PhotosTrace_Stop.ps1'}
+            # Keys were absent before this job and are removed ONLY if their
+            # default values still equal our known test CLSID or DLL path.
+            foreach($key in @($ext,$system)){
+              if(Test-Path -LiteralPath $key){
+                $v=(Get-Item -LiteralPath $key).GetValue('')
+                if($v -eq $cls){Remove-Item -LiteralPath $key -Force}
+                else {Write-Warning "Refusing to delete unexpected Shell registry value: $key"}
+              }
+            }
+            if(Test-Path -LiteralPath $server){
+              $v=(Get-Item -LiteralPath $inproc).GetValue('')
+              if($v -eq $lab){Remove-Item -LiteralPath $server -Recurse -Force}
+              else {Write-Warning 'Refusing to remove modified CI COM class key'}
+            }
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $wic)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0){Write-Warning 'WIC lab cleanup returned nonzero'}
+          }
+          foreach($key in $keys){if(Test-Path -LiteralPath $key){throw "Cleanup did not remove isolated test key: $key"}}
+          Write-Host 'SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS'
+
       - name: Run isolated and reversible WIC decoder priority / competitor A-B
         shell: pwsh
         run: |

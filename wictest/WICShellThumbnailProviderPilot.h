@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include "../wic_heic/PhotosWicTrace.h"
 namespace WICShellThumbnailProviderPilot {
 class Provider final : public IInitializeWithStream, public IThumbnailProvider {
     std::atomic<ULONG> references_{1};
@@ -49,6 +50,7 @@ public:
         *alpha=WTSAT_UNKNOWN;
         if(!input_)return E_UNEXPECTED;
         if(requested==0 || requested>1024)return E_INVALIDARG;
+        WicHeicDiagnostic::Emit("ShellLabProviderEnter",requested,0,0,0,"test-only");
         CComPtr<IWICBitmapDecoder> decoder;
         HRESULT hr=CoCreateInstance(CLSID_HEICDecoder,nullptr,CLSCTX_INPROC_SERVER,
                                     IID_PPV_ARGS(&decoder));
