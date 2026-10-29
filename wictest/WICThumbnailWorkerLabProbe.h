@@ -23,6 +23,19 @@ inline void Check(HRESULT hr,const char* s) {
 inline double Ms(LARGE_INTEGER a,LARGE_INTEGER b,LARGE_INTEGER f){
     return double(b.QuadPart-a.QuadPart)*1000.0/double(f.QuadPart);
 }
+// Measures process user+kernel CPU time, not instantaneous Windows CPU %.
+// In this single-process controlled A/B, CPU milliseconds complement wall
+// milliseconds; no claim is made about user's Explorer/Photos UI responsiveness.
+inline uint64_t FileTime100ns(FILETIME x) {
+    return (uint64_t(x.dwHighDateTime)<<32) | x.dwLowDateTime;
+}
+inline double CpuProcessMs(FILETIME beforeKernel,FILETIME beforeUser,
+                           FILETIME afterKernel,FILETIME afterUser) {
+    const uint64_t a=FileTime100ns(beforeKernel)+FileTime100ns(beforeUser);
+    const uint64_t b=FileTime100ns(afterKernel)+FileTime100ns(afterUser);
+    if(b<a)throw std::runtime_error("CPU time moved backward");
+    return double(b-a)/10000.0;
+}
 inline void RunPolicyCases() {
     struct Case {
         unsigned w,h;
@@ -147,6 +160,7 @@ inline void Run() {
     const size_t planeBytes=size_t(stride)*height;
     const std::array<int,4> modes{{0,2,4,-1}};
     std::array<std::vector<double>,4> readings;
+    std::array<std::vector<double>,4> cpuReadings;
     constexpr UINT thumbW=256,thumbH=192;
     constexpr UINT thumbStride=thumbW*channels;
     std::vector<BYTE> referenceFull,outputFull(planeBytes);
@@ -182,6 +196,10 @@ inline void Run() {
             if(!IsEqualGUID(fmt,GUID_WICPixelFormat24bppRGB))
                 throw std::runtime_error("Unexpected 12MP pixel type");
             LARGE_INTEGER start{},finish{};
+            FILETIME birth{},death{},beforeKernel{},beforeUser{};
+            if(!GetProcessTimes(GetCurrentProcess(),&birth,&death,
+                                &beforeKernel,&beforeUser))
+                throw std::runtime_error("CPU clock unavailable");
             QueryPerformanceCounter(&start);
             CComPtr<IWICBitmapScaler> scaler;
             Check(factory->CreateBitmapScaler(&scaler),"create scaler");
@@ -190,6 +208,12 @@ inline void Run() {
             Check(scaler->CopyPixels(nullptr,thumbStride,
                   UINT(outputThumb.size()),outputThumb.data()),"first thumbnail pixels");
             QueryPerformanceCounter(&finish);
+            FILETIME afterKernel{},afterUser{};
+            if(!GetProcessTimes(GetCurrentProcess(),&birth,&death,
+                                &afterKernel,&afterUser))
+                throw std::runtime_error("CPU clock measurement failed");
+            const double cpuMs=CpuProcessMs(beforeKernel,beforeUser,
+                                             afterKernel,afterUser);
             if(referenceThumb.empty())referenceThumb=outputThumb;
             else if(referenceThumb!=outputThumb)
                 throw std::runtime_error("THUMB_WORKERS_AB_THUMB_RGB_MISMATCH");
@@ -202,10 +226,11 @@ inline void Run() {
                 throw std::runtime_error("THUMB_WORKERS_AB_FULL_RGB_MISMATCH");
             const double ms=Ms(start,finish,freq);
             readings[index].push_back(ms);
+            cpuReadings[index].push_back(cpuMs);
             printf("THUMB_WORKERS_AB_SAMPLE workers=%d pass=%d source=%ux%u "
-                   "thumb=256x192 first_thumbnail_ms=%.3f "
+                   "thumb=256x192 first_thumbnail_ms=%.3f cpu_ms=%.3f "
                    "exact_full_rgb=1 exact_thumbnail_rgb=1\n",
-                   workers,round,w,h,ms);
+                   workers,round,w,h,ms,cpuMs);
         }
     }
     SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr);
@@ -213,9 +238,13 @@ inline void Run() {
         auto& v=readings[index];
         if(v.size()!=5)throw std::runtime_error("Incomplete worker samples");
         std::sort(v.begin(),v.end());
+        auto& c=cpuReadings[index];
+        if(c.size()!=5)throw std::runtime_error("Incomplete CPU time samples");
+        std::sort(c.begin(),c.end());
         printf("THUMB_WORKERS_AB_MEDIAN workers=%d samples=5 "
-               "first_thumbnail_256_ms=%.3f no_explorer_claim=1\n",
-               modes[index],v[2]);
+               "first_thumbnail_256_ms=%.3f process_cpu_ms=%.3f "
+               "no_explorer_claim=1\n",
+               modes[index],v[2],c[2]);
     }
     printf("THUMB_WORKERS_AB_PIXEL_PARITY_PASS source=4032x3024 thumb=256x192 modes=0,2,4,auto samples=20 "
            "fixture=artificial_12MP no_msi_release=1\n");
