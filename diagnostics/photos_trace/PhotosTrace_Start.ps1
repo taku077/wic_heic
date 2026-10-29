@@ -24,7 +24,7 @@ $trace = Join-Path $root $name
 if ($trace.Length -ge 500) { throw 'Trace path is too long.' }
 $file = [System.IO.File]::Open($trace,[System.IO.FileMode]::CreateNew,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite)
 $file.Dispose()
-$until = [DateTime]::UtcNow.AddMinutes(20).ToFileTimeUtc()
+$until = [DateTime]::UtcNow.AddHours(12).ToFileTimeUtc()
 $createdUntil = $false
 $createdFile = $false
 try {
@@ -48,7 +48,7 @@ try {
     }
     throw
 }
-Write-Host 'Diagnostic capture active for up to 20 minutes.' -ForegroundColor Green
+Write-Host 'Diagnostic capture opt-in valid for 12 hours (safety), WPR manual stop.' -ForegroundColor Green
 Write-Host "Log file: $trace"
-Write-Host 'Use only disposable SYNTHETIC HEIC in Windows Photos.'
+Write-Host 'Use your real existing HEIC folder. Do not save over original images.'
 Write-Host 'After testing, run PhotosTrace_Stop.ps1.'
