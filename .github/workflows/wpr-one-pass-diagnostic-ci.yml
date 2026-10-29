@@ -1,0 +1,67 @@
+name: HEIC one-pass WPR+WIC CPU diagnostic (PS 5.1)
+on:
+  push:
+    branches:
+      - diagnostic/wpr-one-pass-cpu-wic-20261029
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate one-pass WPR CPU stack trace, zip and cleanup
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5){throw 'Need Windows PowerShell 5.1'}
+          $root='diagnostics/photos_trace'
+          $status=& "$env:WINDIR\System32\wpr.exe" -status 2>&1 | Out-String
+          Write-Host $status
+          & (Join-Path $root 'COM_CPU_WPR_OnePass.ps1') -DurationSeconds 6
+          if($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE){throw "PS error code $LASTEXITCODE"}
+          $zip=Get-ChildItem -LiteralPath $root -Filter 'COM_CPU_WPR_Result_*.zip' -File |
+             Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if(-not $zip){throw 'One-pass ZIP not generated'}
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $entryNames=@()
+          $archive=[IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          try{$entryNames=@($archive.Entries | ForEach-Object{$_.Name})}
+          finally{$archive.Dispose()}
+          foreach($need in @('CPU_Stacks.etl','Process_CPU_1s.csv',
+              'WIC_Decode_Events.txt','CPU_WIC_Summary.txt','Capture_Manifest.txt')){
+              if($entryNames -notcontains $need){throw "Missing ZIP part $need"}
+          }
+          $settings=Get-ItemProperty -Path 'HKCU:\Software\WicHeic' -ErrorAction SilentlyContinue
+          if($settings -and (($settings.PSObject.Properties.Name -contains 'TraceFile') -or
+                              ($settings.PSObject.Properties.Name -contains 'TraceUntilFileTime'))){
+              throw 'Diagnostic HKCU WIC values left enabled'
+          }
+          $session=$zip.FullName.Substring(0,$zip.FullName.Length-4)
+          $manifest=Get-Content -LiteralPath (Join-Path $session 'Capture_Manifest.txt') -Raw
+          if($manifest -notmatch 'WprETLSHA256=[0-9A-Fa-f]{64}' -or
+             $manifest -notmatch 'WprMode=Memory'){throw 'ETL integrity evidence absent'}
+          Write-Host 'WPR_CPU_STACKS_PS51_VALIDATED'
+      - name: Package only verified portable scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='diagnostics/photos_trace'
+          $names=@('01_Start_OnePass_CPU_Diagnostic.cmd','COM_CPU_WPR_OnePass.ps1',
+            'COM_CPU_WIC_Analyze.ps1','PhotosTrace_Start.ps1',
+            'PhotosTrace_Stop.ps1','README_ONEPASS_CPU_WPR_JA.md')
+          New-Item -ItemType Directory -Path 'diagnostic-dist' -Force | Out-Null
+          foreach($name in $names){
+            $src=Join-Path $root $name
+            if(-not(Test-Path -LiteralPath $src -PathType Leaf)){throw "Missing file $name"}
+            Copy-Item -LiteralPath $src -Destination (Join-Path 'diagnostic-dist' $name)
+          }
+          Write-Host 'WPR_ONEPASS_PORTABLE_PACKAGE_PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WicHeic-1130-WPR-OnePass-PS51-Verified
+          path: diagnostic-dist/*
+          if-no-files-found: error
+          retention-days: 14
