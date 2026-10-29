@@ -16,6 +16,7 @@ on:
       - experiment/thumb-hevc-workers-1128-isolated
       - candidate/thumb-adaptive-1129-win10-pilot
       - fix/grid-rotation-lossless-safety-20261028
+      - experiment/img4425-thumb-cpu-budget-4logical-20261029
   workflow_dispatch:
 
 permissions:
@@ -290,7 +291,7 @@ jobs:
       # 0/default vs 2 vs 4 codec worker hints, require bit-exact RGB.
       # No MSI artifact, no user's files, no real PC registry changes.
       - name: Generate synthetic 12MP fixture for experimental HEVC workers
-        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot'
+        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' || github.ref == 'refs/heads/experiment/img4425-thumb-cpu-budget-4logical-20261029'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -314,7 +315,7 @@ jobs:
           Write-Host 'THUMB_WORKERS_12MP_SYNTHETIC_FIXTURE_PASS'
 
       - name: Compare 12MP cold HEVC 0 versus 2 versus 4 worker decode with exact RGB
-        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot'
+        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' || github.ref == 'refs/heads/experiment/img4425-thumb-cpu-budget-4logical-20261029'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -334,7 +335,7 @@ jobs:
                 'THUMB_CONCURRENT_AUTO_RGB_PARITY_PASS',
                 'THUMB_MIXED_PARALLEL_RGB_PARITY_PASS',
                 'THUMB_MIXED_BATCH_LATENCY',
-                'THUMB_PILOT_PRODUCTION_AUTO_SELECTED workers=4 width=4032 height=3024 alpha=0 luma_bits=8',
+                'THUMB_PILOT_PRODUCTION_AUTO_SELECTED workers=2 width=4032 height=3024 alpha=0 luma_bits=8',
                 'THUMB_PILOT_NOENV_RGB_PARITY_PASS',
                 'THUMB_WORKERS_POLICY_DECISION requested=a selected=0 width=4032 height=3024 luma_bits=8 chroma_bits=8 alpha=1',
                 'THUMB_WORKERS_POLICY_DECISION requested=a selected=0 width=1080 height=1920 luma_bits=10 chroma_bits=10 alpha=0'

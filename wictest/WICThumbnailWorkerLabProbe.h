@@ -30,15 +30,19 @@ inline void RunPolicyCases() {
         bool alpha;
         unsigned cpus,active,expected;
     };
-    constexpr std::array<Case,14> cases{{
-        {4032,3024,8,8,false,4,0,4},     // sole high-resolution frame
-        {4032,3024,8,8,false,4,1,2},     // 2nd concurrent frame
+    constexpr std::array<Case,18> cases{{
+        {4032,3024,8,8,false,4,0,2},     // 4 logical CPUs, protect UI headroom
+        {4032,3024,8,8,false,4,1,0},     // concurrent fallback
         {4032,3024,8,8,false,4,2,0},     // cap CPU saturation
+        {4032,3024,8,8,false,6,0,4},     // larger CPU fast path retained
+        {4032,3024,8,8,false,6,1,2},     // concurrent larger CPU
+        {4032,3024,8,8,false,5,0,2},     // 5 logical CPU reserves headroom
+        {4032,3024,8,8,false,5,1,0},     // 5 logical CPU concurrent fallback
         {4032,3024,8,8,false,2,0,2},     // 2 logical CPU laptop
         {4032,3024,8,8,false,2,1,0},     // 2 logical CPU concurrent
         {4032,3024,8,8,false,1,0,0},     // no parallelism
         {1080,1920,8,8,false,4,0,0},     // small photo
-        {3000,2000,8,8,false,4,0,4},     // exact 6MP threshold
+        {3000,2000,8,8,false,4,0,2},     // exact 6MP threshold
         {2999,2000,8,8,false,4,0,0},     // just below 6MP
         {4032,3024,10,10,false,4,0,0},   // high bit depth
         {4032,3024,12,12,false,4,0,0},   // range-extension
