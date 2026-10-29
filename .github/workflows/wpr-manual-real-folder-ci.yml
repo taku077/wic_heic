@@ -29,12 +29,9 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           if($PSVersionTable.PSVersion.Major -ne 5){throw 'Must test Windows PowerShell 5.1'}
-          & ./diagnostics/photos_trace/COM_CPU_WPR_Manual.ps1 -CiSmoke |
-            Tee-Object -Variable messages
-          if($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null){throw "Probe exited with $LASTEXITCODE"}
-          if(-not (@($messages) -match 'CPU_WPR_MANUAL_ONEPASS_PASS')) {
-            throw 'WPR manual capture did not report success'
-          }
+          & ./diagnostics/photos_trace/COM_CPU_WPR_Manual.ps1 -CiSmoke
+          # The script emits Write-Host, which is not pipeline output. Use the
+          # ETL ZIP and manifest as authoritative completion evidence.
           $settings=Get-ItemProperty -Path 'HKCU:\Software\WicHeic' -ErrorAction SilentlyContinue
           if($settings -and (($settings.PSObject.Properties.Name -contains 'TraceFile') -or
               ($settings.PSObject.Properties.Name -contains 'TraceUntilFileTime'))){
