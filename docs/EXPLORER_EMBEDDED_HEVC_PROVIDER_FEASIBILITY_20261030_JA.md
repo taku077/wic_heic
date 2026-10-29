@@ -38,3 +38,26 @@
 
 ## 開発方針
 目標はCPU使用率だけでなく、Explorerの初回サムネイル時間・フォト操作感を含めた改善。性能改善が実機で認められない場合は実験を製品版に取り込まない。実機で問題が残る既知のロスレス回転/サムネイル消失バグを、性能改良によって悪化させない。
+
+
+## 2026-10-30追加検証：登録済みShell経路の安全なフォールバック
+
+**実装コミット**：[af901cf0](https://github.com/taku077/wic_heic/commit/af901cf0c424ea48ea2beae5b0c7f6e3708d67b7)。
+**Windows Server 2022 CI**：[ #40931425282 ](https://github.com/taku077/wic_heic/actions/runs/40931425282) SUCCESS。
+
+既存の直接COMテストを繰り返す代わりに、実際の IThumbnailCache::GetThumbnail とテスト登録済み IThumbnailProvider を通す回帰ゲートを増設した。
+
+- **埋込サムネイルなし**：通常WICへのフォールバックをShell呼出ログで確認（SHELL_REGISTERED_NO_EMBEDDED_FULL_WIC_FALLBACK_PASS）。
+- **実在する有効なHEIC試験素材（irot=3 + Exif Orientation=6）**：補助画像あり・なしの2種類で、埋込経路を通らず通常WICへのフォールバックに成功。
+- **ICC付き人工HEIC**：従来の登録済みShell経路試験でも主画像フォールバックを維持。
+- 上記追加試験は、試験用コピーを作って実行し、抽出の前後でコピーの **SHA-256が不変**であることを検査した。
+- シンプルな人工12MP HEICで、Shellハンドラーが呼ばれ埋込320×240を取得、主画像の12MP復号は0件。8ファイルずつの強制再抽出の中央値は従来 **103 ms**、試作経路 **12 ms**（同一CIジョブ、約88.3%短縮）。この数値は**Windows 10実機や1,894枚のフォルダ全体を表さない**。
+- 事前登録を尊重し、CIの一時HKCU/HKLMテスト登録を復元する検査もPASS。**本番MSIのShellEx登録は未変更**。
+
+**残る検証ゲート**：通常フォールバック後のExif/irot画像について、Windows標準の表示向き・色・画素が基準と一致するかを直接比較すること。GetThumbnail成功は方向・色の一致の証明ではない。8/10/12bit、alpha、grid、HDR/gain map、ICCおよび既存他社ハンドラーを含む動作の保証はまだない。実機で埋込thmbを持たない場合は今回の高速化が効かない可能性が高い。1.1.31 MSIは配布しない。
+
+**参照・横断資料**：
+- [Microsoft IThumbnailProvider / IInitializeWithStream](https://learn.microsoft.com/en-us/windows/win32/api/thumbcache/nn-thumbcache-ithumbnailprovider)
+- [Microsoft Shell registration](https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts)
+- [libvips HEIF thumbnail](https://www.libvips.org/API/current/ctor.Image.heifload.html)
+- [libheif v1.23.7 release/security changes](https://github.com/strukturag/libheif/releases/tag/v1.23.7)
