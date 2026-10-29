@@ -31,7 +31,7 @@ int wmain(int argc,wchar_t** argv) {
         Require(argc==2 || argc==3,"Expected output path and optional --without-thumbnail");
         const bool noThumb=argc==3 && wcscmp(argv[2],L"--without-thumbnail")==0;
         const bool withIcc=argc==3 && wcscmp(argv[2],L"--with-icc")==0;
-        Require(!noThumb || wcscmp(argv[2],L"--without-thumbnail")==0 || withIcc,"Invalid optional mode");
+        Require(argc==2 || noThumb || withIcc,"Invalid optional mode");
         Require(Env(L"GITHUB_ACTIONS")==L"true","Test generation is CI only");
         const auto root=Env(L"RUNNER_TEMP");
         Require(!root.empty(),"No CI runner temporary folder");
