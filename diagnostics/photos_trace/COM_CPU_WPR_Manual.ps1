@@ -134,7 +134,9 @@ try{
    Record ('WPR STOP requested; instance='+$instance)
    $stdout=Join-Path $folder 'WPR_Stop_Stdout.txt'
    $stderr=Join-Path $folder 'WPR_Stop_Stderr.txt'
-   $argsText='-stop "'+$staging+'" -instancename '+$instance
+   $argsText='-stop "'+$staging+'" -instancename '+$instance+' -skipPdbGen'
+   # Win10 built-in WPR 10.0.19041 can fail during managed NGEN/PDB generation.
+   # Native kernel sampled stacks remain available after -skipPdbGen.
    if($CiForceStopFailure) {
      $wprStopExitCode=777
      $wprStopOutput='CI deliberate WPR stop failure simulation (no real stop attempt)'
@@ -147,6 +149,7 @@ try{
      $wprStopOutput=((Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue) +
           "`n" + (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue))
    }
+   Record ('WPR STOP args include -skipPdbGen (avoid old managed PDB generator)')
    Record ('WPR STOP exit='+$wprStopExitCode+' response='+$wprStopOutput)
    if($wprStopExitCode -ne 0){throw ('WPR stop failed (exit '+$wprStopExitCode+'): '+$wprStopOutput)}
    if(-not(Test-Path -LiteralPath $staging -PathType Leaf)){throw 'WPR returned success but no staged ETL exists'}
@@ -156,6 +159,10 @@ try{
    Record ('WPR ETL safely saved, bytes='+(Get-Item -LiteralPath $etl).Length)
   } catch {
    $problems.Add('WPR stop: '+$_.Exception.Message)
+   if($wprStopExitCode -eq -2147417850){
+    $problems.Add('Known WPR 0x80010106 on Windows 10: install a newer Microsoft Windows Performance Toolkit WPR; do not repeat unchanged capture')
+    Record 'OLD_WPR_RPC_E_CHANGED_MODE: Windows Performance Toolkit upgrade advised; collected CPU/WIC data retained'
+   }
    Record ('WPR STOP FAILURE: '+$_.Exception.ToString())
    # Preserve evidence before trying to end our uniquely named trace.
    $statusOutput=''
@@ -213,6 +220,7 @@ $manifestLines=@(
  ('LogicalProcessors='+[Environment]::ProcessorCount)
  ('ETLBytes='+$(if($wprSaved){(Get-Item $etl).Length}else{0}))
  'WPR=GeneralProfile.Verbose + CPU.Verbose; Memory, manual Enter'
+ 'WPRStopSkipPdbGen=True (avoid Win10 WPR managed symbol generation failure)'
  'WIC trace settings expire after 12h; maximum WIC log 2MiB'
  'PRIVACY: ETL can contain user file paths and other identifying details'
 )
