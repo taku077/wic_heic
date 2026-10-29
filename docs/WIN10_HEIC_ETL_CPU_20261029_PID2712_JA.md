@@ -25,7 +25,7 @@ These are **CPU instruction-pointer sampling counts**, not CPU cycles or elapsed
 
 **But** the DLL may statically contain libheif/libde265; this sampling cannot yet distinguish the source WIC's own functions from the static HEVC decoder without a matching PDB/linker map. Do not claim an exact `libde265` percentage or blame Microsoft HEIF based solely on a module load.
 
-The existing WIC trace observed **141 full-resolution 12MP decodes** in PID 2712, with no embedded-thumbnail retrieval events. Scanline `CopyPixels` calls broadly match one complete row traversal per image; count alone does not prove redundant decoding.
+The existing WIC trace observed **141 full-resolution 12MP decodes** in PID 2712. Independent re-count of the 2,260 WIC events for that PID: `DecoderGetFrame=141`, `DecoderFullDecode=141`, `DecoderThumbnailEmbedded=0`, `FrameThumbnailEmbedded=0`, `DecoderThumbnailUnavailable=0`, `FrameThumbnailUnavailable=0`. Thus **neither successful nor absent GetThumbnail was logged** in the observed Shell surrogate path. Scanline `CopyPixels` calls broadly match one complete row traversal per image; count alone does not prove redundant decoding.
 
 ### Development gate for 1.1.31
 
