@@ -43,3 +43,16 @@ No private raw ETL, module paths, or photos are committed here.
 - https://learn.microsoft.com/en-us/windows/win32/etw/thread-v2-typegroup1
 - https://learn.microsoft.com/en-us/windows/win32/wic/-wic-integrationregentries
 - https://learn.microsoft.com/en-us/windows/win32/shell/building-thumbnail-providers
+
+## 2026-10-30: Shell IThumbnailProvider integration experiment and release decision
+
+- Verified existing Shell WIC-only path on disposable 4032x3024 HEVC with 320x240 embedded thumbnail: `IThumbnailCache.GetThumbnail(WTS_FORCEEXTRACTION)` produced 256x192 but recorded `DecoderOpen=1`, `DecoderFullDecode=1`, embedded `GetThumbnail=0`. Actions #40898893355 SUCCESS.
+- Direct standalone `IThumbnailProvider + IInitializeWithStream` prototype produced the expected 256x192 DIB from native embedded 320x240 HEVC; trace confirmed no 12MP decode. Actions #40901044715 SUCCESS.
+- Added a CI-only DLL/COM class factory and HKCU .heic ShellEx temporary registration, with initial SDK name-linkage fix (commit `f8711c35`), then `ThreadingModel=Apartment` and merged-HKCR/direct CoCreateInstance checks. Commit `aa09e85f`, Actions #40906973978: **HKCR path and threading value matched, direct COM activation succeeded, but the isolated Shell GetThumbnail returned 0x80040154**.
+- Applied required `SHChangeNotify(SHCNE_ASSOCCHANGED)` before Shell request and after cleanup, plus new synthetic HEIC pathname. Commit `b3d2594d`, Actions #40907733973: **same Shell 0x80040154**. Source DLL and direct COM activation are functional; isolated Shell/provider selection remains unresolved.
+- No production MSI registration or rollback state changed. WicHeic 1.1.30 is the last real-device version.
+- Next safe investigation: ascertain whether per-user COM class registration is invisible to the isolated Shell surrogate; compare on a *disposable runner* with careful HKLM registration/restore and/or a fresh non-conflicting test file extension. Preserve Shell process isolation; never use `DisableProcessIsolation=1` to force a pass.
+- Do **not** release 1.1.31 merely because direct prototype runs. Product gate: actual isolated Shell activation, CPU/full-decode A/B, 256/1024 size and embedded/no-embedded fallback, EXIF/irot direction, ICC/HDR/alpha/grid, and safe restoration of all Shell registration keys after MSI uninstall.
+- For future iteration, split the focused Shell lab from the 40-step full regression CI; the latter should be rerun as a final pre-release gate instead of on each shell registry experiment.
+
+Cross-check references: https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts ; https://learn.microsoft.com/en-us/windows/win32/shell/thumbnail-providers ; https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c .
