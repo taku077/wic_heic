@@ -18,6 +18,7 @@ on:
       - fix/grid-rotation-lossless-safety-20261028
       - experiment/embedded-hevc-thumb-path-20261029
       - candidate/photos-responsive-1130-win10
+      - experiment/shell-real-embedded-thumbnail-20261029
   workflow_dispatch:
 
 permissions:
@@ -364,7 +365,7 @@ jobs:
       # New independent HEVC fixture rather than the legacy 12MP WIC encoder
       # (the latter does NOT embed thmb). Test branch only until CI passes.
       - name: Generate real HEVC container with embedded 320x240 thumbnail
-        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10'
+        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' || github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -378,7 +379,7 @@ jobs:
           if(-not(Test-Path -LiteralPath $fixture)){throw 'Embedded HEVC fixture missing'}
 
       - name: Verify WIC embedded HEVC does not decode primary 12MP pixels
-        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10'
+        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' || github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -409,6 +410,41 @@ jobs:
             Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
             $unregister=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
             if($unregister.ExitCode -ne 0){Write-Warning 'CI COM unregistration failed'}
+          }
+
+      # CI-only disposable HEVC; no installed Shell registration changes.
+      - name: Observe Shell thumbnail extraction path on embedded HEVC
+        if: github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $heic=Join-Path $env:RUNNER_TEMP 'wicfast_embedded_4032x3024.heic'
+          if(-not(Test-Path -LiteralPath $heic)){throw 'HEVC fixture missing'}
+          $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($reg.ExitCode -ne 0){throw 'WIC registration failed'}
+          $traceOn=$false
+          try {
+            & './diagnostics/photos_trace/PhotosTrace_Start.ps1'
+            $traceOn=$true
+            $trace=[string](Get-ItemProperty 'HKCU:\Software\WicHeic').TraceFile
+            $out=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $heic -Size 256 -ForceReextractAfterSnapshot)
+            $out | ForEach-Object { Write-Host $_ }
+            if(-not (($out -join ' ') -match 'FORCE_REEXTRACT status=OK')) {
+              throw 'Shell forced extraction failed'
+            }
+            $events=Get-Content -LiteralPath $trace -Raw
+            $embed=([regex]::Matches($events,'event=(DecoderThumbnailEmbedded|FrameThumbnailEmbedded)')).Count
+            $full=([regex]::Matches($events,'event=DecoderFullDecode width=4032 height=3024')).Count
+            $opened=([regex]::Matches($events,'event=DecoderOpen ')).Count
+            Write-Host "SHELL_HEVC_RESULT embedded=$embed full_12mp=$full decoder_open=$opened"
+            if($embed -gt 0 -and $full -eq 0){Write-Host 'SHELL_EMBEDDED_FAST_PATH_OBSERVED'}
+            elseif($full -gt 0){Write-Host 'SHELL_FULL_12MP_FALLBACK_OBSERVED'}
+            else{Write-Host 'SHELL_PROVIDER_UNDETERMINED_NO_WIC_TRACE'}
+          } finally {
+            if($traceOn){& './diagnostics/photos_trace/PhotosTrace_Stop.ps1'}
+            $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0){Write-Warning 'WIC unregister failure'}
           }
 
       - name: Run isolated and reversible WIC decoder priority / competitor A-B
