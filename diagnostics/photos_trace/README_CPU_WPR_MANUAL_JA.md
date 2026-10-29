@@ -15,3 +15,12 @@
 - Microsoft WPR: https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-options
 - WPR memory logging: https://learn.microsoft.com/en-us/windows-hardware/test/wpt/logging-mode
 - WPR CPU stack analysis: https://learn.microsoft.com/en-us/troubleshoot/windows-server/support-tools/support-tools-xperf-wpa-wpr
+
+## 2026-10-29 改訂：Windows 10実機でのETL保存失敗への対応
+
+- 前版ではWPRが記録・停止処理に失敗しても、UAC子ウィンドウの具体的なエラーが親画面に残らず、`Elevated capture exited 1` としか表示されませんでした。今回の修正版では、`WPR_Child_Status_日時.txt` を生成し、WPR停止の終了コード・出力・エラーを保存します。親画面でも末尾を表示します。
+- WPRのETLはまず通常のローカルな `C:\ProgramData\WicHeicWPR_*.etl` に一時保存し、正常にできたことを確認後、結果フォルダへ移します。これは日本語・%文字・長い展開パス等の影響を受けにくくする対策であり、従来エラーの原因がパスだったと確定したものではありません。
+- もし再び保存に失敗しても、`COM_CPU_WPR_Manual_日時.zip` は **FAILED_PARTIAL** と明記し、CPUサンプルCSV・WICログ・WPR停止標準出力／標準エラー・`Capture_Manifest.txt`・`WPR_Child_Status_日時.txt` を可能な範囲で保持します。**ETLがなければ完全なCPUスタック取得成功と扱いません。**
+- 前回の実機診断で収集済みのCPU・WICログはそのまま解析に使用できます。CPUスタックが必要になった場合だけ新しい総合診断を実施してください。修正版を使うためにMSIを更新する必要はありません。
+- 以前の診断フォルダを上書きしないでください。今回のZIPは**新しい独立フォルダに展開**してください。
+- Windows Server 2022 / Windows PowerShell 5.1のCIで、正常ETL取得・停止、保存失敗を人工的に起こした場合の証拠保全・WICレジストリ解除を検証済み。Windows 10実機のWPR固有の動作差は未検証です。
