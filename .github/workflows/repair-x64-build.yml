@@ -507,10 +507,30 @@ jobs:
             $inproc=Join-Path $server 'InprocServer32'
             New-Item -Path $inproc -Force | Out-Null
             Set-Item -Path $inproc -Value $lab
-            New-ItemProperty -Path $inproc -Name 'ThreadingModel' -Value 'Both' -PropertyType String | Out-Null
+            New-ItemProperty -Path $inproc -Name 'ThreadingModel' -Value 'Apartment' -PropertyType String | Out-Null
             foreach($key in @($ext,$system)){
               New-Item -Path $key -Force | Out-Null
               Set-Item -Path $key -Value $cls
+            }
+            # Verify the class is genuinely registered before asking Shell.
+            $merged="Registry::HKEY_CLASSES_ROOT\CLSID\$cls\InprocServer32"
+            if(-not(Test-Path -LiteralPath $merged)) {
+              throw "New COM class not present in HKCR: $cls"
+            }
+            $registered=(Get-Item -LiteralPath $merged).GetValue('')
+            $model=(Get-Item -LiteralPath $merged).GetValue('ThreadingModel')
+            Write-Host "SHELL_LAB_COM_REGISTRY_CHECK binary_match=$([string]::Equals($registered,$lab,[StringComparison]::OrdinalIgnoreCase)) threading=$model"
+            if($registered -ine $lab -or $model -ne 'Apartment'){
+              throw 'Registered DLL path/threading model mismatch'
+            }
+            try {
+              $classType=[type]::GetTypeFromCLSID([guid]$cls,$true)
+              $object=[Activator]::CreateInstance($classType)
+              if($null -eq $object){throw 'COM object null'}
+              [void][Runtime.InteropServices.Marshal]::ReleaseComObject($object)
+              Write-Host 'SHELL_LAB_DIRECT_COM_ACTIVATION_PASS'
+            } catch {
+              throw ('Direct lab COM activation failed before Shell: '+$_.Exception.ToString())
             }
             & './diagnostics/photos_trace/PhotosTrace_Start.ps1'
             $traceOn=$true
