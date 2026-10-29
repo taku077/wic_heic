@@ -519,11 +519,8 @@ jobs:
             # A previous CI phase already used the same ".heic" extension
             # with the Windows default handler. Refresh the provider mapping.
             if(-not ('WicHeicShellAssociation.Notify' -as [type])){
-              Add-Type -Namespace WicHeicShellAssociation -Name Notify -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("shell32.dll")]
-public static extern void SHChangeNotify(uint eventId,uint flags,
-    System.IntPtr item1,System.IntPtr item2);
-'@
+              $signature='[System.Runtime.InteropServices.DllImport("shell32.dll")] public static extern void SHChangeNotify(uint eventId,uint flags,System.IntPtr item1,System.IntPtr item2);'
+              Add-Type -Namespace WicHeicShellAssociation -Name Notify -MemberDefinition $signature
             }
             [WicHeicShellAssociation.Notify]::SHChangeNotify(
               0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
