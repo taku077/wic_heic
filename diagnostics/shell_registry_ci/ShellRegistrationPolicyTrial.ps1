@@ -17,7 +17,7 @@ function ReadValue([string]$path) {
 }
 function WriteValue([string]$path,[string]$val) {
  New-Item -Path $path -Force | Out-Null
- (Get-Item -LiteralPath $path).SetValue('',$val,[Microsoft.Win32.RegistryValueKind]::String)
+ Set-Item -LiteralPath $path -Value $val
 }
 function ClearTrial {
  if(Test-Path -LiteralPath $association){Remove-Item -LiteralPath $association -Recurse -Force}
