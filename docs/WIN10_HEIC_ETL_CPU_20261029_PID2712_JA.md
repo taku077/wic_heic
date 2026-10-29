@@ -68,3 +68,12 @@ Cross-check references: https://learn.microsoft.com/en-us/windows/win32/shell/re
 - No user system changes, no new MSI. Next required work: ensure **no-embedded fallback and high-resolution 1024px fallback**, EXIF/irot/color/ICC/HDR/alpha/grid handling, proper one-time 1.1.31 MSI machine-class registration with rollback, and sustained performance A/B.
 - A separate focused Windows workflow branch `experiment/shell-com-focused-20261030` is being prepared to iterate without repeating full MSI/rotation verification each edit; full 42-step CI remains a final release gate.
 - Microsoft registration documentation: https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts and https://learn.microsoft.com/en-us/windows/win32/shell/thumbnail-providers
+
+## 2026-10-30 next safety gate: full-frame fallback and fast focused CI
+
+- New focused workflow: `experiment/shell-com-focused-20261030`, `.github/workflows/shell-com-focused-ci.yml`. Earlier baseline run #40910945419 SUCCESS (Shell and registration compare), without rerunning the entire MSI/rotation CI.
+- Prototype commit `a843f59579577b5f04ea41b1eac2969c47dd775c` implements WIC full-frame fallback if no embedded HEVC thumbnail exists or if the requested thumbnail is larger than the embedded image, with 4032x3024 no-thumb synthetic generation and 1024px/256px test entry points.
+- Focused workflow now tests: (a) 1024x768 from a 1024px request despite only a 320x240 embedded preview, (b) 256x192 from an HEIC with no thumbnail, (c) exactly two intentional full-primary decode events, then a registered Shell HKLM/HKCU comparison and strict restoration.
+- New workflow success status is required before claiming either fallback working. Full CI #40910367554 SUCCESS is for the preceding standalone embedded-only code, **not proof of the newer fallback code**.
+- Next after fallback gates: add orientation and ICC/HDR/alpha/grid safety (never silently use a stale/wrong embedded thumbnail); compare CPU and latency over multiple samples, then package product MSI with reversible HKLM COM registration, no other WIC priorities changed.
+- Installer must preserve current-user custom file associations and system thumbnail provider values, and must never leave lab CLSIDs in real installations. Existing 1.1.30 MSI stays installed until a safely reversible release candidate is ready.
