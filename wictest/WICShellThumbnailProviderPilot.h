@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include "../wic_heic/PhotosWicTrace.h"
+#include "WICShellOrientationGate.h"
 namespace WICShellThumbnailProviderPilot {
 class Provider final : public IInitializeWithStream, public IThumbnailProvider {
     std::atomic<ULONG> references_{1};
@@ -52,6 +53,7 @@ public:
         if(!input_)return E_UNEXPECTED;
         if(requested==0 || requested>1024)return E_INVALIDARG;
         WicHeicDiagnostic::Emit("ShellLabProviderEnter",requested,0,0,0,"test-only");
+        const bool simpleOrientation=WicShellLabSafety::FromStream(input_);
         CComPtr<IWICBitmapDecoder> decoder;
         HRESULT hr=CoCreateInstance(CLSID_HEICDecoder,nullptr,CLSCTX_INPROC_SERVER,
                                     IID_PPV_ARGS(&decoder));
@@ -66,8 +68,8 @@ public:
         auto ensureFrame=[&]()->HRESULT {
             return frame ? S_OK : decoder->GetFrame(0,&frame);
         };
-        hr=decoder->GetThumbnail(&thumb);
-        if(hr==WINCODEC_ERR_CODECNOTHUMBNAIL){
+        hr=simpleOrientation ? decoder->GetThumbnail(&thumb) : WINCODEC_ERR_CODECNOTHUMBNAIL;
+        if(hr==WINCODEC_ERR_CODECNOTHUMBNAIL && simpleOrientation){
             hr=ensureFrame();
             if(FAILED(hr))return hr;
             hr=frame->GetThumbnail(&thumb);
@@ -76,7 +78,8 @@ public:
             hr=ensureFrame();
             if(FAILED(hr))return hr;
             thumb=frame;
-            WicHeicDiagnostic::Emit("ShellLabFullFallback",requested,0,0,0,"no-embedded");
+            WicHeicDiagnostic::Emit("ShellLabFullFallback",requested,0,0,0,
+                simpleOrientation?"no-embedded":"orientation-exif-or-unsupported");
         } else if(FAILED(hr)||!thumb) {
             return FAILED(hr)?hr:WINCODEC_ERR_CODECNOTHUMBNAIL;
         }
