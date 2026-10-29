@@ -24,6 +24,8 @@ jobs:
           if($s -match '\[ValidateRange\([^)]+\)\]\[int\]\$DurationSeconds') {
             throw 'Timed user capture accidentally reintroduced'
           }
+          if(-not $s.Contains('-skipPdbGen')){throw 'WPR stop must skip managed PDB generation for 19041'}
+          Write-Host 'WPR_19041_SKIP_PDB_GEN_SOURCE_PASS'
           Write-Host 'WPR_MANUAL_NO_TIMEOUT_SOURCE_GATE_PASS'
       - name: One-run real WPR stack smoke on Windows PowerShell 5.1 (CI-only 5s)
         shell: powershell
