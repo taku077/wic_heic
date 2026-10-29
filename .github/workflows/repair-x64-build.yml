@@ -16,6 +16,7 @@ on:
       - experiment/thumb-hevc-workers-1128-isolated
       - candidate/thumb-adaptive-1129-win10-pilot
       - fix/grid-rotation-lossless-safety-20261028
+      - experiment/embedded-hevc-thumb-path-20261029
   workflow_dispatch:
 
 permissions:
@@ -355,6 +356,56 @@ jobs:
             if($unreg.ExitCode -ne 0){throw 'Temporary CI COM unregister failed'}
           }
           Write-Host 'THUMB_WORKERS_12MP_RGB_PARITY_PASS'
+
+      # New independent HEVC fixture rather than the legacy 12MP WIC encoder
+      # (the latter does NOT embed thmb). Test branch only until CI passes.
+      - name: Generate real HEVC container with embedded 320x240 thumbnail
+        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/SyntheticEmbeddedHevcThumb.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Cannot build independent HEVC thumb fixture generator'}
+          $exe=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/SyntheticEmbeddedHevcThumb.exe').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_embedded_4032x3024.heic'
+          if(Test-Path -LiteralPath $fixture){throw 'Refuse existing synthetic embedded fixture'}
+          & $exe $fixture
+          if($LASTEXITCODE -ne 0){throw 'Cannot write artificial HEVC embedded thumbnail'}
+          if(-not(Test-Path -LiteralPath $fixture)){throw 'Embedded HEVC fixture missing'}
+
+      - name: Verify WIC embedded HEVC does not decode primary 12MP pixels
+        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $exe=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $trace=Join-Path $env:RUNNER_TEMP 'wicfast_embedded_trace.txt'
+          if(Test-Path -LiteralPath $trace){throw 'Refuse existing trace file'}
+          $register=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($register.ExitCode -ne 0){throw 'Cannot register CI WIC decoder'}
+          try {
+            $env:WIC_HEIC_TRACE_FILE=$trace
+            & $exe --embedded-thumbnail-probe
+            if($LASTEXITCODE -ne 0){throw 'Embedded HEVC WIC probe failed'}
+            if(-not(Test-Path -LiteralPath $trace)){throw 'Embedded HEVC trace missing'}
+            $events=Get-Content -LiteralPath $trace -Raw
+            foreach($required in @(
+              'event=DecoderThumbnailEmbedded width=320 height=240',
+              'event=FrameThumbnailEmbedded width=320 height=240',
+              'event=DecoderFullDecode width=320 height=240'
+            )){
+              if(-not $events.Contains($required)){throw "Embedded HEVC expected trace missing: $required"}
+            }
+            if($events.Contains('event=DecoderFullDecode width=4032 height=3024')){
+              throw 'Embedded thumbnail unexpectedly decoded full 12MP primary'
+            }
+            Write-Host 'THUMB_EMBEDDED_HEVC_NO_FULL_DECODE_PASS thumb=320x240'
+          } finally {
+            Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+            $unregister=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($unregister.ExitCode -ne 0){Write-Warning 'CI COM unregistration failed'}
+          }
 
       - name: Run isolated and reversible WIC decoder priority / competitor A-B
         shell: pwsh
