@@ -176,6 +176,53 @@ public:
 inline void Need(bool okay,const char* description) {
     if(!okay)throw std::runtime_error(description);
 }
+inline void RunOrientationGate() {
+    wchar_t tmp[32768]{};
+    const DWORD n=GetEnvironmentVariableW(L"RUNNER_TEMP",tmp,32768);
+    Need(n>0&&n<32768,"CI folder unavailable");
+    wchar_t actions[16]{};
+    Need(GetEnvironmentVariableW(L"GITHUB_ACTIONS",actions,16)==4 &&
+         wcscmp(actions,L"true")==0,"CI-only orientation guard");
+    std::wstring path=std::wstring(tmp,n)+L"\\wicfast_embedded_4032x3024.heic";
+    CComPtr<IWICImagingFactory> factory;
+    Need(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
+         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory))),"No WIC factory");
+    CComPtr<IWICStream> stream;
+    Need(SUCCEEDED(factory->CreateStream(&stream)) &&
+         SUCCEEDED(stream->InitializeFromFilename(path.c_str(),GENERIC_READ)),
+         "Test HEIC open failed");
+    Need(WicShellLabSafety::FromStream(stream),"Safe CI HEIC rejected");
+    STATSTG stat{};
+    Need(SUCCEEDED(stream->Stat(&stat,STATFLAG_NONAME)) &&
+         stat.cbSize.QuadPart < 24ull*1024ull*1024ull,"Invalid fixture length");
+    LARGE_INTEGER zero{};
+    Need(SUCCEEDED(stream->Seek(zero,STREAM_SEEK_SET,nullptr)),"Rewind failed");
+    HeicLosslessNative::Bytes b(static_cast<size_t>(stat.cbSize.QuadPart));
+    ULONG got=0;
+    Need(SUCCEEDED(stream->Read(b.data(),static_cast<ULONG>(b.size()),&got)) &&
+         got==b.size(),"Read HEIC failed");
+    auto top=HeicLosslessNative::Children(b,0,b.size());
+    auto meta=HeicLosslessNative::One(top,"meta");
+    auto parts=HeicLosslessNative::Children(b,meta.data+4,meta.end);
+    auto iprp=HeicLosslessNative::One(parts,"iprp");
+    auto props=HeicLosslessNative::Children(b,iprp.data,iprp.end);
+    auto ipco=HeicLosslessNative::One(props,"ipco");
+    auto boxes=HeicLosslessNative::Children(b,ipco.data,ipco.end);
+    auto associations=HeicLosslessNative::Associations(b,HeicLosslessNative::One(props,"ipma"));
+    auto primary=HeicLosslessNative::Primary(b,meta);
+    bool patched=false;
+    for(const auto& a:associations)if(a.id==primary)
+      for(uint32_t index:a.props)if(!patched && index>0 && index<=boxes.size()){
+        const auto pos=boxes[index-1].begin+4;
+        b[pos]='i';b[pos+1]='r';b[pos+2]='o';b[pos+3]='t';
+        patched=true;
+      }
+    Need(patched,"No primary item property to mark");
+    // A deliberately edited in-memory property FOURCC is NOT a valid rotated
+    // HEIC; it only proves no unknown orientation metadata is passed through.
+    Need(!WicShellLabSafety::SimplePreviewSafe(b),"Transform metadata accepted");
+    std::puts("CI_SHELL_ORIENTATION_METADATA_FAIL_CLOSED_PASS");
+}
 inline void RunFallback() {
     wchar_t tmp[32768]{};
     DWORD n=GetEnvironmentVariableW(L"RUNNER_TEMP",tmp,32768);

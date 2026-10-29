@@ -90,6 +90,8 @@ jobs:
           try {
             $trace=Join-Path $env:RUNNER_TEMP 'wicfast_fallback_events.txt'
             $env:WIC_HEIC_TRACE_FILE=$trace
+            & $exe --shell-orientation-gate
+            if($LASTEXITCODE -ne 0){throw 'Orientation metadata gate failed'}
             & $exe --shell-thumb-provider-fallback
             if($LASTEXITCODE -ne 0){throw 'Fallback native assertions failed'}
             $events=Get-Content -LiteralPath $trace -Raw
