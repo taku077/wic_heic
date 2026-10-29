@@ -1,4 +1,4 @@
-# Windows 10 PowerShell 5.1; manual stop with ENTER, real photos/folders.
+﻿# Windows 10 PowerShell 5.1; manual stop with ENTER, real photos/folders.
 param([switch]$CiSmoke)
 $ErrorActionPreference='Stop'
 $root=(Get-Item -LiteralPath $PSScriptRoot).FullName
