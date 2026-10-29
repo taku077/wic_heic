@@ -61,19 +61,39 @@ public:
         hr=decoder->Initialize(input_,WICDecodeMetadataCacheOnDemand);
         if(FAILED(hr))return hr;
         CComPtr<IWICBitmapSource> thumb;
+        CComPtr<IWICBitmapFrameDecode> frame;
+        auto ensureFrame=[&]()->HRESULT {
+            return frame ? S_OK : decoder->GetFrame(0,&frame);
+        };
         hr=decoder->GetThumbnail(&thumb);
         if(hr==WINCODEC_ERR_CODECNOTHUMBNAIL){
-            CComPtr<IWICBitmapFrameDecode> frame;
-            hr=decoder->GetFrame(0,&frame);
+            hr=ensureFrame();
             if(FAILED(hr))return hr;
             hr=frame->GetThumbnail(&thumb);
         }
-        // Absence must be explicit. Do NOT silently decompress 12MP here;
-        // such fallback must be designed and benchmarked separately.
-        if(FAILED(hr)||!thumb)return FAILED(hr)?hr:WINCODEC_ERR_CODECNOTHUMBNAIL;
+        if(hr==WINCODEC_ERR_CODECNOTHUMBNAIL){
+            hr=ensureFrame();
+            if(FAILED(hr))return hr;
+            thumb=frame;
+            WicHeicDiagnostic::Emit("ShellLabFullFallback",requested,0,0,0,"no-embedded");
+        } else if(FAILED(hr)||!thumb) {
+            return FAILED(hr)?hr:WINCODEC_ERR_CODECNOTHUMBNAIL;
+        }
         UINT width=0,height=0;
         hr=thumb->GetSize(&width,&height);
         if(FAILED(hr))return hr;
+        if(max(width,height)<requested){
+            hr=ensureFrame();
+            if(FAILED(hr))return hr;
+            UINT masterW=0,masterH=0;
+            hr=frame->GetSize(&masterW,&masterH);
+            if(FAILED(hr))return hr;
+            if(max(masterW,masterH)>max(width,height)){
+                thumb=frame;
+                width=masterW;height=masterH;
+                WicHeicDiagnostic::Emit("ShellLabFullFallback",requested,0,0,0,"need-detail");
+            }
+        }
         if(!width||!height||width>16384||height>16384)
             return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
         // Never upscale an embedded 320x240 preview to 1024px. Production
@@ -126,6 +146,42 @@ public:
 };
 inline void Need(bool okay,const char* description) {
     if(!okay)throw std::runtime_error(description);
+}
+inline void RunFallback() {
+    wchar_t tmp[32768]{};
+    DWORD n=GetEnvironmentVariableW(L"RUNNER_TEMP",tmp,32768);
+    Need(n>0 && n<32768,"Missing CI temporary directory");
+    wchar_t actions[16]{};
+    Need(GetEnvironmentVariableW(L"GITHUB_ACTIONS",actions,16)==4 &&
+         wcscmp(actions,L"true")==0,"Fallback tests are CI only");
+    auto test=[&](const wchar_t* leaf,UINT request,UINT expectedW,UINT expectedH){
+        std::wstring filename=std::wstring(tmp,n)+L"\\"+leaf;
+        CComPtr<IWICImagingFactory> factory;
+        Need(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&factory))),"No WIC imaging factory");
+        CComPtr<IWICStream> stream;
+        Need(SUCCEEDED(factory->CreateStream(&stream)) &&
+             SUCCEEDED(stream->InitializeFromFilename(filename.c_str(),GENERIC_READ)),
+             "HEIC fixture stream creation failed");
+        CComPtr<IThumbnailProvider> provider;
+        provider.Attach(new Provider());
+        CComPtr<IInitializeWithStream> initializer;
+        Need(SUCCEEDED(provider->QueryInterface(IID_PPV_ARGS(&initializer))) &&
+             SUCCEEDED(initializer->Initialize(stream,STGM_READ)),"Cannot initialize stream");
+        HBITMAP bmp=nullptr;WTS_ALPHATYPE alpha=WTSAT_UNKNOWN;
+        HRESULT hr=provider->GetThumbnail(request,&bmp,&alpha);
+        Need(SUCCEEDED(hr) && bmp!=nullptr,"Fallback did not return bitmap");
+        BITMAP info{};
+        bool valid=GetObjectW(bmp,sizeof(info),&info)==sizeof(info) &&
+            UINT(info.bmWidth)==expectedW && UINT(abs(info.bmHeight))==expectedH &&
+            info.bmBitsPixel==32 && alpha==WTSAT_RGB;
+        DeleteObject(bmp);
+        Need(valid,"Fallback produced incorrect bitmap format or geometry");
+    };
+    test(L"wicfast_embedded_4032x3024.heic",1024,1024,768);
+    std::puts("CI_SHELL_LAB_1024_FALLBACK_PASS");
+    test(L"wicfast_no_thumb_4032x3024.heic",256,256,192);
+    std::puts("CI_SHELL_LAB_NO_EMBEDDED_FALLBACK_PASS");
 }
 inline void Run() {
     wchar_t temp[32768]{};

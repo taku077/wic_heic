@@ -25,11 +25,13 @@ void Require(bool ok,const char* reason) {
 }
 int wmain(int argc,wchar_t** argv) {
     try {
-        Require(argc==2,"Expected exactly one output path");
+        Require(argc==2 || argc==3,"Expected output path and optional --without-thumbnail");
+        const bool noThumb=argc==3;
+        Require(!noThumb || wcscmp(argv[2],L"--without-thumbnail")==0,"Invalid optional mode");
         Require(Env(L"GITHUB_ACTIONS")==L"true","Test generation is CI only");
         const auto root=Env(L"RUNNER_TEMP");
         Require(!root.empty(),"No CI runner temporary folder");
-        const std::wstring exact=root+L"\\wicfast_embedded_4032x3024.heic";
+        const std::wstring exact=root+(noThumb?L"\\wicfast_no_thumb_4032x3024.heic":L"\\wicfast_embedded_4032x3024.heic");
         Require(_wcsicmp(argv[1],exact.c_str())==0,"Refuse non-CI output path");
         Require(GetFileAttributesW(argv[1])==INVALID_FILE_ATTRIBUTES,
                 "Refuse to overwrite existing HEIC");
@@ -58,10 +60,12 @@ int wmain(int argc,wchar_t** argv) {
         heif::Context::EncodingOptions options{};
         auto master=ctx.encode_image(source,encoder,options);
         Require(!master.empty(),"HEVC main handle missing");
-        auto thumb=ctx.encode_thumbnail(source,master,encoder,options,kThumbBound);
-        Require(!thumb.empty(),"HEVC thumbnail handle missing");
-        Require(thumb.get_width()==320 && thumb.get_height()==240,
-                "HEVC embedded thumbnail dimensions unexpected");
+        if(!noThumb){
+            auto thumb=ctx.encode_thumbnail(source,master,encoder,options,kThumbBound);
+            Require(!thumb.empty(),"HEVC thumbnail handle missing");
+            Require(thumb.get_width()==320 && thumb.get_height()==240,
+                    "HEVC embedded thumbnail dimensions unexpected");
+        }
         const std::string filename=std::filesystem::path(argv[1]).string();
         ctx.write_to_file(filename);
         // Readback checks real saved container associations, not only a handle.
@@ -71,10 +75,13 @@ int wmain(int argc,wchar_t** argv) {
         const auto ids=primary.get_list_of_thumbnail_IDs();
         Require(primary.get_width()==kWidth&&primary.get_height()==kHeight,
                 "HEIF primary geometry changed");
-        Require(!ids.empty(),"HEIF thumbnail relation missing after write");
-        auto savedThumb=primary.get_thumbnail(ids[0]);
-        Require(savedThumb.get_width()==320&&savedThumb.get_height()==240,
-                "HEIF saved thumbnail geometry changed");
+        if(noThumb){Require(ids.empty(),"Missing-thumbnail fixture unexpectedly had a thumbnail");}
+        else {
+            Require(!ids.empty(),"HEIF thumbnail relation missing after write");
+            auto savedThumb=primary.get_thumbnail(ids[0]);
+            Require(savedThumb.get_width()==320&&savedThumb.get_height()==240,
+                    "HEIF saved thumbnail geometry changed");
+        }
         WIN32_FILE_ATTRIBUTE_DATA attrs{};
         Require(GetFileAttributesExW(argv[1],GetFileExInfoStandard,&attrs)!=0,
                 "HEIF write did not create a file");

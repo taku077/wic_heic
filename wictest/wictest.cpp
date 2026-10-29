@@ -426,6 +426,8 @@ int main(int argc,char** argv)
             WICThumbnailWorkerLabProbe::Run();
             WICThumbnailConcurrentAutoProbe::Run();
             WICThumbnailMixedFormatProbe::Run();
+        } else if(argc==2 && std::strcmp(argv[1],"--shell-thumb-provider-fallback")==0){
+            WICShellThumbnailProviderPilot::RunFallback();
         } else if(argc==2 && std::strcmp(argv[1],"--shell-thumb-provider-pilot")==0){
             WICShellThumbnailProviderPilot::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--embedded-thumbnail-probe")==0){
