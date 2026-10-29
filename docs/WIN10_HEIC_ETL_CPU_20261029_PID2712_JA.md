@@ -101,3 +101,28 @@ References: https://learn.microsoft.com/en-us/windows/win32/api/thumbcache/nn-th
 - Safety caveat: confirmed fallback for ICC does not itself verify ICC color transform precision. It preserves the existing 1.1.30 WIC source path rather than introducing a new shortcut.
 - **Release blockers remain**: controlled EXIF/irot orientation correctness in both primary/embedded HEVC, 8/10/12bit and alpha/grid/HDR/gain-map handling or conservative fallback, and separate safely reversible product MSI registry upgrade/uninstall. The current installer uses `SelfRegCost=1`; a new ShellEx value cannot simply overwrite other handlers and be deleted on uninstall.
 - Keep production WicHeic 1.1.30 until explicit Windows 10 pilot. Do not ask the user to repeat the earlier WPR ETL capture.
+
+## 2026-10-30: Hardened HEIF preflight + tested ShellEx registration-state contract
+
+1. Branch `experiment/shell-com-focused-20261030` commit `050c77e8502151826891104e34cad276da60a6cb`, Windows Actions [#40928399921](https://github.com/taku077/wic_heic/actions/runs/40928399921) **SUCCESS**.
+   - Primary image must be `hvc1`; an `infe` primary item changed to `grid` is rejected. The test mutation is not a valid grid image and only tests fail-closed routing.
+   - Reject primary image relationships to auxiliaries (`auxl`), derived images (`dimg`), unknown references and other unsupported primary properties. Test mutates a genuine `thmb` reference to `auxl`.
+   - HEVC `hvcC` luma/chroma bit-depth config must indicate 8-bit; a mutated 10-bit configuration is rejected without full pixel decode. This is not yet a real native 10/12-bit fixture.
+   - Existing valid `irot3+Exif6` HEIC fixtures are still rejected safely.
+   - Actual isolated registered Shell handler still used embedded thumbnail: provider=1, embedded=1, full_12mp=0, and restored its temporary registration.
+   - Same Windows runner, eight synthetic HEIC files per route: default median 96.5ms, accelerated median 12.5ms, ratio .130. Order/cache effects mean this cannot be generalized to the user's Windows 10 HEIC folder. Extra metadata preflight reads whole files up to 24MiB and may constrain real-world benefit.
+
+2. Branch `experiment/shell-com-focused-20261030` commit `7cdbee2699b04f8cafec0edb0270e4855b48a722`, Windows Actions [#40929059759](https://github.com/taku077/wic_heic/actions/runs/40929059759) **SUCCESS**.
+   - **CI-only model**, not installed or packaged in production MSI.
+   - Tests absent predecessor, known 1.1.30 predecessor, idempotent upgrade, foreign/third-party provider untouched, user-changed provider untouched, simulated rollback, and orphaned custom association fail-closed.
+   - Writes only to disposable `HKCU\\Software\\WicHeic\\CI_ShellRegistry_...` and deletes it after validation. Does not change actual .heic ShellEx or HKLM.
+   - Installation still requires real WiX v4 deferred actions, safe predecessor backup persistence, failure rollback, and upgrade/uninstall verification. The existing 1.1.30 WiX self-registration is **not** safe to copy blindly for the new provider.
+
+### Release assessment
+
+- **No 1.1.31 MSI yet.** Safety gates achieved in experimental programs; not a tested production package.
+- Prioritize actual reversible HKLM COM installation and MSI transaction support, then test 1.1.30 upgrade/uninstall on an isolated Windows machine; verify rotations, EXIF/ICC, grids, alpha/HDR, and failure fallback.
+- Preserve earlier WPR ETL and 1.1.30 real-device evidence; no further user diagnostic required until MSI pilot is ready.
+- Avoid extrapolating synthetic CI 87% thumbnail speedup to ordinary iPhone HEIC: the intentionally conservative EXIF/irot safety gate may route many real images to existing WIC.
+
+References: https://learn.microsoft.com/en-us/windows/win32/msi/rollback-installation ; https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images ; https://ffmpeg.org/doxygen/trunk/structHEVCDecoderConfigurationRecord.html .
