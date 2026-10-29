@@ -47,6 +47,11 @@ jobs:
             cmd /c "call build-$part.bat x64"
             if($LASTEXITCODE -ne 0){throw "Native $part build failed"}
           }
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
       - name: Compile test WIC DLL
         shell: pwsh
         run: |
