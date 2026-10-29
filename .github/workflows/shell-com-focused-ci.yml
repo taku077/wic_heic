@@ -81,6 +81,8 @@ jobs:
           $generator=(Resolve-Path 'wictest/isolated_shell/(Build)/x64/Release/SyntheticEmbeddedHevcThumb.exe').Path
           & $generator (Join-Path $env:RUNNER_TEMP 'wicfast_no_thumb_4032x3024.heic') --without-thumbnail
           if($LASTEXITCODE -ne 0){throw 'No-thumbnail HEIC fixture failed'}
+          & $generator (Join-Path $env:RUNNER_TEMP 'wicfast_with_icc_4032x3024.heic') --with-icc
+          if($LASTEXITCODE -ne 0){throw 'ICC-bearing HEIC fixture failed'}
           $wic=(Resolve-Path 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $exe=(Resolve-Path 'wictest/(Build)/x64/Release/wictest.exe').Path
           $r=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $wic)) -Wait -PassThru
@@ -94,8 +96,12 @@ jobs:
             $fallback=([regex]::Matches($events,'event=ShellLabFullFallback ')).Count
             $full=([regex]::Matches($events,'event=DecoderFullDecode width=4032 height=3024')).Count
             Write-Host "SHELL_FALLBACK_COUNT events=$fallback full_12mp=$full"
-            if($fallback -ne 2 -or $full -ne 2){throw 'Fallback did not use original full-frame WIC twice'}
-            Write-Host 'SHELL_FALLBACK_1024_AND_NO_EMBEDDED_PASS'
+            if($fallback -ne 3 -or $full -ne 3){throw 'Fallback did not use original full-frame WIC exactly three times'}
+            if(-not $events.Contains('event=ShellLabFullFallback width=256') -or
+               -not $events.Contains('icc-primary')) {
+               throw 'ICC fallback was not traced'
+            }
+            Write-Host 'SHELL_FALLBACK_1024_NO_EMBEDDED_ICC_PASS'
           } finally {
             Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
             $r=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $wic)) -Wait -PassThru

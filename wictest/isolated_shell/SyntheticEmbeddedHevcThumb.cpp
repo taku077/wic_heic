@@ -7,6 +7,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <vector>
 #include <stdexcept>
 #include <string>
 #pragma comment(lib,"heif.lib")
@@ -26,12 +29,15 @@ void Require(bool ok,const char* reason) {
 int wmain(int argc,wchar_t** argv) {
     try {
         Require(argc==2 || argc==3,"Expected output path and optional --without-thumbnail");
-        const bool noThumb=argc==3;
-        Require(!noThumb || wcscmp(argv[2],L"--without-thumbnail")==0,"Invalid optional mode");
+        const bool noThumb=argc==3 && wcscmp(argv[2],L"--without-thumbnail")==0;
+        const bool withIcc=argc==3 && wcscmp(argv[2],L"--with-icc")==0;
+        Require(!noThumb || wcscmp(argv[2],L"--without-thumbnail")==0 || withIcc,"Invalid optional mode");
         Require(Env(L"GITHUB_ACTIONS")==L"true","Test generation is CI only");
         const auto root=Env(L"RUNNER_TEMP");
         Require(!root.empty(),"No CI runner temporary folder");
-        const std::wstring exact=root+(noThumb?L"\\wicfast_no_thumb_4032x3024.heic":L"\\wicfast_embedded_4032x3024.heic");
+        const std::wstring exact=root+(noThumb?L"\\wicfast_no_thumb_4032x3024.heic":
+                 withIcc?L"\\wicfast_with_icc_4032x3024.heic":
+                         L"\\wicfast_embedded_4032x3024.heic");
         Require(_wcsicmp(argv[1],exact.c_str())==0,"Refuse non-CI output path");
         Require(GetFileAttributesW(argv[1])==INVALID_FILE_ATTRIBUTES,
                 "Refuse to overwrite existing HEIC");
@@ -54,6 +60,15 @@ int wmain(int argc,wchar_t** argv) {
                 row[3*x+2]=colors[q][2];
             }
         }
+        if(withIcc) {
+            const std::filesystem::path profile=L"wictest/samples/Synthetic_sRGB_ICC_from_LittleCMS.icc";
+            std::ifstream icc(profile,std::ios::binary);
+            Require(icc.good(),"Synthetic sRGB ICC test fixture missing");
+            const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(icc)),
+                                              std::istreambuf_iterator<char>());
+            Require(bytes.size()>=132 && bytes.size()<=8192,"Unexpected ICC fixture size");
+            source.set_raw_color_profile(heif_color_profile_type_prof,bytes);
+        }
         heif::Context ctx;
         heif::Encoder encoder(heif_compression_HEVC);
         encoder.set_lossy_quality(55);
@@ -73,6 +88,10 @@ int wmain(int argc,wchar_t** argv) {
         verify.read_from_file(filename);
         auto primary=verify.get_primary_image_handle();
         const auto ids=primary.get_list_of_thumbnail_IDs();
+        if(withIcc){
+            Require(heif_image_handle_get_raw_color_profile_size(primary.get_raw_image_handle())>=132,
+                    "ICC unexpectedly discarded in encoded primary HEIF item");
+        }
         Require(primary.get_width()==kWidth&&primary.get_height()==kHeight,
                 "HEIF primary geometry changed");
         if(noThumb){Require(ids.empty(),"Missing-thumbnail fixture unexpectedly had a thumbnail");}

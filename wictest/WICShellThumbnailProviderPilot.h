@@ -208,6 +208,8 @@ inline void RunFallback() {
     std::puts("CI_SHELL_LAB_1024_FALLBACK_PASS");
     test(L"wicfast_no_thumb_4032x3024.heic",256,256,192);
     std::puts("CI_SHELL_LAB_NO_EMBEDDED_FALLBACK_PASS");
+    test(L"wicfast_with_icc_4032x3024.heic",256,256,192);
+    std::puts("CI_SHELL_LAB_ICC_PRIMARY_FALLBACK_PASS");
 }
 inline void Run() {
     wchar_t temp[32768]{};
