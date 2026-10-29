@@ -8,6 +8,7 @@
 #include "ExifOrientationFix.h"
 #include "HeicLosslessNative.h"
 #include "HeicThumbnailWorkerPolicy.h"
+#include "PhotosPureRotationBridge.h"
 
 CHeicBitmapFrameDecode::CHeicBitmapFrameDecode(CHeicBitmapDecoder* decoder, heif::ImageHandle handle,UINT index,UINT count)
 	: m_Count(1)
@@ -510,21 +511,37 @@ void CHeicBitmapFrameDecode::DecodeImage()
         } guard{activePilotDecodes};
         SYSTEM_INFO info{};
         GetSystemInfo(&info);
-        const unsigned workers=HeicThumbnailWorkerPolicy::Select(
-            static_cast<unsigned>(m_Handle.get_width()),
-            static_cast<unsigned>(m_Handle.get_height()),
-            m_Handle.get_luma_bits_per_pixel(),
-            m_Handle.get_chroma_bits_per_pixel(),
-            m_Handle.has_alpha_channel(),info.dwNumberOfProcessors,already);
+        // A real Photos process uses a lower codec-thread budget than
+        // Explorer; only the synthetic CI harness can simulate this host.
+        wchar_t photoTest[4]{};
+        const bool simulatedPhotos=(enabledLength==4 &&
+            wcscmp(labEnabled,L"true")==0 &&
+            GetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",
+                                    photoTest,4)==1 && photoTest[0]==L'1');
+        const bool photos=PhotosPureRotationBridge::IsWindowsPhotosHost() ||
+                          simulatedPhotos;
+        const unsigned workers=photos
+          ? HeicThumbnailWorkerPolicy::SelectForPhotos(
+              static_cast<unsigned>(m_Handle.get_width()),
+              static_cast<unsigned>(m_Handle.get_height()),
+              m_Handle.get_luma_bits_per_pixel(),
+              m_Handle.get_chroma_bits_per_pixel(),
+              m_Handle.has_alpha_channel(),info.dwNumberOfProcessors,already)
+          : HeicThumbnailWorkerPolicy::Select(
+              static_cast<unsigned>(m_Handle.get_width()),
+              static_cast<unsigned>(m_Handle.get_height()),
+              m_Handle.get_luma_bits_per_pixel(),
+              m_Handle.get_chroma_bits_per_pixel(),
+              m_Handle.has_alpha_channel(),info.dwNumberOfProcessors,already);
         // This test-only marker is visible on Actions. No stdout is needed
         // by Explorer/Photos on users' PCs.
         if(enabledLength==4 && wcscmp(labEnabled,L"true")==0) {
             printf("THUMB_PILOT_PRODUCTION_AUTO_SELECTED workers=%u "
                    "width=%d height=%d alpha=%d luma_bits=%d "
-                   "concurrent_before=%u\n",
+                   "concurrent_before=%u photos=%u\n",
                    workers,m_Handle.get_width(),m_Handle.get_height(),
                    m_Handle.has_alpha_channel()?1:0,
-                   m_Handle.get_luma_bits_per_pixel(),already);
+                   m_Handle.get_luma_bits_per_pixel(),already,photos?1u:0u);
         }
         if(workers==0) {
             m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);

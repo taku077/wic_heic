@@ -63,6 +63,21 @@ inline void RunPolicyCases() {
     printf("THUMB_WORKERS_POLICY_CASES_PASS count=%zu "
            "low_res=0 high_depth=0 alpha=0 concurrency_capped=1\n",
            cases.size());
+    struct PhotosCase {unsigned w,h,cpus,active; int luma,chroma; bool alpha; unsigned expected;};
+    constexpr std::array<PhotosCase,9> photos{{
+      {4032,3024,4,0,8,8,false,2}, {4032,3024,4,1,8,8,false,0},
+      {4032,3024,6,0,8,8,false,2}, {4032,3024,6,1,8,8,false,0},
+      {4032,3024,2,0,8,8,false,0}, {4032,3024,4,0,10,10,false,0},
+      {4032,3024,4,0,8,8,true,0}, {1080,1920,4,0,8,8,false,0},
+      {2999,2000,4,0,8,8,false,0}
+    }};
+    for(const auto& c:photos) {
+      if(HeicThumbnailWorkerPolicy::SelectForPhotos(
+          c.w,c.h,c.luma,c.chroma,c.alpha,c.cpus,c.active)!=c.expected)
+        throw std::runtime_error("Photos codec worker policy regression");
+    }
+    printf("PHOTOS_UI_CODEC_WORKER_BUDGET_PASS cases=%zu max_workers=2\n",
+           photos.size());
 }
 inline void RunSmallFallback(IWICImagingFactory* factory) {
     const wchar_t* path=L"samples\\fixture-irot3-exif6-noaux.heic";
@@ -95,8 +110,12 @@ inline void RunSmallFallback(IWICImagingFactory* factory) {
 }
 // Verify the PILOT production path without the CI-only worker override.
 inline void RunPilotAutoWithoutOverride(IWICImagingFactory* factory,
-    const std::wstring& path,const std::vector<BYTE>& baseline) {
+    const std::wstring& path,const std::vector<BYTE>& baseline,
+    bool photos=false) {
     SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr);
+    if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",
+                                photos?L"1":nullptr))
+        throw std::runtime_error("CI Photos mode could not be set");
     CComPtr<IWICStream> stream;
     Check(factory->CreateStream(&stream),"pilot stream");
     Check(stream->InitializeFromFilename(path.c_str(),GENERIC_READ),
@@ -128,7 +147,11 @@ inline void RunPilotAutoWithoutOverride(IWICImagingFactory* factory,
         result.data()),"pilot RGB");
     if(result!=baseline)throw std::runtime_error(
         "Pilot production path changed thumbnail RGB");
-    printf("THUMB_PILOT_NOENV_RGB_PARITY_PASS source=12MP thumb=256x192\n");
+    if(photos)
+        printf("PHOTOS_UI_2WORKER_RGB_PARITY_PASS source=12MP thumb=256x192\n");
+    else
+        printf("THUMB_PILOT_NOENV_RGB_PARITY_PASS source=12MP thumb=256x192\n");
+    SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",nullptr);
 }
 inline void Run() {
     wchar_t enabled[12]{};
@@ -230,5 +253,6 @@ inline void Run() {
            "fixture=artificial_12MP no_msi_release=1\n");
     RunSmallFallback(factory);
     RunPilotAutoWithoutOverride(factory,path,referenceThumb);
+    RunPilotAutoWithoutOverride(factory,path,referenceThumb,true);
 }
 }

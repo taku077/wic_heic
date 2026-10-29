@@ -23,4 +23,11 @@ inline unsigned Select(unsigned width, unsigned height, int lumaBits,
     if (alreadyDecoding == 1u && logicalCpus >= 6u) return 2u;
     return 0u;
 }
+// Photos' UI needs CPU headroom. Preserve Explorer's 4-worker fast path.
+// Zero means the unmodified libheif default, not zero codec threads.
+inline unsigned SelectForPhotos(unsigned w,unsigned h,int luma,int chroma,
+                                bool alpha,unsigned cpus,unsigned active) noexcept {
+    if(cpus<4u || active!=0u) return 0u;
+    return Select(w,h,luma,chroma,alpha,cpus,active)==4u ? 2u : 0u;
+}
 } // namespace HeicThumbnailWorkerPolicy
