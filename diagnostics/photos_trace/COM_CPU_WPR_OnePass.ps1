@@ -11,7 +11,13 @@ foreach($name in @('PhotosTrace_Start.ps1','PhotosTrace_Stop.ps1','COM_CPU_WIC_A
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $principal=New-Object Security.Principal.WindowsPrincipal($identity)
 if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
- throw 'WPR CPU stack sampling requires Administrator. Use the double-click CMD.'
+  # Elevate this exact packaged script once, avoiding fragile nested CMD quoting.
+  $quoted='"'+$PSCommandPath+'"'
+  $child=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -Wait -PassThru -ArgumentList @(
+      '-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$quoted,
+      '-DurationSeconds',([string]$DurationSeconds))
+  if($child.ExitCode -ne 0){throw "Elevated diagnostic failed with exit code $($child.ExitCode)"}
+  return
 }
 $wpr=Join-Path $env:WINDIR 'System32\wpr.exe'
 if(-not(Test-Path -LiteralPath $wpr -PathType Leaf)){
