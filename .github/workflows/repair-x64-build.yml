@@ -289,8 +289,11 @@ jobs:
       # Windows runner generate the SAME 12MP artificial HEIC, compare
       # 0/default vs 2 vs 4 codec worker hints, require bit-exact RGB.
       # No MSI artifact, no user's files, no real PC registry changes.
+      # Run the existing synthetic 12MP worker benchmark on the active repair
+      # branch too. Previously a green repair-branch workflow skipped BOTH
+      # fixture generation and worker/RGB-parity checks entirely.
       - name: Generate synthetic 12MP fixture for experimental HEVC workers
-        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot'
+        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -314,7 +317,7 @@ jobs:
           Write-Host 'THUMB_WORKERS_12MP_SYNTHETIC_FIXTURE_PASS'
 
       - name: Compare 12MP cold HEVC 0 versus 2 versus 4 worker decode with exact RGB
-        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot'
+        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
