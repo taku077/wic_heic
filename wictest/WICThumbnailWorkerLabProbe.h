@@ -30,10 +30,12 @@ inline void RunPolicyCases() {
         bool alpha;
         unsigned cpus,active,expected;
     };
-    constexpr std::array<Case,14> cases{{
+    constexpr std::array<Case,16> cases{{
         {4032,3024,8,8,false,4,0,4},     // sole high-resolution frame
-        {4032,3024,8,8,false,4,1,2},     // 2nd concurrent frame
+        {4032,3024,8,8,false,4,1,0},     // 2nd concurrent frame: default
         {4032,3024,8,8,false,4,2,0},     // cap CPU saturation
+        {4032,3024,8,8,false,6,0,4},     // six logical CPUs unchanged
+        {4032,3024,8,8,false,6,1,2},     // six logical CPUs unchanged
         {4032,3024,8,8,false,2,0,2},     // 2 logical CPU laptop
         {4032,3024,8,8,false,2,1,0},     // 2 logical CPU concurrent
         {4032,3024,8,8,false,1,0,0},     // no parallelism
