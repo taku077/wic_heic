@@ -80,6 +80,6 @@ $cpuPids=@($rows | ForEach-Object {[int]$_.PID} | Select-Object -Unique)
 $lines.Add('WicTracePids='+($tracedPids -join ','))
 $lines.Add('CpuSamplePids='+($cpuPids -join ','))
 $lines.Add('CONCLUSION_LIMIT: PID/time overlap supports correlation only, not proof that wic_heic.dll consumed sampled CPU.')
-[IO.File]::WriteAllLines($OutFile,$lines.ToArray(),(New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllLines($OutFile,$lines.ToArray(),([System.Text.UTF8Encoding]::new($false)))
 $lines | ForEach-Object {Write-Host $_}
 Write-Host 'CPU_WIC_ANALYZE_PASS'
