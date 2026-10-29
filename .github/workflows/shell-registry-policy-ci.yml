@@ -1,0 +1,22 @@
+name: Shell registration policy CI (no machine changes)
+on:
+  push:
+    branches:
+      - experiment/shell-com-focused-20261030
+    paths:
+      - diagnostics/shell_registry_ci/**
+      - .github/workflows/shell-registry-policy-ci.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  registry-policy:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test prior association restore and third-party preservation
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          & ./diagnostics/shell_registry_ci/ShellRegistrationPolicyTrial.ps1
