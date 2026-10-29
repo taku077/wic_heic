@@ -489,6 +489,9 @@ jobs:
           $lab=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/HeicShellThumbnailLab.dll').Path
           $wic=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_embedded_4032x3024.heic'
+          $labFixture=Join-Path $env:RUNNER_TEMP 'wicfast_shell_lab_4032x3024.heic'
+          if(Test-Path -LiteralPath $labFixture){throw 'Refuse existing CI Shell fixture'}
+          Copy-Item -LiteralPath $fixture -Destination $labFixture -ErrorAction Stop
           $reg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $wic)) -Wait -PassThru
           if($reg.ExitCode -ne 0){throw 'WIC test registration failed'}
           $cls='{98E34B24-DAFA-44C7-89A4-5FB39F72B791}'
@@ -512,6 +515,20 @@ jobs:
               New-Item -Path $key -Force | Out-Null
               Set-Item -Path $key -Value $cls
             }
+            # Official Shell requirement: announce changed file associations.
+            # A previous CI phase already used the same ".heic" extension
+            # with the Windows default handler. Refresh the provider mapping.
+            if(-not ('WicHeicShellAssociation.Notify' -as [type])){
+              Add-Type -Namespace WicHeicShellAssociation -Name Notify -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("shell32.dll")]
+public static extern void SHChangeNotify(uint eventId,uint flags,
+    System.IntPtr item1,System.IntPtr item2);
+'@
+            }
+            [WicHeicShellAssociation.Notify]::SHChangeNotify(
+              0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
+            Start-Sleep -Milliseconds 350
+            Write-Host 'SHELL_ASSOCIATIONS_REFRESHED_AFTER_REGISTER'
             # Verify the class is genuinely registered before asking Shell.
             $merged="Registry::HKEY_CLASSES_ROOT\CLSID\$cls\InprocServer32"
             if(-not(Test-Path -LiteralPath $merged)) {
@@ -535,7 +552,7 @@ jobs:
             & './diagnostics/photos_trace/PhotosTrace_Start.ps1'
             $traceOn=$true
             $trace=[string](Get-ItemProperty 'HKCU:\Software\WicHeic').TraceFile
-            $out=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $fixture -Size 256 -ForceReextractAfterSnapshot)
+            $out=@(& './diagnostics/photos_trace/HEIC_ThumbnailCache_AB_ReadOnly.ps1' -ImagePath $labFixture -Size 256 -ForceReextractAfterSnapshot)
             $out | ForEach-Object {Write-Host $_}
             if(-not (($out -join ' ') -match 'FORCE_REEXTRACT status=OK')){
               throw 'Shell unable to extract synthetic HEIC'
@@ -567,6 +584,13 @@ jobs:
             }
             $unreg=Start-Process -FilePath "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $wic)) -Wait -PassThru
             if($unreg.ExitCode -ne 0){Write-Warning 'WIC lab cleanup returned nonzero'}
+            if('WicHeicShellAssociation.Notify' -as [type]){
+              [WicHeicShellAssociation.Notify]::SHChangeNotify(
+                0x08000000,0,[IntPtr]::Zero,[IntPtr]::Zero)
+            }
+            if(Test-Path -LiteralPath $labFixture){
+              Remove-Item -LiteralPath $labFixture -Force
+            }
           }
           foreach($key in $keys){if(Test-Path -LiteralPath $key){throw "Cleanup did not remove isolated test key: $key"}}
           Write-Host 'SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS'
