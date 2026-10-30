@@ -113,7 +113,9 @@ jobs:
                  -not $summary.Contains('AttributionRawPID=') -or
                  -not $summary.Contains('DeferredUniqueTIDRecovered=') -or
                  -not $summary.Contains('PIDUnresolved=') -or
-                 -not $summary.Contains('ThreadIDsAmbiguous=')){
+                 -not $summary.Contains('ThreadIDsAmbiguous=') -or
+                 -not $summary.Contains('ProcessEndOrDCEndEvents=') -or
+                 -not $summary.Contains('ConflictingNamePIDs=')){
                 throw 'Synthetic ETL CPU report missing all-process sample summary'
               }
               Write-Host 'ETL_CPU_ALL_PROCESS_REAL_WPR_SAMPLED_PARSE_PASS'
