@@ -89,8 +89,27 @@ jobs:
           try {
             Push-Location 'wictest'
             try {
-              & $tester --cpu-budget-lab
-              if($LASTEXITCODE -ne 0){throw 'CPU budget and exact RGB parity gate failed'}
+              $workerTrace=Join-Path $env:RUNNER_TEMP 'wic_cpu_worker_select_ci.txt'
+              if(Test-Path -LiteralPath $workerTrace){throw 'Refuse existing worker trace'}
+              $env:WIC_HEIC_TRACE_FILE=$workerTrace
+              try {
+                & $tester --cpu-budget-lab
+                if($LASTEXITCODE -ne 0){throw 'CPU budget and exact RGB parity gate failed'}
+                $events=Get-Content -LiteralPath $workerTrace -Raw -ErrorAction Stop
+                foreach($policy in @(
+                  'source=shell hr=0x00000000 .*operation=2 ',
+                  'source=photos hr=0x00000000 .*operation=2 ',
+                  'source=other hr=0x00000000 .*operation=4 '
+                )){
+                  if($events -notmatch ('event=DecoderWorkerSelect [^\r\n]*'+$policy)){
+                    throw ('WIC worker trace missing actual selection: '+$policy)
+                  }
+                }
+                Write-Host 'SHELL_CPU_WORKER_TRACE_NUMERIC_GATE_PASS'
+              } finally {
+                Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $workerTrace -Force -ErrorAction SilentlyContinue
+              }
             } finally {
               Pop-Location
             }
