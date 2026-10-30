@@ -24,16 +24,30 @@ internal static class Program {
         // No command lines, paths, image names, memory addresses, or TIDs leave the PC.
         public readonly Dictionary<string,long> Instances =
             new Dictionary<string,long>(StringComparer.OrdinalIgnoreCase);
-        public void Add(string n, int pid) {
-            TotalSamples++;
-            Samples++;
+        public void Add(string n, int pid, long count=1) {
+            TotalSamples+=count;
+            Samples+=count;
             long prior;
             Names.TryGetValue(n,out prior);
-            Names[n]=prior+1;
+            Names[n]=prior+count;
             var instance = n + (pid>0 ? " [PID " + pid + "]" : " [PID unknown]");
             Instances.TryGetValue(instance,out prior);
-            Instances[instance]=prior+1;
+            Instances[instance]=prior+count;
         }
+    }
+    // A TID may be reused by a DIFFERENT process after a thread exits.
+    // Never attribute such a TID from a whole-trace map.
+    private static void TrackUniqueTid(Dictionary<int,int> map,int tid,int pid) {
+        if(tid<=0 || pid<=0)return;
+        int old;
+        if(!map.TryGetValue(tid,out old))map[tid]=pid;
+        else if(old!=pid)map[tid]=-1;
+    }
+    private static bool Known(string name) {
+        return !string.IsNullOrWhiteSpace(name) &&
+            name!="(unknown)" &&
+            !name.StartsWith("Process(",StringComparison.OrdinalIgnoreCase) &&
+            !name.StartsWith("PID_",StringComparison.OrdinalIgnoreCase);
     }
     private static string Short(string name) {
         if(string.IsNullOrWhiteSpace(name))return "(unknown)";
@@ -50,7 +64,13 @@ internal static class Program {
             b.Add("dllhost.exe",222);
             b.Add("dllhost.exe",111);
             b.AddNoThreadId();
-            if(b.Samples!=3 || b.TotalSamples!=4 || b.NoThreadIdSamples!=1 ||
+            var tidMap=new Dictionary<int,int>();
+            TrackUniqueTid(tidMap,10,936);
+            TrackUniqueTid(tidMap,10,936);
+            TrackUniqueTid(tidMap,11,936);
+            TrackUniqueTid(tidMap,11,3284);
+            if(tidMap[10]!=936 || tidMap[11]!=-1 ||
+               b.Samples!=3 || b.TotalSamples!=4 || b.NoThreadIdSamples!=1 ||
                b.Names["dllhost.exe"]!=3 ||
                b.Instances["dllhost.exe [PID 111]"]!=2 ||
                b.Instances["dllhost.exe [PID 222]"]!=1 ||
@@ -83,10 +103,15 @@ internal static class Program {
             Console.Error.WriteLine("Input and output cannot be the same.");return 4;
         }
         var namesByPid=new Dictionary<int,string>();
-        var pidByTid=new Dictionary<int,int>();
+        var sampleNamesByPid=new Dictionary<int,string>();
+        // Collect aggregated sample counts first: process/thread rundown may be
+        // emitted AFTER CPU samples. This uses no extra ETL, no intermediate file.
+        var uniquePidByTid=new Dictionary<int,int>();
+        var rawSamples=new Dictionary<Tuple<int,int,long>,long>();
         var all=new Bucket();
         var windows=new SortedDictionary<long,Bucket>();
         long total=0,idle=0,unknown=0;
+        long rawPidSamples=0, recoveredTidSamples=0, unresolvedPidSamples=0;
         DateTime start=DateTime.MaxValue,end=DateTime.MinValue;
         int cpus=0;
         try {
@@ -95,13 +120,18 @@ internal static class Program {
                 // ProcessStartGroup includes process rundown for programs
                 // already running when WPR began.
                 source.Kernel.ProcessStartGroup += e => {
-                    if(e.ProcessID>0) namesByPid[e.ProcessID]=Short(e.ProcessName);
+                    if(e.ProcessID<=0)return;
+                    var n=Short(e.KernelImageFileName);
+                    if(!Known(n))n=Short(e.ProcessName);
+                    if(Known(n))namesByPid[e.ProcessID]=n;
                 };
+                // Also learn thread mappings from rundown events even when
+                // those events occur after the sampled CPU workload.
                 source.Kernel.ThreadStartGroup += e => {
-                    if(e.ThreadID>0 && e.ProcessID>0)pidByTid[e.ThreadID]=e.ProcessID;
+                    TrackUniqueTid(uniquePidByTid,e.ThreadID,e.ProcessID);
                 };
                 source.Kernel.ThreadEndGroup += e => {
-                    if(e.ThreadID>0)pidByTid.Remove(e.ThreadID);
+                    TrackUniqueTid(uniquePidByTid,e.ThreadID,e.ProcessID);
                 };
                 source.Kernel.PerfInfoSample += e => {
                     total++;
@@ -121,17 +151,46 @@ internal static class Program {
                         return;
                     }
                     int pid=e.ProcessID;
-                    if(pid<=0)pidByTid.TryGetValue(e.ThreadID,out pid);
-                    string name;
-                    if(pid>0 && namesByPid.TryGetValue(pid,out name)){}
-                    else name=Short(e.ProcessName);
-                    if(name.StartsWith("Process(",StringComparison.OrdinalIgnoreCase)
-                        &&pid>0)name="PID_"+pid;
-                    if(string.IsNullOrWhiteSpace(name)){unknown++;name="(unknown)";}
-                    all.Add(name,pid);
-                    b.Add(name,pid);
+                    if(pid<0)pid=0;
+                    if(pid>0) {
+                        var n=Short(e.ProcessName);
+                        if(Known(n) && !sampleNamesByPid.ContainsKey(pid))
+                            sampleNamesByPid[pid]=n;
+                    }
+                    var key=Tuple.Create(pid,e.ThreadID,windowId);
+                    long prev;
+                    rawSamples.TryGetValue(key,out prev);
+                    rawSamples[key]=prev+1;
                 };
                 source.Process();
+            }
+            // Resolve AFTER the entire ETL has been read. Avoid treating a TID
+            // reused by multiple PIDs as a reliable fallback.
+            foreach(var group in rawSamples) {
+                var pid=group.Key.Item1;
+                var tid=group.Key.Item2;
+                var win=group.Key.Item3;
+                var count=group.Value;
+                if(pid>0)rawPidSamples+=count;
+                else {
+                    int candidate;
+                    if(uniquePidByTid.TryGetValue(tid,out candidate) && candidate>0){
+                        pid=candidate;
+                        recoveredTidSamples+=count;
+                    } else unresolvedPidSamples+=count;
+                }
+                string name=null;
+                if(pid>0) {
+                    if(!namesByPid.TryGetValue(pid,out name) || !Known(name)) {
+                        sampleNamesByPid.TryGetValue(pid,out name);
+                    }
+                }
+                if(!Known(name)) {
+                    name="(unknown)";
+                    unknown+=count;
+                }
+                all.Add(name,pid,count);
+                windows[win].Add(name,pid,count);
             }
             if(total==0 || all.Samples==0) {
                 Console.Error.WriteLine("No usable CPU sampling events in ETL. Leave original unchanged.");
@@ -150,6 +209,12 @@ internal static class Program {
             sb.AppendLine("LogicalProcessors="+cpus);
             sb.AppendLine("SamplesAll="+total+" WithThreadID="+all.Samples+
                           " NoThreadID="+idle+" Unnamed="+unknown);
+            sb.AppendLine("AttributionRawPID="+rawPidSamples+
+                " DeferredUniqueTIDRecovered="+recoveredTidSamples+
+                " PIDUnresolved="+unresolvedPidSamples+
+                " ThreadIDsAmbiguous="+uniquePidByTid.Values.Count(x=>x<0));
+            sb.AppendLine("Attribution is conservative: reused TIDs are NOT backfilled.");
+            sb.AppendLine("Unknown PID/name must not be treated as idle or System.");
             sb.AppendLine("SampleTimeWindowUTC="+start.ToString("o")+" to "+end.ToString("o"));
             sb.AppendLine();
             sb.AppendLine("TOP EXECUTABLE NAMES BY SAMPLED ACTIVE CPU WORK");
