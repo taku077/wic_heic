@@ -354,6 +354,8 @@ inline void RunOrientationGate() {
              "Real orientation fixture missing");
         Need(!WicShellLabSafety::FromStream(oriented),
              "Real EXIF6/irot3 HEIC accidentally accepted by fast path");
+        Need(!WicShellLabSafety::ResearchGrid48FromStream(oriented),
+             "EXIF/irot file accepted by strict grid research gate");
     }
     std::puts("CI_SHELL_REAL_IROT3_EXIF6_FAIL_CLOSED_PASS");
     // Unlike the metadata tag-mutation tests, this file contains a genuine
@@ -366,6 +368,8 @@ inline void RunOrientationGate() {
     size_t alphaBytesRead=0;
     Need(!WicShellLabSafety::FromStream(alphaStream,&alphaBytesRead),
          "Real alpha auxiliary HEIF incorrectly admitted to embedded fast path");
+    Need(!WicShellLabSafety::ResearchGrid48FromStream(alphaStream),
+         "Alpha auxiliary HEIF accepted by grid research gate");
     // Real generated alpha HEIF always remains fail-closed. Its metadata
     // placement may vary, so do NOT assert that the marker is in the first
     // 64KiB; short-read speedups apply only if an actual marker is visible.
@@ -389,8 +393,18 @@ inline void RunOrientationGate() {
              "PQ/HLG NCLX synthetic HEIF missing");
         Need(!WicShellLabSafety::FromStream(candidate),
              "HDR transfer metadata admitted to SDR embedded preview shortcut");
+        Need(!WicShellLabSafety::ResearchGrid48FromStream(candidate),
+             "PQ/HLG HEIF accepted by grid research gate");
     }
     std::puts("CI_SHELL_PQ_HLG_NCLX_COLOR_FAIL_CLOSED_PASS");
+    const std::wstring iccPath=std::wstring(tmp,n)+L"\\wicfast_with_icc_4032x3024.heic";
+    CComPtr<IWICStream> iccStream;
+    Need(SUCCEEDED(factory->CreateStream(&iccStream)) &&
+         SUCCEEDED(iccStream->InitializeFromFilename(iccPath.c_str(),GENERIC_READ)),
+         "ICC synthetic HEIC fixture missing");
+    Need(!WicShellLabSafety::ResearchGrid48FromStream(iccStream),
+         "Genuine ICC HEIC accepted by strict grid research gate");
+    std::puts("CI_GRID48_RESEARCH_REAL_ICC_IROT_ALPHA_PQ_HLG_REJECTION_PASS");
 
 
     std::puts("CI_SHELL_ORIENTATION_METADATA_FAIL_CLOSED_PASS");
