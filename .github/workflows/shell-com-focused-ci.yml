@@ -97,7 +97,8 @@ jobs:
           if($r.ExitCode -ne 0){throw 'Cannot register test decoder'}
           try {
             $trace=Join-Path $env:RUNNER_TEMP 'wicfast_fallback_events.txt'
-            $env:WIC_HEIC_TRACE_FILE=$trace
+            # Isolate fallback trace counters from the independent grid shadow
+            # comparison, which deliberately decodes one 48-tile full master.
             & $exe --shell-orientation-gate
             if($LASTEXITCODE -ne 0){throw 'Orientation metadata gate failed'}
             # On a real synthetic 8x6 HEIF grid: compare embedded-only
@@ -110,6 +111,7 @@ jobs:
                throw ('Grid 48-tile preview-vs-full-WIC comparison failed: '+($gridShadow -join ' | '))
             }
             $gridShadow | ForEach-Object {Write-Host $_}
+            $env:WIC_HEIC_TRACE_FILE=$trace
             & $exe --shell-thumb-provider-fallback
             if($LASTEXITCODE -ne 0){throw 'Fallback native assertions failed'}
             $events=Get-Content -LiteralPath $trace -Raw
