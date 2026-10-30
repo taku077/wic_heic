@@ -125,6 +125,12 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
                                       photoSimulation,4)==1 &&
              photoSimulation[0]==L'1');
         const bool isPhotos=PhotosPureRotationBridge::IsWindowsPhotosHost() || photosCI;
+        wchar_t baselineFlag[4]{};
+        // GitHub Actions ONLY: reproduce the current 1.1.32 Photos
+        // grid tile4/codec2 baseline. Not configurable by production users.
+        const bool originalPhotosBudget=photosCI &&
+             GetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS_BASELINE",
+                                     baselineFlag,4)==1 && baselineFlag[0]==L'1';
         const bool shellCap=sys.dwNumberOfProcessors==4u &&
             ((exeLength && exeLength<MAX_PATH &&
               _wcsicmp(exeName,L"dllhost.exe")==0) || simulation);
@@ -133,7 +139,7 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
         // Only apply the new Photos cap to eligible 8-bit opaque GRID files.
         // Photo UI orientation/metadata/encoder paths and non-grid formats
         // retain the current 1.1.32 decoding policy.
-        if(!shellCap && isPhotos && sys.dwNumberOfProcessors==4u) {
+        if(!shellCap && isPhotos && !originalPhotosBudget && sys.dwNumberOfProcessors==4u) {
             try {
                 const auto primary=m_Context.get_primary_image_handle();
                 const uint64_t pixels=uint64_t(primary.get_width())*
