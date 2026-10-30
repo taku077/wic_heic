@@ -1,0 +1,92 @@
+name: Isolated Explorer HEIC CPU budget benchmark (no MSI)
+on:
+  push:
+    branches:
+      - experiment/explorer-cpu-budget-20261030
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cpu-budget:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: microsoft/setup-msbuild@v2
+      - name: Restore native project NuGet dependencies
+        shell: pwsh
+        run: |
+          msbuild wic_heic.sln /t:Restore /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Restore failed'}
+      - name: Compute fixed native submodule signature
+        shell: pwsh
+        run: |
+          $refs=(git submodule status --recursive) -join "`n"
+          $hash=[System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($refs))
+          $key=[Convert]::ToHexString($hash).Substring(0,20)
+          "CODEC_DEPS=$key" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: actions/cache/restore@v4
+        id: deps
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Build native libs only if cache absent
+        if: steps.deps.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: wic_heic/3rdparty
+        run: |
+          $ErrorActionPreference='Stop'
+          if(-not (Get-Command nasm -ErrorAction SilentlyContinue)){
+            if(Test-Path 'C:\Program Files\NASM\nasm.exe'){$env:PATH="C:\Program Files\NASM;$env:PATH"}
+            else { choco install nasm -y --no-progress; if($LASTEXITCODE -ne 0){throw 'NASM unavailable'} }
+          }
+          foreach($part in @('libde265','kvazaar','libheif')){
+            cmd /c "call build-$part.bat x64"
+            if($LASTEXITCODE -ne 0){throw "Native $part build failed"}
+          }
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: wic_heic/3rdparty/_out/x64
+          key: wic-repair-x64-${{ env.CODEC_DEPS }}-v1
+      - name: Compile test WIC DLL
+        shell: pwsh
+        run: |
+          msbuild wic_heic/wic_heic.vcxproj /m /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'WIC DLL build failed'}
+
+      - name: Compare decoding CPU-ms and wall-ms for 0/1/2/4 workers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/wictest.vcxproj /m /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'WIC lab test build failed'}
+          msbuild wictest/isolated_shell/Synthetic12MpHeic.vcxproj /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Artificial 12MP fixture generator build failed'}
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $generator=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/Synthetic12MpHeic.exe').Path
+          $tester=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
+          if(Test-Path -LiteralPath $fixture){throw 'Refuse to overwrite artificial test fixture'}
+          & $generator $dll $fixture
+          if($LASTEXITCODE -ne 0 -or -not(Test-Path -LiteralPath $fixture)){
+            throw 'Synthetic 12MP generator failed'
+          }
+          $start=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($start.ExitCode -ne 0){throw 'Isolated CI WIC registration failed'}
+          try {
+            Push-Location 'wictest'
+            try {
+              & $tester --thumbnail-worker-lab
+              if($LASTEXITCODE -ne 0){throw 'CPU budget and exact RGB parity gate failed'}
+            } finally {
+              Pop-Location
+            }
+          } finally {
+            $stop=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($stop.ExitCode -ne 0){Write-Warning 'WIC unregister returned nonzero'}
+            if(Test-Path -LiteralPath $fixture){Remove-Item -LiteralPath $fixture -Force}
+          }
