@@ -54,6 +54,20 @@ public:
         if(requested==0 || requested>1024)return E_INVALIDARG;
         WicHeicDiagnostic::Emit("ShellLabProviderEnter",requested,0,0,0,"test-only");
         const bool simpleOrientation=WicShellLabSafety::FromStream(input_);
+        // DO NOT enable for actual users. The WIC test DLL is not in any MSI.
+        // A separate opt-in CI-only experiment uses a strict metadata gate.
+        // Real grid/ICC/HDR/Exif/alpha always take the old full-WIC path.
+        wchar_t ci[16]{},pilot[16]{};
+        const bool researchMode =
+            GetEnvironmentVariableW(L"GITHUB_ACTIONS",ci,16)==4 &&
+            wcscmp(ci,L"true")==0 &&
+            GetEnvironmentVariableW(L"WIC_HEIC_GRID48_RESEARCH",pilot,16)==1 &&
+            wcscmp(pilot,L"1")==0;
+        const bool researchGrid=researchMode && !simpleOrientation &&
+            requested<=256 && WicShellLabSafety::ResearchGrid48FromStream(input_);
+        if(researchGrid)
+            WicHeicDiagnostic::Emit("ShellLabGrid48ResearchEligible",requested,0,0,0,
+                                     "CI-only-no-MSI");
         CComPtr<IWICBitmapDecoder> decoder;
         HRESULT hr=CoCreateInstance(CLSID_HEICDecoder,nullptr,CLSCTX_INPROC_SERVER,
                                     IID_PPV_ARGS(&decoder));
@@ -68,8 +82,9 @@ public:
         auto ensureFrame=[&]()->HRESULT {
             return frame ? S_OK : decoder->GetFrame(0,&frame);
         };
-        hr=simpleOrientation ? decoder->GetThumbnail(&thumb) : WINCODEC_ERR_CODECNOTHUMBNAIL;
-        if(hr==WINCODEC_ERR_CODECNOTHUMBNAIL && simpleOrientation){
+        const bool allowPreview=simpleOrientation||researchGrid;
+        hr=allowPreview ? decoder->GetThumbnail(&thumb) : WINCODEC_ERR_CODECNOTHUMBNAIL;
+        if(hr==WINCODEC_ERR_CODECNOTHUMBNAIL && allowPreview){
             hr=ensureFrame();
             if(FAILED(hr))return hr;
             hr=frame->GetThumbnail(&thumb);
