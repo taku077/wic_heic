@@ -44,11 +44,13 @@ int wmain(int argc,wchar_t** argv) {
         Require(GetFileAttributesW(argv[1])==INVALID_FILE_ATTRIBUTES,
                 "Refuse to overwrite existing HEIC");
         heif::Image source;
-        source.create(kWidth,kHeight,heif_colorspace_RGB,heif_chroma_interleaved_RGB);
+        source.create(kWidth,kHeight,heif_colorspace_RGB,
+                      withAlpha?heif_chroma_interleaved_RGBA:heif_chroma_interleaved_RGB);
         source.add_plane(heif_channel_interleaved,kWidth,kHeight,8);
         size_t stride=0;
         uint8_t* pixels=source.get_plane2(heif_channel_interleaved,&stride);
-        Require(pixels&&stride>=size_t(kWidth)*3u,"RGB input plane invalid");
+        const unsigned channels=withAlpha?4u:3u;
+        Require(pixels&&stride>=size_t(kWidth)*channels,"RGB(A) input plane invalid");
         // Easily recognized four-quadrant synthetic pattern. Never personal photos.
         const uint8_t colors[4][3]={
             {10,30,240},{220,200,30},{25,190,80},{200,50,190}
@@ -57,18 +59,11 @@ int wmain(int argc,wchar_t** argv) {
             auto* row=pixels+size_t(y)*stride;
             for(int x=0;x<kWidth;++x) {
                 const int q=(y>=kHeight/2?2:0)+(x>=kWidth/2?1:0);
-                row[3*x+0]=colors[q][0];
-                row[3*x+1]=colors[q][1];
-                row[3*x+2]=colors[q][2];
+                row[channels*x+0]=colors[q][0];
+                row[channels*x+1]=colors[q][1];
+                row[channels*x+2]=colors[q][2];
+                if(withAlpha)row[channels*x+3]=uint8_t(64+((x/17+y/19)%192));
             }
-        }
-        if(withAlpha) {
-            source.add_plane(heif_channel_Alpha,kWidth,kHeight,8);
-            size_t alphaStride=0;
-            auto* alpha=source.get_plane2(heif_channel_Alpha,&alphaStride);
-            Require(alpha&&alphaStride>=size_t(kWidth),"Alpha test plane invalid");
-            for(int y=0;y<kHeight;y++)for(int x=0;x<kWidth;x++)
-                alpha[size_t(y)*alphaStride+x]=uint8_t(64+((x/17+y/19)%192));
         }
         if(withIcc) {
             const std::filesystem::path profile=L"wictest/samples/Synthetic_sRGB_ICC_from_LittleCMS.icc";
