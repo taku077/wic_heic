@@ -24,6 +24,8 @@
 
 > **2026-10-30 最終追記：** Windows10実機から提出済みの `CPU_AllProcesses_20261030_224307_303.txt` では全スレッド付きサンプル456,016件中293,247件（64.31%）が名前不明。既存ETLを再取得して（追加録画不要）解析方法を見直し、研究ブランチ `investigate/win10-100cpu-after-1133-20261030` HEAD `60c55f718343fbe7661fa6f64edb4a6e284a95a0` で**ETL終了後にrundownで遅延帰属する保守的修正**、CI #41067460713 SUCCESS。**同じ実機ETLでの改善度は未確認、CPU100%も未解決**。次の検証に使う過去のETL ZIPと新しい解析ツールZIPを必要に応じてこちらが再提供する。ユーザーに古いファイルの保存継続を要求しない。
 
+> **2026-10-30 23時台の最新状態（過去記述に優先）:** 新しい実機ETLレポート CPU_AllProcesses_20261030_230208_049.txt は正常。PID不明は249,525件（54.72%）→9,888件（2.17%）へ改善したが、プロセス名不明は293,247件（64.31%）で不変。既存提出ZIPのProcess_CPU_1s.csvとの照合により PID936=explorer 70,212件、PID10084=Photos 5,034件を識別。未識別は同一PID再利用なしの前提付きで218,001件（47.81%）。PID11664の87,383件（19.16%）は依然不明。ProcessEnd/DCStopからの名前収集を追加、Actions #41069110425 SUCCESS。**実機での追加改善率は未確認、CPU100%は未解決、新規MSIは保留。**
+
 ## 0. 新しいチャット用の最短開始指示
 
 「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
@@ -300,3 +302,16 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - Microsoft PerfView のPID lifetimeとCPUサンプル帰属実装: https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Computers/TraceProcess.cs
 - PerfView TraceEvent programmer guide: https://github.com/microsoft/perfview/blob/main/documentation/TraceEvent/TraceEventProgrammersGuide.md
 - Microsoft Xperfプロセス/スレッドCPU集計にはLOADER+PROC_THREAD+PROFILE必要: https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/cpu-sampling-by-process
+
+## 17. 2026-10-30 23時台：実機v2提出の分析、過去ZIPとの交差照合、ProcessEnd側の追加改善
+
+- **受領したユーザー実機レポート**: CPU_AllProcesses_20261030_230208_049.txt。既存の元ZIPはChatGPTライブラリから回収できている。追加録画も、過去の大容量ファイル長期保存もユーザーに要求しない。
+- スレッドID付き456,016件。RawPID206,491件、UniqueTIDからの遅延PID復元239,637件、なおPID不明9,888件（2.17%）。前版のPID不明249,525件（54.72%）に比べ大幅減少。しかし**名前不明293,247件（64.31%）は変わらない**。
+- 内訳の大きいPIDは、不明PID11664=87,383件（19.16%）、不明PID936=70,212件（15.40%）、dllhost PID3284=89,373件（19.60%）。Photos全体62,848件（13.78%）、dllhost全体92,114件（20.20%）。これは**CPUサンプルの構成比**でありPC全体CPU%ではない。
+- 元ZIP内のProcess_CPU_1s.csvを当方で直接読み直し、PID936がexplorer（228行、11:30:17〜11:33:35 UTC）、PID10084がPhotos（31行、11:30:17〜11:30:43 UTC）と同じ採取セッションで確認。v2の不明名70,212+5,034=75,246件は別記録で識別でき、条件付きの未識別は293,247-75,246=218,001件（47.81%）。ただし**ETL内部の名前解決が直ったわけではない**。PID11664は同梱CPU CSVに現れず、実行名不明。PID4もこの独立CSVでは未確認。
+- 元のCPU_WIC_Summary.txtには全フルサイズ復号71件、dllhost PID3284で64件との記載。負荷候補として有力だが、WICだけがCPU100%の全原因とは断定しない。
+- **GitHub実装**: 調査ブランチ investigate/win10-100cpu-after-1133-20261030 の解析コードを更新し、ProcessStart/DCStartに加えてProcessEnd/DCEndからも実行名を収集。同じPIDに相異なる名前がある場合は名前割当てを拒否。ProcessStartOrDCStartEvents、ProcessEndOrDCEndEvents、ConflictingNamePIDs、UniqueNamedPIDsをレポートに追加。
+- 初回CI #41068927840は自己テストの引数不足（CS7036）でFAIL。修正コミット5926c39eb8efee519dd9fdcf153815c57e643be2に対し**CI #41069110425 SUCCESS**。このCIは人工ETLの成功であり、実際の元ETLで名前不明が減ったとはまだ証明していない。
+- 詳細（匿名化済み）: https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-20261030/docs/WIN10_1133_ETL_V2_CROSSCHECK_20261030_JA.md
+- 外部根拠: Microsoft PerfViewプロセス生涯 https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Computers/TraceProcess.cs ; TraceEvent parser https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Parsers/kerneltraceeventparser.cs.base ; WPA CPU解釈 https://learn.microsoft.com/en-us/windows-hardware/test/wpt/cpu-analysis
+- **次に進む条件**: 無限に診断をやり直さず、既存のShell/dllhostフルサイズ復号削減の実装研究へも進む。追加実機検証が必要となったときだけ、過去提出ZIPと最新ツールを**当方から再添付**する。新MSIはCPU改善と安全性が確認できるまで作らない。
