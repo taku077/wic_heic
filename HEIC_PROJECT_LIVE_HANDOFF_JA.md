@@ -22,6 +22,8 @@
 
 > **2026-10-30 22:43 JST 更新（以下の過去記述より優先）:** 先にユーザーが提出した2026-10-30 20:30採取のWPR診断ZIPはChatGPTライブラリで再発見・取得済み。実機で生成されたテキスト報告 `CPU_AllProcesses_20261030_224307_303.txt` も提出済み・受領確認済み。ユーザーに旧ファイルの長期保存・再録画・再提出を求めない。現在、報告の64.31%が `(unknown)`、うち54.72%がPID不明のため、**全プロセスCPU帰属が確定したとは言わない**。次工程は**解析コードのプロセス／スレッド帰属の調査**であり、ユーザーの提出方法は正常。古い「元ETLがないので解析できない」は失効。
 
+> **2026-10-30 最終追記：** Windows10実機から提出済みの `CPU_AllProcesses_20261030_224307_303.txt` では全スレッド付きサンプル456,016件中293,247件（64.31%）が名前不明。既存ETLを再取得して（追加録画不要）解析方法を見直し、研究ブランチ `investigate/win10-100cpu-after-1133-20261030` HEAD `60c55f718343fbe7661fa6f64edb4a6e284a95a0` で**ETL終了後にrundownで遅延帰属する保守的修正**、CI #41067460713 SUCCESS。**同じ実機ETLでの改善度は未確認、CPU100%も未解決**。次の検証に使う過去のETL ZIPと新しい解析ツールZIPを必要に応じてこちらが再提供する。ユーザーに古いファイルの保存継続を要求しない。
+
 ## 0. 新しいチャット用の最短開始指示
 
 「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
@@ -257,5 +259,44 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - 受領レポート：`CPU_AllProcesses_20261030_224307_303.txt`（匿名化済みテキスト）。対応ETL記録時間2026-10-30 11:30:14〜11:33:18 UTC、論理CPU4、サンプル全461551／スレッドIDあり456016／不明または0が5535。
 - **サンプル内訳**：プロセス名不明293247（64.31%）、dllhost 92114（20.20%）、Photos 62848（13.78%）。これらは**スレッドID付きサンプル内の構成比**であり、タスクマネージャーのCPU使用率でもプロセスCPU使用率でもない。
 - **重大な未解決課題**：293247サンプルがプロセス名不明。そのうちPIDも不明249525サンプル（54.72%）。`Unnamed=0` は実際には名前が完全取得できたという意味ではなく、文字列 `(unknown)` が既に代入されているためカウンタが増えない可能性がある。GitHubの`tools/etl_cpu_top/Program.cs` における `e.ProcessID` と `ThreadStartGroup` 由来PIDマッピング、および`e.ProcessName` によるフォールバックの精度を検証する。
-- **判断**：提出されたレポートは正常に生成・提出されている。これ以上のユーザー操作を要求せず、既存提出ZIP・レポートをこちらから再取得して利用する。主要CPU寄与の全容は現レポートだけでは未確定。実機で報告されたCPU100%未解決。
+- **判断（当時の状態）**：提出されたレポートは正常に生成・提出されている。過去の提出ZIP・レポートはこちらで再取得して利用する。主要CPU寄与の全容は現レポートだけでは未確定。実機で報告されたCPU100%未解決。なお次の第16節で改善版の実機再解析が必要となり、元ZIPもツールもこちらから改めて提供することにした。
 - **参考実装**：Microsoft PerfView のProcess/Thread lifetime tracking https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Computers/TraceProcess.cs 、Microsoft ETW Process rundown https://learn.microsoft.com/en-us/windows/win32/etw/process 、Microsoft WPA CPU sampled https://learn.microsoft.com/en-us/windows-hardware/test/wpt/cpu-analysis 。
+
+## 16. 2026-10-30：提出済みETLレポート(unknown)64.31%の保守的修復研究
+
+**実装先端**：`investigate/win10-100cpu-after-1133-20261030` / `60c55f718343fbe7661fa6f64edb4a6e284a95a0`。  
+**Windows CI**：https://github.com/taku077/wic_heic/actions/runs/41067460713 **SUCCESS**。  
+**製品コード**：変更なし。ユーザー実機のCPU100%問題は**依然未解決**。
+
+### 旧レポートと元ファイルの確認
+
+- ユーザー提出 `CPU_AllProcesses_20261030_224307_303.txt`：取得サンプル461,551、ThreadID付き456,016、ThreadIDなし5,535。
+- ThreadID付きサンプルの割合：`(unknown)` 293,247 (64.31%)、`dllhost` 92,114 (20.20%)、`Photos` 62,848 (13.78%)。**これらはCPU使用率%ではない**。
+- 不明293,247のうち249,525件はPID自体が不明。さらに `(unknown) [PID 936]` 31,350件は、**同じ提出済みZIP内の`Process_CPU_1s.csv`でPID936が`explorer`と確認できる**。これは旧レポートのプロセス名帰属が不完全である確かな一例。ただし単純に同PIDを全て自動再帰属した数値は新レポートが出るまで断定しない。
+- 元ZIP `COM_CPU_WPR_Manual_20261030_203013_576.zip`（213,993,795 bytes、CRC PASS）をユーザー過去アップロードから再取得済み。中の `CPU_Stacks.etl` は1,500,512,256 bytes。**このデータをGitHubに公開していない。**
+- 同じZIP内の `CPU_WIC_Summary.txt` ではフル復号71回、dllhost PID3284のフル復号64回、同PIDのCPUサンプラー平均16.76%、最大45%（特定プロセスサンプラー値）。相関だけでWIC関数のCPU100%原因と断定しない。
+
+### 新実装（無駄な再測定を避ける）
+
+- `tools/etl_cpu_top/Program.cs` を更新。旧ツールはサンプル到着時にプロセス名が不明だと即`(unknown)`へ固定していた。
+- 新版はCPUサンプルを`PID・TID・10秒区間`単位でメモリ上だけに集計し、**ETLの全プロセス/スレッドrundownを読み終えた後**にまとめて帰属。ETL原本の上書きも新たなETLファイル生成もしない。
+- `KernelImageFileName` を利用してプロセス名取得を改善。ThreadIDが後段に記録され、**当該TIDが全記録中でただ一つのPIDへ対応する場合に限り**後から復元。別PIDに再利用されたTIDは**復元禁止**、不明のまま残す。
+- 新レポートに`AttributionRawPID`、`DeferredUniqueTIDRecovered`、`PIDUnresolved`、`ThreadIDsAmbiguous`を追加。旧`Unnamed=0`の過小計数も修正。
+- 人工短時間WPR ETL、同名dllhost PID別集計、Windows PowerShell 5.1日本語起動、ファイル上書き防止をCIで検査。GitHub Actions #41067460713 SUCCESS。
+- **注意**：ThreadIDが全体で再利用されたケースは帰属しないので`unknown`が残る場合がある。ETW採取時点で欠落した情報は、ソフト側だけで正しく復元できない。`(unknown)`の64.31%が全て解消するとは主張しない。
+- CPUサンプルの比率はWPA CPU utilizationやTask Manager CPU%と同義でない。実機で新報告を受け取るまではv2の効果未証明。
+
+### 再配布済み成果物・次のゲート
+
+- CI由来のv2解析ツールを一フォルダにまとめた `WicHeic_CPU_Attribution_V2_PS51_20261030.zip`（3,340,715 bytes、CRC PASS、PowerShell 5.1起動PS1のUTF-8 BOM検証、SHA-256 `04bb68965c0ad8a09ac308e928d23220399138031c94671c6965adf0a72cb813`）。これはChatGPT添付であり、**将来のチャットでは今のsandboxリンクを推測して再利用しない**。
+- 先に提出済みETLの元ZIPもこちらが用意。必要な時は2ファイルのダウンロードリンクを**同じ回答文で再提供する**。1.5GBの一時展開スペースが必要であることを明示。
+- 次の有意なゲートは、**同じ2026-10-30 ETLでv2の小さいCPU_AllProcessesテキストを生成**し、不明・PID復元・dllhost/Photos/Explorerの増減を比較すること。新WPR録画は不要。匿名化されたTXTのみ共有し、元ETLは処理後に削除可能。
+- 失敗時は新ETLを要求せず、ツールの障害を直す。Windows10実機合格までは「実機動作確認済み」と扱わない。重大なCPU負荷改善がないなら新MSIは配布しない。
+
+### 横断調査した一次資料
+
+- Microsoft ETW ThreadイベントとDCStart/DCStop、ヘッダーPID/TIDが異なる場合の注意: https://learn.microsoft.com/ja-jp/windows/win32/etw/thread
+- Microsoft WPA sampled CPUの意味・DPC/ISRの限界: https://learn.microsoft.com/en-us/windows-hardware/test/wpt/cpu-analysis
+- Microsoft PerfView のPID lifetimeとCPUサンプル帰属実装: https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Computers/TraceProcess.cs
+- PerfView TraceEvent programmer guide: https://github.com/microsoft/perfview/blob/main/documentation/TraceEvent/TraceEventProgrammersGuide.md
+- Microsoft Xperfプロセス/スレッドCPU集計にはLOADER+PROC_THREAD+PROFILE必要: https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/cpu-sampling-by-process
