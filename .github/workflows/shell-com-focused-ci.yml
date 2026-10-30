@@ -104,13 +104,27 @@ jobs:
             # On a real synthetic 8x6 HEIF grid: compare embedded-only
             # preview to normal full master pixels without enabling the
             # grid fast path or altering any user HEIC file.
-            $gridShadow=@(& $exe --shell-grid-shadow)
-            if($LASTEXITCODE -ne 0 -or
-               -not (($gridShadow -join ' ') -match 'CI_GRID48_EMBEDDED_SHADOW_QUALITY_PASS_NO_FASTPATH_CHANGE') -or
-               -not (($gridShadow -join ' ') -match 'CI_GRID_SHADOW_EMBEDDED_DECODED_BEFORE_MASTER_PASS')){
-               throw ('Grid 48-tile preview-vs-full-WIC comparison failed: '+($gridShadow -join ' | '))
+            $gridTrace=Join-Path $env:RUNNER_TEMP 'wicfast_grid_shadow_events.txt'
+            if(Test-Path -LiteralPath $gridTrace){throw 'Refuse stale grid shadow trace'}
+            $env:WIC_HEIC_TRACE_FILE=$gridTrace
+            try {
+              $gridShadow=@(& $exe --shell-grid-shadow)
+              if($LASTEXITCODE -ne 0 -or
+                 -not (($gridShadow -join ' ') -match 'CI_GRID48_EMBEDDED_SHADOW_QUALITY_PASS_NO_FASTPATH_CHANGE') -or
+                 -not (($gridShadow -join ' ') -match 'CI_GRID_SHADOW_EMBEDDED_DECODED_BEFORE_MASTER_PASS')){
+                 throw ('Grid 48-tile preview-vs-full-WIC comparison failed: '+($gridShadow -join ' | '))
+              }
+              $gridShadow | ForEach-Object {Write-Host $_}
+            } finally {
+              Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
             }
-            $gridShadow | ForEach-Object {Write-Host $_}
+            $gridEvents=Get-Content -LiteralPath $gridTrace -Raw
+            $gridFull=([regex]::Matches($gridEvents,'event=DecoderFullDecode width=4032 height=3024')).Count
+            $gridThumb=([regex]::Matches($gridEvents,'event=DecoderThumbnailEmbedded ')).Count
+            if($gridFull -ne 1 -or $gridThumb -lt 1){
+              throw ('Grid shadow full-primary/embedded counters unexpected: full='+$gridFull+' thumb='+$gridThumb)
+            }
+            Write-Host "CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=$gridFull embedded=$gridThumb"
             $env:WIC_HEIC_TRACE_FILE=$trace
             & $exe --shell-thumb-provider-fallback
             if($LASTEXITCODE -ne 0){throw 'Fallback native assertions failed'}
