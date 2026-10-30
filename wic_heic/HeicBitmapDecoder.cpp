@@ -118,9 +118,16 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
             GetEnvironmentVariableW(
                 L"WIC_HEIC_THUMB_TEST_SHELL",ciShell,4)==1 &&
                 ciShell[0]==L'1';
+        wchar_t photoSimulation[4]{};
+        const bool photosCI=(GetEnvironmentVariableW(
+             L"GITHUB_ACTIONS",ciFlag,12)==4 && wcscmp(ciFlag,L"true")==0 &&
+             GetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",
+                                      photoSimulation,4)==1 &&
+             photoSimulation[0]==L'1');
+        const bool isPhotos=PhotosPureRotationBridge::IsWindowsPhotosHost() || photosCI;
         if(sys.dwNumberOfProcessors==4u &&
            ((exeLength && exeLength<MAX_PATH &&
-             _wcsicmp(exeName,L"dllhost.exe")==0) || simulation))
+             _wcsicmp(exeName,L"dllhost.exe")==0) || simulation || isPhotos))
             m_Context.set_max_decoding_threads(2);
         m_Context.read_from_reader(*m_Reader);
         WicHeicDiagnostic::Emit("DecoderTileBudget",0,0,0,0,
