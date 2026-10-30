@@ -23,6 +23,16 @@ inline unsigned Select(unsigned width, unsigned height, int lumaBits,
     if (alreadyDecoding == 1u && logicalCpus >= 6u) return 2u;
     return 0u;
 }
+// Explorer COM Surrogate CPU-pressure compromise for 2-core / 4-thread PCs.
+// A 4-worker cold decode occupied ~3.46 logical cores in artificial CI;
+// 2 workers occupied ~1.88 while consuming fewer total CPU milliseconds.
+// Preserve every image-format safety gate and other process policies.
+inline unsigned SelectForShellCpuBudget(unsigned w,unsigned h,int luma,
+                                        int chroma,bool alpha,unsigned cpus,
+                                        unsigned active) noexcept {
+    const unsigned selected=Select(w,h,luma,chroma,alpha,cpus,active);
+    return cpus==4u && selected==4u ? 2u : selected;
+}
 // Photos' UI needs CPU headroom. Preserve Explorer's 4-worker fast path.
 // Zero means the unmodified libheif default, not zero codec threads.
 inline unsigned SelectForPhotos(unsigned w,unsigned h,int luma,int chroma,
