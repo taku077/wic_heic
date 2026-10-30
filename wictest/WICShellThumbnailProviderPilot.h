@@ -418,6 +418,89 @@ inline void RunFallback() {
     test(L"wicfast_with_icc_4032x3024.heic",256,256,192);
     std::puts("CI_SHELL_LAB_ICC_PRIMARY_FALLBACK_PASS");
 }
+// CI-only shadow comparison for a GENUINE 48-tile HEIC. No Shell fast
+// path is enabled here: this tests if direct WIC embedded preview pixels
+// are close enough to the full WIC image to justify a future guarded grid
+// optimization. The production provider stays fail-closed for grid/ICC/HDR.
+inline void RunGridEmbeddedShadow() {
+    wchar_t temp[32768]{};
+    const DWORD n=GetEnvironmentVariableW(L"RUNNER_TEMP",temp,32768);
+    Need(n>0&&n<32768,"CI grid shadow runner folder missing");
+    wchar_t actions[16]{};
+    Need(GetEnvironmentVariableW(L"GITHUB_ACTIONS",actions,16)==4 &&
+         wcscmp(actions,L"true")==0,"Grid shadow strictly CI only");
+    const std::wstring path=std::wstring(temp,n)+L"\\wicfast_with_grid_4032x3024.heic";
+    CComPtr<IWICImagingFactory> factory;
+    Need(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,
+          IID_PPV_ARGS(&factory))),"Cannot create WIC grid shadow factory");
+    CComPtr<IWICStream> stream;
+    Need(SUCCEEDED(factory->CreateStream(&stream)) &&
+         SUCCEEDED(stream->InitializeFromFilename(path.c_str(),GENERIC_READ)),
+         "Cannot open genuine CI grid HEIC");
+    Need(!WicShellLabSafety::FromStream(stream),
+         "Safety gate unexpectedly admitted an unvalidated grid image");
+    CComPtr<IWICBitmapDecoder> decoder;
+    Need(SUCCEEDED(CoCreateInstance(CLSID_HEICDecoder,nullptr,CLSCTX_INPROC_SERVER,
+         IID_PPV_ARGS(&decoder))) &&
+         SUCCEEDED(decoder->Initialize(stream,WICDecodeMetadataCacheOnDemand)),
+         "Cannot decode CI grid HEIC via WIC");
+    CComPtr<IWICBitmapFrameDecode> frame;
+    Need(SUCCEEDED(decoder->GetFrame(0,&frame)),"No grid master frame");
+    UINT mw=0,mh=0;
+    Need(SUCCEEDED(frame->GetSize(&mw,&mh)) && mw==4032&&mh==3024,
+         "Grid master geometry mismatch");
+    UINT icc=0;
+    Need(SUCCEEDED(frame->GetColorContexts(0,nullptr,&icc)) && icc==0,
+         "Grid fixture unexpectedly contains ICC color profile");
+    CComPtr<IWICBitmapSource> thumb;
+    Need(SUCCEEDED(decoder->GetThumbnail(&thumb)) && thumb,
+         "Grid master has no directly accessible embedded HEVC thumbnail");
+    UINT tw=0,th=0;
+    Need(SUCCEEDED(thumb->GetSize(&tw,&th)) && tw==320&&th==240,
+         "Grid thumbnail geometry mismatch");
+    // Both images traverse exactly the same WIC scaler and BGRA converter.
+    // The full-frame route is deliberately used here as the reference only.
+    auto render=[&](IWICBitmapSource* source,UINT w,UINT h)->std::vector<BYTE>{
+        CComPtr<IWICBitmapScaler> scaler;
+        Need(SUCCEEDED(factory->CreateBitmapScaler(&scaler)) &&
+             SUCCEEDED(scaler->Initialize(source,256,192,WICBitmapInterpolationModeFant)),
+             "Grid shadow scaler failed");
+        CComPtr<IWICFormatConverter> rgba;
+        Need(SUCCEEDED(factory->CreateFormatConverter(&rgba)) &&
+             SUCCEEDED(rgba->Initialize(scaler,GUID_WICPixelFormat32bppBGRA,
+                 WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom)),
+             "Grid shadow BGRA converter failed");
+        std::vector<BYTE> pixels(256u*192u*4u);
+        Need(SUCCEEDED(rgba->CopyPixels(nullptr,256u*4u,
+             static_cast<UINT>(pixels.size()),pixels.data())),
+             "Grid shadow CopyPixels failed");
+        return pixels;
+    };
+    // Embedded preview BEFORE the full image: decode logs can prove it
+    // does not force HEVC full-primary decompression.
+    const auto preview=render(thumb,tw,th);
+    std::puts("CI_GRID_SHADOW_EMBEDDED_DECODED_BEFORE_MASTER_PASS");
+    const auto baseline=render(frame,mw,mh);
+    double sum=0;
+    unsigned intense=0;
+    for(int iy=0;iy<64;++iy)for(int ix=0;ix<64;++ix){
+        const auto pos=(size_t(iy*3)*256+size_t(ix*4))*4;
+        for(int channel=0;channel<3;++channel){
+            int delta=abs(int(preview[pos+channel])-int(baseline[pos+channel]));
+            sum+=delta;
+            if(delta>20)intense++;
+        }
+    }
+    const double mae=sum/(64.0*64.0*3.0);
+    const double significant=100.0*double(intense)/(64.0*64.0*3.0);
+    std::printf("CI_GRID48_EMBEDDED_VS_MASTER_SHADOW rgb_mae_64=%.3f pixels_gt20_percent_64=%.3f "
+                "preview=%ux%u primary=%ux%u\n",mae,significant,tw,th,mw,mh);
+    // Gate intentionally compares pixels; it does NOT enable the optimized
+    // path for any real grid image yet.
+    Need(mae<=1.0 && significant<=0.5,
+         "Genuine grid preview color / geometry differs from primary WIC");
+    std::puts("CI_GRID48_EMBEDDED_SHADOW_QUALITY_PASS_NO_FASTPATH_CHANGE");
+}
 inline void Run() {
     wchar_t temp[32768]{};
     const auto n=GetEnvironmentVariableW(L"RUNNER_TEMP",temp,32768);
