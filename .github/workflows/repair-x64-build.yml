@@ -19,6 +19,7 @@ on:
       - experiment/embedded-hevc-thumb-path-20261029
       - candidate/photos-responsive-1130-win10
       - experiment/shell-real-embedded-thumbnail-20261029
+      - experiment/photos-grid-cpu-budget-20261030
   workflow_dispatch:
 
 permissions:
