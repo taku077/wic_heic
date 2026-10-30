@@ -37,7 +37,9 @@ public:
     void read_from_reader(heif::Context::Reader& stream) {
         // Preserve libheif's documented version-1 callbacks byte-for-byte
         // rather than copying or buffering the underlying WIC IStream.
-        const heif_reader callbacks{1,&Position,&Read,&Seek,&Wait,
+        // libheif may retain the callback TABLE for lazy tile decoding.
+        // Keep the table alive for the entire process, not on the stack.
+        static const heif_reader callbacks{1,&Position,&Read,&Seek,&Wait,
                                     nullptr,nullptr,nullptr,nullptr};
         Check(heif_context_read_from_reader(m_Ctx,&callbacks,&stream,nullptr));
     }
