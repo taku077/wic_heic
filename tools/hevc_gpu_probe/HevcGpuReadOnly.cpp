@@ -16,6 +16,7 @@
 #include <cstring>
 
 #pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxguid.lib") // SDK-defined HEVC decoder profile GUIDs
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
 #pragma comment(lib, "ole32.lib")
