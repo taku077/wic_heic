@@ -31,7 +31,7 @@
 |Explorer grid CPU研究|`experiment/shell-cpu-work-reduction-20261030` / `2c26f94b912b5038d4b2ddc740348d4a0df2f735`|Shell CPU計測専用実験。|
 |v1.1.32比較候補|`candidate/explorer-grid-cpu-1132-win10` / `2c7878a2671e9616dd32ae72a707c36b99d8fcca`|COM Surrogateでタイル2/codec1の評価。|
 |**v1.1.33実機評価候補**|`candidate/photos-grid-cpu-1133-win10` / `0580b959a684cc63a305aa5c24478ddb2a7359a9`|Photosの48タイルgridを4/2→2/1に制限。Actions #41046215352 SUCCESS。**実機CPU100%は未解決**。|
-|**直近作業の先端**|`investigate/win10-100cpu-after-1133-20261030` / `1b3cf460436ad23e7a7cc39cff1c8fadef4b31a4`|既存WPR ETLから全プロセス・同名プロセスPID別のCPUサンプルを集計するオフライン診断ツール。Actions #41057776963 **SUCCESS**。実ユーザーETLでの解析結果は**未取得／未確認**。|
+|**直近作業の先端**|`investigate/win10-100cpu-after-1133-20261030` / `9afd5576890c545cddbd732ce89485d6a5c81d73`|既存WPR ETLから全プロセス・同名プロセスPID別のCPUサンプルを集計するオフライン診断ツール。Actions #41059547959 **SUCCESS**。PID別集計に加えて10秒ごとの全サンプル・ThreadID不明数を表示。実ユーザーETLでの解析結果は**未取得／未確認**。|
 
 **重要**：メインの作業先端は過去の `fix/photos-118-selfwic-incremental` や10月29日の引継ぎ記載SHAではない。研究ブランチと安全性本線を混同しない。新チャットでは `compare` と最新CIを確認してから変更を提案する。
 
@@ -156,3 +156,28 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - libheifのグリッドタイル並列とコーデック内部並列は別のCPU調整対象であり、0指定の意味も異なる： https://github.com/strukturag/libheif/security/advisories/GHSA-prgh-72vc-3xmc
 
 **次の作業開始点：** 既存の2026-10-30 20:30 WPR `CPU_Stacks.etl` に対してPID別/10秒区間の解析結果を得て、高負荷がPhotos／dllhost／System／その他のどこに集中するかを特定する。**新しい長時間録画を要求しない。** 利用できない場合は未確認を維持し、同じ仮説の無限反復や無意味なMSI発行はしない。CPU100%問題は引き続き**未解決**。
+
+## 10. 2026-10-30 22時台：ETLサンプル帰属の正確性改善とテスト結果（今回の新しい作業）
+
+**作業ブランチ**：`investigate/win10-100cpu-after-1133-20261030`  
+**HEAD**：`9afd5576890c545cddbd732ce89485d6a5c81d73`  
+**CI**： https://github.com/taku077/wic_heic/actions/runs/41059547959 **SUCCESS** （Windows Server 2022、人工短時間WPR ETL）  
+**製品コード・MSI**：変更なし。CPU100%は**実機未解決**。
+
+### 今回の修正
+
+- 旧解析ツールは `PerfInfoSample` のThreadID<=0サンプルを10秒窓の集計前に捨てていた。このため、サンプルがどれだけ帰属不能だったか分からなかった。**全受信サンプルを先に時間窓へ収容し、ThreadID付きサンプル/ThreadID不明または0のサンプルの双方を出力**するよう変更。
+- プロセスごとの比率は「**ThreadID付きCPUサンプルの中での割合**」であって、タスクマネージャーの「PC全体CPU％」とは違う。**ThreadID=0の件数を全アイドル時間の直接測定と呼ばない**。ETWの短いDPC/ISR／欠落イベントの制約も明記。
+- 先に導入済みのPID別区別と報告ファイル上書き防止は維持。 `--self-test` では2つの同名dllhost PIDとThreadID不明イベントの件数を検証。
+- CIでは出力ラベルを `NonIdle` から `WithThreadID` へ変更した際、**初回コミット `a172b0c` の旧テストが期待ラベルを取り違えてFAIL**。次のコミット `c931848` で新フォーマットの必須項目を判定するテストに修正し、最新コミットのCIでSUCCESS。これは**ETLパーサの解析失敗ではなくテストの期待出力不一致**。同じ失敗を再調査・再実装しない。
+- 合成CI検証の成果物（有効期限7日のGitHub Actions artifact）：`WicHeic-Offline-Existing-ETL-CPU-Reader-ReadOnly-UNVERIFIED`。ZIPは36ファイル、ZIP CRC PASS。ダウンロード時SHA-256：`31d97330e1de39cc14ba17fd618c7fd7ee6aa7e1061e71198faab6316405e0e8`。
+- **実際のWin10 1.1.33の1.5GB ETLをこのツールで解析したという事実はない**。ユーザーが既存 `CPU_Stacks.etl` を選択すると、同じフォルダーに新規 `CPU_AllProcesses_*.txt` を作り、元ETLや画像は一切変更しない。報告TXTも共有前レビューを勧める。新しいWPR録画は不要。
+
+### 今回追加で照合した一次資料
+
+- Microsoft Windows Performance Analyzer CPU Usage (Sampled) はCPUサンプルのウェイト・プロセスとスレッド帰属を表示する一方、短いDPC/ISRはサンプリングで十分表現されないことがある: https://learn.microsoft.com/en-us/windows-hardware/test/wpt/cpu-analysis
+- Microsoft PerfView は `PerfInfoSample` のThreadID0を除外する例とプロセス生涯の追跡を持つ: https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Computers/TraceProcess.cs
+- TraceEventプログラマーガイド、ETWTraceEventSource とカーネルイベント解析: https://github.com/microsoft/perfview/blob/main/documentation/TraceEvent/TraceEventProgrammersGuide.md
+- WindowsのWPR/WPAで利用できるプロセス・スレッド／割り込み負荷分類: https://github.com/MicrosoftDocs/SupportArticles-docs/blob/main/support/windows-server/support-tools/support-tools-xperf-wpa-wpr.md
+
+**次の本質的なタスク**：ユーザーの2026-10-30 20:30 ETLを再録画せずローカル集計し、CPU負荷の内訳（Photos各PID、複数dllhost、System、その他、ThreadID不明）を確認。その結果を起点にWIC/libheif側のフル解像度デコード削減・GPU利用可否の研究優先順位を決める。単純なworker数変更とMSI乱発は継続して避ける。
