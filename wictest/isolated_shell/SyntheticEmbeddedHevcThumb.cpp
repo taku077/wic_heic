@@ -31,12 +31,14 @@ int wmain(int argc,wchar_t** argv) {
         Require(argc==2 || argc==3,"Expected output path and optional --without-thumbnail");
         const bool noThumb=argc==3 && wcscmp(argv[2],L"--without-thumbnail")==0;
         const bool withIcc=argc==3 && wcscmp(argv[2],L"--with-icc")==0;
-        Require(argc==2 || noThumb || withIcc,"Invalid optional mode");
+        const bool withAlpha=argc==3 && wcscmp(argv[2],L"--with-alpha")==0;
+        Require(argc==2 || noThumb || withIcc || withAlpha,"Invalid optional mode");
         Require(Env(L"GITHUB_ACTIONS")==L"true","Test generation is CI only");
         const auto root=Env(L"RUNNER_TEMP");
         Require(!root.empty(),"No CI runner temporary folder");
         const std::wstring exact=root+(noThumb?L"\\wicfast_no_thumb_4032x3024.heic":
                  withIcc?L"\\wicfast_with_icc_4032x3024.heic":
+                 withAlpha?L"\\wicfast_with_alpha_4032x3024.heic":
                          L"\\wicfast_embedded_4032x3024.heic");
         Require(_wcsicmp(argv[1],exact.c_str())==0,"Refuse non-CI output path");
         Require(GetFileAttributesW(argv[1])==INVALID_FILE_ATTRIBUTES,
@@ -59,6 +61,14 @@ int wmain(int argc,wchar_t** argv) {
                 row[3*x+1]=colors[q][1];
                 row[3*x+2]=colors[q][2];
             }
+        }
+        if(withAlpha) {
+            source.add_plane(heif_channel_Alpha,kWidth,kHeight,8);
+            size_t alphaStride=0;
+            auto* alpha=source.get_plane2(heif_channel_Alpha,&alphaStride);
+            Require(alpha&&alphaStride>=size_t(kWidth),"Alpha test plane invalid");
+            for(int y=0;y<kHeight;y++)for(int x=0;x<kWidth;x++)
+                alpha[size_t(y)*alphaStride+x]=uint8_t(64+((x/17+y/19)%192));
         }
         if(withIcc) {
             const std::filesystem::path profile=L"wictest/samples/Synthetic_sRGB_ICC_from_LittleCMS.icc";
@@ -88,6 +98,10 @@ int wmain(int argc,wchar_t** argv) {
         verify.read_from_file(filename);
         auto primary=verify.get_primary_image_handle();
         const auto ids=primary.get_list_of_thumbnail_IDs();
+        if(withAlpha){
+            Require(heif_image_handle_has_alpha_channel(primary.get_raw_image_handle())!=0,
+                    "Encoded synthetic alpha was lost");
+        }
         if(withIcc){
             Require(heif_image_handle_get_raw_color_profile_size(primary.get_raw_image_handle())>=132,
                     "ICC unexpectedly discarded in encoded primary HEIF item");
