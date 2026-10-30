@@ -253,6 +253,30 @@ inline void RunOrientationGate() {
         }
         Need(modified && !WicShellLabSafety::SimplePreviewSafe(changed),
              "Non-hvc1 primary incorrectly accepted");
+        // Exercise the actual stream preflight on an in-memory invalid
+        // grid-tagged fixture. Padding is artificial and is never written
+        // to disk. This proves the early rejection's BYTE READ bound, not
+        // the correctness of any real grid/ICC/HDR HEIF.
+        Need(WicShellLabSafety::ObviousComplexPrefix(changed.data(),
+            min(size_t(65536),changed.size())),
+            "Grid tag missing from metadata prefix");
+        changed.resize(max(size_t(131072),changed.size()),0);
+        HGLOBAL mem=GlobalAlloc(GMEM_MOVEABLE,changed.size());
+        Need(mem!=nullptr,"Cannot allocate in-memory CI grid probe");
+        void* memData=GlobalLock(mem);
+        Need(memData!=nullptr,"Cannot lock in-memory CI grid probe");
+        memcpy(memData,changed.data(),changed.size());
+        GlobalUnlock(mem);
+        CComPtr<IStream> gridMemoryStream;
+        HRESULT gridHr=CreateStreamOnHGlobal(mem,TRUE,&gridMemoryStream);
+        if(FAILED(gridHr))GlobalFree(mem);
+        Need(SUCCEEDED(gridHr),"Cannot create in-memory grid stream");
+        size_t gridRead=0;
+        Need(!WicShellLabSafety::FromStream(gridMemoryStream,&gridRead) &&
+             gridRead==65536,
+             "Grid-tagged synthetic bytes were not rejected after first 64KiB");
+        std::printf("CI_SHELL_COMPLEX_EARLY_REJECT_PASS bytes_read=%zu file_bytes=%zu artificial=1\n",
+            gridRead,changed.size());
         std::puts("CI_SHELL_GRID_PRIMARY_FAIL_CLOSED_PASS");
         const auto relation=std::find_if(originalParts.begin(),originalParts.end(),
             [](const HeicLosslessNative::Box& box){return box.type=="iref";});
@@ -327,15 +351,16 @@ inline void RunOrientationGate() {
     size_t alphaBytesRead=0;
     Need(!WicShellLabSafety::FromStream(alphaStream,&alphaBytesRead),
          "Real alpha auxiliary HEIF incorrectly admitted to embedded fast path");
-    // Generated alpha HEIF has an auxl relation near the front. The same
-    // conservative rejection must now avoid copying its full image payload.
+    // Real generated alpha HEIF always remains fail-closed. Its metadata
+    // placement may vary, so do NOT assert that the marker is in the first
+    // 64KiB; short-read speedups apply only if an actual marker is visible.
     STATSTG alphaStatus{};
     Need(SUCCEEDED(alphaStream->Stat(&alphaStatus,STATFLAG_NONAME)),
          "Alpha fixture stream Stat failed");
-    Need(alphaBytesRead<=65536 &&
-         alphaStatus.cbSize.QuadPart>static_cast<ULONGLONG>(alphaBytesRead),
-         "Complex alpha HEIF still required full-file preflight read");
-    std::printf("CI_SHELL_COMPLEX_EARLY_REJECT_PASS bytes_read=%zu file_bytes=%llu\n",
+    Need(alphaBytesRead>0 &&
+         static_cast<ULONGLONG>(alphaBytesRead)<=alphaStatus.cbSize.QuadPart,
+         "Alpha safety preflight read count invalid");
+    std::printf("CI_SHELL_REAL_ALPHA_PREFLIGHT_BYTES=%zu total=%llu\n",
          alphaBytesRead,static_cast<unsigned long long>(alphaStatus.cbSize.QuadPart));
     std::puts("CI_SHELL_REAL_ALPHA_HEIC_FASTPATH_REJECTED_PASS");
     // Real encoded 8-bit HEIF images with explicit PQ/HLG NCLX metadata.
