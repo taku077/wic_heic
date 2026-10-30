@@ -457,6 +457,65 @@ inline void RunGridEmbeddedShadow() {
     Need(WicShellLabSafety::ResearchGrid48FromStream(stream),
          "Strict CI-only SDR grid48 metadata gate incorrectly rejected a genuine fixture");
     std::puts("CI_GRID48_STRICT_METADATA_GATE_PASS");
+    // Negative mutations are made only in memory from a genuine generated
+    // grid; never modify any user image, existing file, or CI fixture.
+    STATSTG st{};
+    Need(SUCCEEDED(stream->Stat(&st,STATFLAG_NONAME)) &&
+         st.cbSize.QuadPart<24ull*1024ull*1024ull,
+         "CI grid metadata fixture size invalid");
+    HeicLosslessNative::Bytes raw(static_cast<size_t>(st.cbSize.QuadPart));
+    LARGE_INTEGER zero{};
+    Need(SUCCEEDED(stream->Seek(zero,STREAM_SEEK_SET,nullptr)),
+         "CI grid stream reset failed");
+    ULONG got=0;
+    Need(SUCCEEDED(stream->Read(raw.data(),static_cast<ULONG>(raw.size()),&got)) &&
+         got==raw.size(),"CI grid metadata bytes not readable");
+    Need(WicShellLabSafety::ResearchGrid48PreviewSafe(raw),
+         "Unmodified valid grid rejected by in-memory strict gate");
+    const auto top=HeicLosslessNative::Children(raw,0,raw.size());
+    const auto meta=HeicLosslessNative::One(top,"meta");
+    const auto sub=HeicLosslessNative::Children(raw,meta.data+4,meta.end);
+    const auto iref=HeicLosslessNative::One(sub,"iref");
+    auto relations=HeicLosslessNative::Children(raw,iref.data+4,iref.end);
+    int negativeCases=0;
+    for(const auto& relation:relations)if(relation.type=="dimg"||relation.type=="thmb"){
+       auto bad=raw;
+       const char* replacement=relation.type=="dimg"?"auxl":"tmap";
+       for(int k=0;k<4;++k)bad[relation.begin+4+k]=replacement[k];
+       Need(!WicShellLabSafety::ResearchGrid48PreviewSafe(bad),
+            "Unsafe grid auxiliary or HDR relation accepted");
+       negativeCases++;
+    }
+    const auto iprp=HeicLosslessNative::One(sub,"iprp");
+    const auto iprpList=HeicLosslessNative::Children(raw,iprp.data,iprp.end);
+    const auto ipco=HeicLosslessNative::One(iprpList,"ipco");
+    const auto properties=HeicLosslessNative::Children(raw,ipco.data,ipco.end);
+    bool bitDepthRefused=false,rotationRefused=false,iccRefused=false;
+    for(const auto& property:properties){
+       if(property.type=="hvcC"&&!bitDepthRefused){
+          auto bad=raw;
+          bad[property.data+17]|=2;
+          bitDepthRefused=!WicShellLabSafety::ResearchGrid48PreviewSafe(bad);
+       }
+       if(property.type=="ispe"&&!rotationRefused){
+          auto bad=raw;
+          for(int k=0;k<4;++k)bad[property.begin+4+k]="irot"[k];
+          rotationRefused=!WicShellLabSafety::ResearchGrid48PreviewSafe(bad);
+       }
+       if(property.type=="colr"&&!iccRefused){
+          auto bad=raw;
+          for(int k=0;k<4;++k)bad[property.data+k]="prof"[k];
+          iccRefused=!WicShellLabSafety::ResearchGrid48PreviewSafe(bad);
+       }
+    }
+    Need(negativeCases==2 && bitDepthRefused && rotationRefused,
+         "Strict grid did not reject relation, 10bit, or orientation mutations");
+    // Some legal generated fixtures have no explicit colr property. When
+    // present, an ICC tag must never be allowed by the 8bit SDR research gate.
+    if(std::any_of(properties.begin(),properties.end(),
+       [](const HeicLosslessNative::Box& b){return b.type=="colr";}))
+       Need(iccRefused,"Strict grid incorrectly accepted ICC profile");
+    std::puts("CI_GRID48_NEGATIVE_RELATION_BITDEPTH_ROTATION_COLOR_PASS");
     CComPtr<IWICBitmapDecoder> decoder;
     Need(SUCCEEDED(CoCreateInstance(CLSID_HEICDecoder,nullptr,CLSCTX_INPROC_SERVER,
          IID_PPV_ARGS(&decoder))) &&
@@ -503,6 +562,46 @@ inline void RunGridEmbeddedShadow() {
     const ULONGLONG masterBegin=GetTickCount64();
     const auto baseline=render(frame,mw,mh);
     const ULONGLONG masterElapsed=GetTickCount64()-masterBegin;
+    // Test the CI-only gated IThumbnailProvider: a fresh WIC decoder MUST
+    // return a 256x192 DIB from the grid thumb without full-master decode.
+    Need(SetEnvironmentVariableW(L"WIC_HEIC_GRID48_RESEARCH",L"1")!=0,
+         "Cannot enable CI-only grid trial");
+    struct ResetGridResearchFlag {
+        ~ResetGridResearchFlag(){
+          SetEnvironmentVariableW(L"WIC_HEIC_GRID48_RESEARCH",nullptr);
+        }
+    } resetGridFlag;
+    CComPtr<IWICStream> testStream;
+    Need(SUCCEEDED(factory->CreateStream(&testStream)) &&
+         SUCCEEDED(testStream->InitializeFromFilename(path.c_str(),GENERIC_READ)),
+         "Cannot open CI-only grid stream for provider");
+    CComPtr<IThumbnailProvider> direct;
+    direct.Attach(new Provider());
+    CComPtr<IInitializeWithStream> init;
+    Need(SUCCEEDED(direct->QueryInterface(IID_PPV_ARGS(&init))) &&
+         SUCCEEDED(init->Initialize(testStream,STGM_READ)),
+         "Cannot initialize direct CI-only thumbnail provider");
+    HBITMAP bmp=nullptr;WTS_ALPHATYPE opacity=WTSAT_UNKNOWN;
+    Need(SUCCEEDED(direct->GetThumbnail(256,&bmp,&opacity)) &&
+         bmp!=nullptr && opacity==WTSAT_RGB,
+         "Strictly gated grid preview provider did not return image");
+    DIBSECTION dib{};
+    Need(GetObjectW(bmp,sizeof(dib),&dib)==sizeof(dib) &&
+         dib.dsBm.bmWidth==256&&abs(dib.dsBm.bmHeight)==192 &&
+         dib.dsBm.bmBits!=nullptr,
+         "Strictly gated grid provider geometry / DIB invalid");
+    const BYTE* dibPixels=static_cast<const BYTE*>(dib.dsBm.bmBits);
+    double dibDifference=0;
+    for(int iy=0;iy<64;++iy)for(int ix=0;ix<64;++ix) {
+       const auto pos=(size_t(iy*3)*256+size_t(ix*4))*4;
+       for(int channel=0;channel<3;++channel)
+          dibDifference+=abs(int(dibPixels[pos+channel])-int(baseline[pos+channel]));
+    }
+    DeleteObject(bmp);
+    const double providerMae=dibDifference/(64.0*64.0*3.0);
+    std::printf("CI_GRID48_DIRECT_PROVIDER_RGB_MAE=%.3f\n",providerMae);
+    Need(providerMae<=1.0,"Strict grid provider image differs from full WIC");
+    std::puts("CI_GRID48_CI_ONLY_DIRECT_PROVIDER_EMBEDDED_PASS");
     // Informational SINGLE-FIXTURE timings only: do not use as a release
     // benchmark or assert a speedup on the shared Windows CI runner.
     std::printf("CI_GRID48_WIC_RENDER_TIMING_MS embedded=%llu full_master=%llu single_sample=1\n",
