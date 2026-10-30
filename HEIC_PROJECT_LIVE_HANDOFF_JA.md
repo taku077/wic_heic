@@ -34,6 +34,8 @@
 
 > **2026-10-31最新：第21節参照。** `experiment/shell-com-focused-20261030` に、**真性48タイルgridのメタデータ本体をiloc/idatで特定・検査する実装**を追加。ヘッダーrows=6, columns=8, output=4032x3024、ispeのtile=504x504・thumbnail=320x240をすべて照合。行・列・幅・tile寸法の異常変異を拒否するCI **#41078596089 SUCCESS**。grid埋込thumbのCI専用256px高速表示、WIC復号trace全・画像品質・ICC/Exif/alpha/PQ/HLG拒否とShell登録復元もPASS。コードコミット`230efc7b8a46be30af292aebd68c78b7b87b0475`、研究文書コミット`3a21cff0ab85fdfd3c68aa0001d553529825855e`。**本番MSI未統合、Windows10実機のCPU100%未解決。** この経路は意図的に人工48タイル8bit SDR限定。次の研究は画質の高周波・自然画像近似、多様な合法HEICでの安全性と実効適格率に進む。ユーザーに過去診断ファイルの保存を前提として要求しない。
 
+> **2026-10-31 最新・最優先：第22節。** CI限定grid高速経路の実用画質を正規48tile人工HEICで追加評価。256x192全RGB147,456成分比較：`gradient` MAE=0.757、P95=2、20超差分0%。`detail`（9x11pxチェッカー＋3/5px細線）MAE=52.124、P95=113、20超差分71.433%。**どちらも同じ厳格なメタデータ適格性判定を通過**。ゆえにメタデータだけでは埋込thumbと主画像の画質が一致するとは保証できない。**一般iPhone gridへの高速パス拡大を採用せず、通常のフルWIC安全フォールバックを維持。** 最新CI #41080351783 SUCCESS。研究コード `1bba9cbc7db7669a903f0330d49cfefe6e8e0bf1`、研究文書 `513845334d9dbdd5422d521653c8275c3784185f`。**CPU100%未解決／Windows10実機未試験／MSI未配布**。今後は汎用的なHEVCフル復号CPU負荷・重複復号削減へ重点を移す。無限のgrid構造研究に戻らない。
+
 ## 0. 新しいチャット用の最短開始指示
 
 「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
@@ -389,3 +391,19 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - **次の開発作業**：合成高周波・グラデーション・非均一タイルや回転・カラー管理を含む人工合法HEIFを増やし、256px以下の描画誤差と効果を測る。結果が乏しければgrid高速化を無理に本番へ統合せず、他の全画像復号回避策に切り替える。必要な実機診断ファイルは既提出のChatGPT Libraryからこちらが回収し、必要時にツールへ同梱・別添する。ユーザーのPCに保存されている前提で依頼しない。
 
 **Windows10 CPU100%は未解決。安全なCI限定研究が進展した段階であり、MSIリリースは保留。**
+
+## 22. 2026-10-31：grid埋込thumbnail高速化の実用画質評価、一般適用は見送り
+
+**研究の区切り**：CPU100%の現実的な解決へ近づくため、grid構造の合法性検証に加えて内容依存の画質劣化を数量化。**厳格なBMFF/gridメタデータゲートだけでは汎用grid HEICの高品質プレビューを保証できないと判明。**
+
+- **対象**：`experiment/shell-com-focused-20261030` の8x6=48タイル、4032x3024、埋込320x240 HEVC thumb、8bit SDR、ICC/Exif/HDR/alpha等なしというCI専用人工HEICを3種類へ拡張（既存四色ブロック、追加gradient、追加detail）。ユーザー画像やETLは試験に使用・変更していない。
+- **新実装**：`wictest/isolated_shell/SyntheticEmbeddedHevcThumb.cpp` の`--with-grid-gradient`/`--with-grid-detail`、`WICShellThumbnailProviderPilot::RunGridPatternQuality()`、`wictest.cpp --shell-grid-pattern-quality`、`.github/workflows/shell-com-focused-ci.yml` のCI測定。WIC Fantで256x192へ統一縮小したembedded側とfull-primary側の全49,152px×RGB3=**147,456成分**を比較。MAE、95パーセンタイル、max、差20超割合を算出。
+- **結果（同一CIランナー、各人工パターン1素材）**：`gradient` MAE=**0.757**、P95=2、max=5、差20超0.000%；`detail` MAE=**52.124**、P95=113、max=150、差20超**71.433%**。`detail`は9×11px市松＋3/5pxの細線を含む過酷な人工模様。**すべてメタデータの適格性判定に合格**しており、画像内容を見ない許可だけでは高画質を保証できない。自然写真の平均劣化率へ外挿しない。
+- **CI**：[Actions #41080351783](https://github.com/taku077/wic_heic/actions/runs/41080351783) **SUCCESS**（研究コードの最終コンパイル・測定・従来安全性CI全合格）。コードHEAD `1bba9cbc7db7669a903f0330d49cfefe6e8e0bf1`。研究文書追記 `513845334d9dbdd5422d521653c8275c3784185f`。初回 #41080045653 はC++の`small`識別子のMSVCエラーでFAILし、`previewPixels/fullPixels`へ修正。既存画質／HEIC復号のエラーではない。
+- **既存合格ゲート維持**：正規grid構造6×8／50item／iloc/idat／ispe検証、Exif・ICC・アルファ・PQ/HLG拒否、研究用IThumbnailProviderの追加フル復号なし、通常登録Shellの安全なフルWIC復号、レジストリ復元。CIのSUCCESSは「画質が全て良好」の意味ではなく、**画質に深刻な差が出る入力を測定できた**という意味。
+- **採用判断**：一般iPhone gridへの埋込thmb高速化の無条件導入は**見送り**。事前のフル復号画像との比較で画質を保証するのでは、CPU負荷削減の目的を失う。人工gridの高速研究コードは隔離実験として残すが、MSIへ移植しない。実iPhone写真はICC/Exif/補助画像等でさらに適格範囲が狭くなり得る（具体的な適格率は未測定）。
+- **次の本質的課題**：現状WIC/Photosでフル解像度復号が不可避な場合のHEVC CPU時間・再デコードの削減。既存2026-10-30ログではfull decode 71件、dllhost PID3284に64件が集まったが、CPU100%全体の原因をWIC一つに断定していない。既存の2/4スレッド・tile並列、メモリ/キャッシュ、QSV/D3D11VA等の過去研究を台帳参照して重複研究しない。追加実機診断が必要なら過去提出ファイルをChatGPT Libraryから再提供、ユーザーに長期保存を要求しない。
+- **一次資料**：https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images 、https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c 、https://github.com/libvips/libvips/blob/master/libvips/resample/thumbnail.c 。
+- **再利用研究詳細**：https://github.com/taku077/wic_heic/blob/experiment/shell-com-focused-20261030/docs/SHELL_GRID48_CI_ONLY_FASTPATH_20261030_JA.md
+
+**未解決**：Windows10標準Photosを開いた際のCPU100%と実機体感遅延。製品DLL/MSI未変更。次回は、本番対象の負荷を実際に減らす実装へ戻る。
