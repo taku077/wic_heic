@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - experiment/explorer-cpu-budget-20261030
+      - experiment/photos-grid-cpu-budget-20261030
   workflow_dispatch:
 permissions:
   contents: read
@@ -140,11 +141,30 @@ jobs:
           try {
             & $wicTester --cpu-grid-wic
             if($LASTEXITCODE -ne 0){throw 'WIC production grid CPU/RGB gate failed'}
+            # Quantify Photos' 48-tile CPU work separately from Explorer.
+            # Both conditions use the same synthetic WIC decoder and runner.
+            & $wicTester --cpu-grid-wic-photos | Tee-Object -Variable photoCpu
+            if($LASTEXITCODE -ne 0){throw 'Photos grid CPU/RGB regression failed'}
+            $photoReport=$photoCpu -join [Environment]::NewLine
+            if($photoReport -notmatch 'PHOTOS_GRID_CPU_POLICY_PARITY_PASS'){
+              throw 'Photos grid pixel parity gate missing'
+            }
+            $base=[regex]::Match($photoReport,'PHOTOS_GRID_CPU_MEDIAN mode=baseline[^\r\n]*cpu_ms=([0-9.]+)')
+            $lower=[regex]::Match($photoReport,'PHOTOS_GRID_CPU_MEDIAN mode=photos[^\r\n]*cpu_ms=([0-9.]+)')
+            if(-not($base.Success -and $lower.Success)){throw 'Photos CPU medians not available'}
+            $culture=[System.Globalization.CultureInfo]::InvariantCulture
+            $cpuBefore=[double]::Parse($base.Groups[1].Value,$culture)
+            $cpuAfter=[double]::Parse($lower.Groups[1].Value,$culture)
+            Write-Host ('PHOTOS_GRID_CPU_SAVING_PCT={0:F1}' -f (100*($cpuBefore-$cpuAfter)/$cpuBefore))
+            if($cpuAfter -ge $cpuBefore*0.95){throw 'Photos grid CPU-ms reduction below 5 percent'}
+            Write-Host 'PHOTOS_GRID_CPU_TIME_REDUCTION_PASS'
+
             $record=Get-Content -LiteralPath $trace -Raw
             foreach($required in @(
               'event=DecoderTileBudget [^\r\n]*source=tile2 [^\r\n]*operation=2 ',
               'event=DecoderGridWorkerBudget [^\r\n]*source=grid [^\r\n]*operation=1 ',
               'event=DecoderWorkerSelect [^\r\n]*source=shell [^\r\n]*operation=1 ',
+              'event=DecoderWorkerSelect [^\r\n]*source=photos [^\r\n]*operation=1 ',
               'event=DecoderWorkerSelect [^\r\n]*source=other [^\r\n]*operation=4 '
             )){
               if($record -notmatch $required){throw ('Missing real WIC grid worker selection: '+$required)}
