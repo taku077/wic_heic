@@ -324,8 +324,19 @@ inline void RunOrientationGate() {
     Need(SUCCEEDED(factory->CreateStream(&alphaStream)) &&
          SUCCEEDED(alphaStream->InitializeFromFilename(alphaPath.c_str(),GENERIC_READ)),
          "Genuine alpha HEIF fixture missing");
-    Need(!WicShellLabSafety::FromStream(alphaStream),
+    size_t alphaBytesRead=0;
+    Need(!WicShellLabSafety::FromStream(alphaStream,&alphaBytesRead),
          "Real alpha auxiliary HEIF incorrectly admitted to embedded fast path");
+    // Generated alpha HEIF has an auxl relation near the front. The same
+    // conservative rejection must now avoid copying its full image payload.
+    STATSTG alphaStatus{};
+    Need(SUCCEEDED(alphaStream->Stat(&alphaStatus,STATFLAG_NONAME)),
+         "Alpha fixture stream Stat failed");
+    Need(alphaBytesRead<=65536 &&
+         alphaStatus.cbSize.QuadPart>static_cast<ULONGLONG>(alphaBytesRead),
+         "Complex alpha HEIF still required full-file preflight read");
+    std::printf("CI_SHELL_COMPLEX_EARLY_REJECT_PASS bytes_read=%zu file_bytes=%llu\n",
+         alphaBytesRead,static_cast<unsigned long long>(alphaStatus.cbSize.QuadPart));
     std::puts("CI_SHELL_REAL_ALPHA_HEIC_FASTPATH_REJECTED_PASS");
     // Real encoded 8-bit HEIF images with explicit PQ/HLG NCLX metadata.
     // This tests color signaling rejection, not HDR pixel/tone-map fidelity.
