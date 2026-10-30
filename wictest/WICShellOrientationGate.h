@@ -113,7 +113,26 @@ inline bool SimplePreviewSafe(const Bytes& bytes) noexcept {
   return true;
  } catch (...) {return false;}
 }
-inline bool FromStream(IStream* stream) noexcept {
+// Fail closed without copying an entire 12MP/48-tile HEIC if its first
+// metadata window already advertises complex image relations. The scan is
+// intentionally a conservative REJECT ONLY: a match may be incidental and
+// merely selects the ordinary full WIC path; it NEVER admits an image.
+// The regular strict BMFF parser remains the sole acceptance authority.
+inline bool ObviousComplexPrefix(const uint8_t* p,size_t n) noexcept {
+ if(!p || n<4)return false;
+ static const char* const tags[]={"grid","auxl","dimg","tmap"};
+ for(size_t i=0;i+4<=n;++i) {
+  for(const char* tag:tags) {
+   if(p[i]==static_cast<uint8_t>(tag[0]) &&
+      p[i+1]==static_cast<uint8_t>(tag[1]) &&
+      p[i+2]==static_cast<uint8_t>(tag[2]) &&
+      p[i+3]==static_cast<uint8_t>(tag[3]))return true;
+  }
+ }
+ return false;
+}
+inline bool FromStream(IStream* stream,size_t* bytesRead=nullptr) noexcept {
+ if(bytesRead)*bytesRead=0;
  if(!stream)return false;
  LARGE_INTEGER zero{}; ULARGE_INTEGER original{};
  if(FAILED(stream->Seek(zero,STREAM_SEEK_CUR,&original)))return false;
@@ -135,6 +154,12 @@ inline bool FromStream(IStream* stream) noexcept {
    HRESULT hr=stream->Read(bytes.data()+done,amount,&got);
    if(FAILED(hr)||got==0)return false;
    done+=got;
+   if(bytesRead)*bytesRead=done;
+   // A complex relation at the metadata head makes this preview shortcut
+   // ineligible. Never spend the remaining stream reads copying media data.
+   // Limit the check to an initial window to avoid scanning compressed pixels.
+   if(done==size_t(min(size_t(65536),bytes.size())) &&
+      ObviousComplexPrefix(bytes.data(),done))return false;
   }
   return SimplePreviewSafe(bytes);
  } catch (...) {return false;}
