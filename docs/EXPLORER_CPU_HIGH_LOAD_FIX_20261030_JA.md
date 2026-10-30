@@ -37,3 +37,26 @@ experiment/explorer-cpu-budget-20261030
 - libheif tile threads: https://github.com/strukturag/libheif/security/advisories/GHSA-prgh-72vc-3xmc
 - libde265: https://github.com/strukturag/libde265
 - 実機CPU IP分析: [WIN10_HEIC_ETL_CPU_20261029_PID2712_JA.md](WIN10_HEIC_ETL_CPU_20261029_PID2712_JA.md)
+
+
+## 2026-10-30 CIで確認した実装・結果
+
+**CPU研究実装**：Shellプロセス専用2ワーカー選択、従来Photos・他ホストと分離。4論理CPUのdllhost.exeのみに適用。Exif/ICC/高ビット深度/アルファなど従来Selectの適格条件を維持し、同時復号中の2枚目以降は旧0(default)に戻る。
+
+**GitHub Actions [#41011035938](https://github.com/taku077/wic_heic/actions/runs/41011035938) SUCCESS**。人工12MP 8bit画像、各5試行中央値：
+
+| codec workers | wall ms | process CPU ms | CPUms/wall |
+| --- | ---: | ---: | ---: |
+| 0（codec default） | 1432.736 | 1421.875 | 0.992 |
+| 1 | 1436.221 | 1437.500 | 1.001 |
+| 2 | **859.691** | **1609.375** | **1.872** |
+| 4（旧Shell選択） | **616.639** | **2140.625** | **3.471** |
+| auto（旧Shell選択） | 616.367 | 2140.625 | 3.473 |
+
+単純12MPで4→2へ変更したとき、**プロセスCPU時間約24.8%削減、平均CPU同時稼働コア相当約46.1%削減、処理時間約39.4%増加**。これはWindows10実機CPU最大62%が何%に下がるかの測定ではない。Photos側2ワーカーと従来他ホスト4ワーカーのまま。CLI人工25画像のWIC全画素と256px RGB厳密一致も確認。
+
+**CIマーカー**：SHELL_LOW_CPU_WORKER_POLICY_PASS（7ケース）、SHELL_LOW_CPU_RGB_PARITY_PASS、PHOTOS_UI_2WORKER_RGB_PARITY_PASS。自動選択ログでも workers=2/photos=0/shell=1、workers=2/photos=1/shell=0、workers=4/photos=0/shell=0。
+
+**未証明**：ユーザーの本物のdllhost.exeでのCPU使用率低下、gridでのlibheif独立4タイル並列による高CPU、複数フレーム同時の実機体感、Windows10 2C/4TとServer 2022 runnerの差。実機配布は保留し、他形式への影響、MSIロールバックを別途確認する。
+
+CI前段で混在画像fixture不足のため一度失敗したのでCPU専用テストを分離し、既存の混在形式の回帰試験は維持。製品不具合の修正ではなくテスト環境不足の分離。
