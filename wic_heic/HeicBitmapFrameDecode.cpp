@@ -558,6 +558,15 @@ void CHeicBitmapFrameDecode::DecodeImage()
               m_Handle.get_luma_bits_per_pixel(),
               m_Handle.get_chroma_bits_per_pixel(),
               m_Handle.has_alpha_channel(),info.dwNumberOfProcessors,already);
+        // Privacy-safe, opt-in numeric trace. This runs once per cold HEIC
+        // decode and records neither paths nor image bytes. It proves which
+        // worker budget was ACTUALLY selected inside dllhost vs Photos.
+        // operation=workers, elapsed_ms=already (pre-existing parallel decodes).
+        WicHeicDiagnostic::Emit("DecoderWorkerSelect",
+            static_cast<UINT>(m_Handle.get_width()),
+            static_cast<UINT>(m_Handle.get_height()),0,0,
+            shellSurrogate?"shell":(photos?"photos":"other"),
+            S_OK,workers,already);
         // This test-only marker is visible on Actions. No stdout is needed
         // by Explorer/Photos on users' PCs.
         if(enabledLength==4 && wcscmp(labEnabled,L"true")==0) {
