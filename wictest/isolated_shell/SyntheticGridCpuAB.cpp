@@ -87,7 +87,7 @@ void Generate(const std::string& file){
  std::printf("GRID_CPU_ARTIFICIAL_CREATED cols=%d rows=%d tiles=%d width=%d height=%d\n",
              cols,rows,cols*rows,width,height);
 }
-Result Decode(const std::string& path,int tileThreads,
+Result Decode(const std::string& path,int tileThreads,int codecThreads,
               std::vector<uint8_t>& reference){
  Context ctx(heif_context_alloc(),heif_context_free);
  Require(ctx!=nullptr,"decode context");
@@ -106,7 +106,7 @@ Result Decode(const std::string& path,int tileThreads,
  heif_decoding_options* opt=heif_decoding_options_alloc();
  Require(opt!=nullptr,"decoder options");
  // Codec thread count fixed at one: isolate the grid tile parallelism.
- opt->num_codec_threads=1;
+ opt->num_codec_threads=codecThreads;
  LARGE_INTEGER freq{},begin{},end{};
  Require(QueryPerformanceFrequency(&freq)!=0,"QPC frequency");
  const double c0=CpuMs();
@@ -132,9 +132,9 @@ Result Decode(const std::string& path,int tileThreads,
  else Require(reference==pixels,"GRID_CPU_PIXEL_MISMATCH");
  const double wall=1000.0*double(end.QuadPart-begin.QuadPart)/double(freq.QuadPart);
  Require(wall>0&&c1>=c0,"invalid clock");
- std::printf("GRID_CPU_AB_SAMPLE tile_threads=%d codec_threads=1 wall_ms=%.2f "
+ std::printf("GRID_CPU_AB_SAMPLE tile_threads=%d codec_threads=%d wall_ms=%.2f "
              "process_cpu_ms=%.2f cpu_per_wall=%.3f rgb_exact=1\n",
-             tileThreads,wall,c1-c0,(c1-c0)/wall);
+             tileThreads,codecThreads,wall,c1-c0,(c1-c0)/wall);
  return {wall,c1-c0};
 }
 }
@@ -149,7 +149,7 @@ int main(){
   for(int round=0;round<3;round++){
    for(int j=0;j<4;j++){
     const int i=(round+j)%4;
-    results[i].push_back(Decode(path,modes[i],reference));
+    results[i].push_back(Decode(path,modes[i],1,reference));
    }
   }
   for(size_t i=0;i<modes.size();i++){
@@ -163,6 +163,30 @@ int main(){
                "wall_ms=%.2f process_cpu_ms=%.2f cpu_per_wall=%.3f "
                "samples=3 rgb_exact=1\n",
                modes[i],wall[1],cpu[1],cpu[1]/wall[1]);
+  }
+  // Combined policy test: the current codec hint and libheif tile threads
+  // are independent controls; changing only one can leave high CPU pressure.
+  struct Combo {int tiles,codec;};
+  constexpr std::array<Combo,5> combinations{{{4,4},{4,2},{2,2},{2,1},{1,2}}};
+  std::array<std::vector<Result>,5> combinationsOut;
+  for(int round=0;round<3;round++){
+   for(size_t off=0;off<combinations.size();off++){
+    const size_t i=(size_t(round)+off)%combinations.size();
+    const auto c=combinations[i];
+    combinationsOut[i].push_back(Decode(path,c.tiles,c.codec,reference));
+   }
+  }
+  for(size_t i=0;i<combinations.size();i++){
+   std::vector<double> wall,cpu;
+   for(const auto& x:combinationsOut[i]){wall.push_back(x.wall);cpu.push_back(x.cpu);}
+   Require(wall.size()==3 && cpu.size()==3,"incomplete combo");
+   std::sort(wall.begin(),wall.end());
+   std::sort(cpu.begin(),cpu.end());
+   std::printf("GRID_CPU_COMBO_MEDIAN tile_threads=%d codec_threads=%d "
+               "wall_ms=%.2f process_cpu_ms=%.2f cpu_per_wall=%.3f "
+               "samples=3 rgb_exact=1\n",
+               combinations[i].tiles,combinations[i].codec,
+               wall[1],cpu[1],cpu[1]/wall[1]);
   }
   Require(DeleteFileA(path.c_str())!=0,"fixture cleanup failed");
   std::puts("GRID_CPU_AB_RGB_PARITY_PASS tiles=48 original_files_touched=0");
