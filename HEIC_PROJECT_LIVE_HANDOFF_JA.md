@@ -36,6 +36,8 @@
 
 > **2026-10-31 最新・最優先：第22節。** CI限定grid高速経路の実用画質を正規48tile人工HEICで追加評価。256x192全RGB147,456成分比較：`gradient` MAE=0.757、P95=2、20超差分0%。`detail`（9x11pxチェッカー＋3/5px細線）MAE=52.124、P95=113、20超差分71.433%。**どちらも同じ厳格なメタデータ適格性判定を通過**。ゆえにメタデータだけでは埋込thumbと主画像の画質が一致するとは保証できない。**一般iPhone gridへの高速パス拡大を採用せず、通常のフルWIC安全フォールバックを維持。** 最新CI #41080351783 SUCCESS。研究コード `1bba9cbc7db7669a903f0330d49cfefe6e8e0bf1`、研究文書 `513845334d9dbdd5422d521653c8275c3784185f`。**CPU100%未解決／Windows10実機未試験／MSI未配布**。今後は汎用的なHEVCフル復号CPU負荷・重複復号削減へ重点を移す。無限のgrid構造研究に戻らない。
 
+> **2026-10-31：研究全体の費用対効果による停止判断（第23節）。** Windows10標準フォトでCPU100％張り付きのユーザー実機改善は、長期にわたりCI・コード・複数のShell/grid/復号ポリシー実験を重ねても未達。**今後のHEIC性能研究は当面凍結とするのが推奨判断**。これまでの安全な成果と研究ブランチ・CIは保全、実際にユーザーで動作する既存環境を不用意に変更しない。新しいMSI・CPU解析ツール・大型ETL取得を予定しない。**新しい独立証拠でCPU100%継続時間／プロセスCPU-msが明確に下がる具体策を示せた場合に限り**、小規模な時限試験を再審議する（上限例：延べ1～2日／1方式）。Windows10のセキュリティ更新・現行環境の防御に時間を優先。これは技術的に不可能との断定ではなく、**成果/工数の採算が悪化したことによる判断**。第23節参照。
+
 ## 0. 新しいチャット用の最短開始指示
 
 「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
@@ -407,3 +409,35 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - **再利用研究詳細**：https://github.com/taku077/wic_heic/blob/experiment/shell-com-focused-20261030/docs/SHELL_GRID48_CI_ONLY_FASTPATH_20261030_JA.md
 
 **未解決**：Windows10標準Photosを開いた際のCPU100%と実機体感遅延。製品DLL/MSI未変更。次回は、本番対象の負荷を実際に減らす実装へ戻る。
+## 23. 2026-10-31：HEIC研究全体の費用対効果（Go/No-Go）レビュー
+
+**結論（提案）**：Windows10標準フォトでのCPU100%改善を最優先にすると、**HEIC性能開発は現時点でNo-Go／当面凍結が妥当**。この記録は既存DLL/MSIや研究ブランチを削除・アンインストールする指示ではない。**ユーザーに新規の実機試験・ログ取得・ツール保存を求めない**。
+
+### 過去成果と実機達成状況を分離
+
+- Windows10実機 v1.1.33でPhotos起動時のCPU100%張り付き・体感改善なしという明確な否定的評価がある。従来のworker数2→1、タイル/画像並列、サムネイル実験のCI短縮だけでは主目的達成なし。
+- 旧提出2026-10-30診断からフルデコード71件、dllhostの特定PIDに64件が確認されたが、**重複無駄64回と判定できない**。サンプルからプロセス名不明の割合・OS/他プロセス負荷を完全には解明できていない。WIC側の高速化がPC全体の負荷へ比例するとは限らない。
+- 正規48tile CI専用IThumbnailProvider/埋込thumbnail経路は技術的成功。低周波gradientはMAE0.757/255だが、detail人工パターンではMAE52.124/255、20階調超の差71.433%。**構造合格だけでは視覚画質を保証できず、実iPhone HDR/ICC/Exif等への採用率も不明**。研究資産は残し、一般gridへのMSI統合はしない。
+- Intel第7世代HEVCハードウェアデコードは仕様上の候補でも、現在のlibheif/libde265ソフト復号WICへ安全に接続しWindows PhotosのCPU100%を改善できる保証はない。D3D11/Media Foundation列挙CIの成功はユーザーPCでの動作・実際のHEIC復号成功と区別。
+- Microsoft WIC GetThumbnailはサムネイル不在時にフル画像をデコードして縮小する設計。Photos内部・OS全プロセスのスケジューリングや他ハンドラー優先度・GPUドライバーの最適化を**自作コーデック単独では完全制御できない**。
+- **経営判断**：今まで研究を長く続け、主要KPIの実機CPU100%が改善していない。これからさらに数日〜数週間、場合によってはそれ以上の統合・回帰・実機試験が必要になり得るが、達成確率・改善率を検証データで予測できない。理論的可能性だけを根拠に継続しない。
+
+### 凍結・再開条件
+
+1. **ここで研究開発予算をゼロに戻す**。直近の次作業はHEIC高速化コードではなく、より優先度の高い別の技術課題。既存の動くWIC・Shell・回転機能を不用意に上書きしない。台帳と既存実験資産のみ保全。
+2. **自動再開しない**。再開は新たな根拠がある場合の都度判断。例：既に同一入力で検証した具体的な変更が、実機のCPU-msまたは100%継続時間を大きく改善し得るという独立証拠、上流libheif/libde265の適合するセキュアな高速化、ハードウェア復号の人工HEIC成功など。仮説だけでは不十分。
+3. 再開を認める場合も**1方式・最大1〜2日の時限研究（目安であり期限を約束するものではない）**とし、品質・回転保存・色・Exif/ICCとCPU-msの比較を必須にする。**Windows10実機CPU100%の継続時間の実質的短縮や操作応答改善につながらなければ撤退**。追加研究を足し続けない。
+4. 一般iPhone gridのサムネイル置換方式は画質上の制約が強いため凍結。再テストで画質基準を満たさない画像を無条件に通さない。
+5. 既存のユーザー提出ZIPはChatGPT Libraryで必要時に再取得・実機ツールに同梱可能な限りその手順を優先し、ユーザーのPCでの長期保存を想定しない。機微な画像・ETLを公開GitHubに置かない。
+
+### セキュリティ優先の根拠（2026-10-31現在）
+
+- Windows10は2025-10-14通常サポート終了。個人用ESUのセキュリティ更新提供は**2027-10-12まで延長**されているが、**ESU登録は個別に確認が必要**。https://support.microsoft.com/ja-jp/windows/deployment/updates-lifecycle/windows-10-support-has-ended-on-october-14-2025
+- IPAのWindows10サポート終了注意：https://www.ipa.go.jp/security/security-alert/2024/win10_eos.html
+- IPAは強固な別パスワード・パスキー/多要素認証などを推奨：https://www.ipa.go.jp/security/anshin/attention/2026/mgdayori20261026.html
+- WIC thumbnailでフル画像復号の設計：https://learn.microsoft.com/en-us/windows/desktop/wic/-wic-imp-iwicbitmapframeencode
+- Intel HEVC hardware decoding：https://www.intel.com/content/www/us/en/support/articles/000037112.html
+- libde265のソフトウェア最適化：https://github.com/strukturag/libde265
+- libvipsのHEIC色と方向の制約：https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c
+
+**2026-10-31時点の開発記録上の状態：CPU100%未解決／研究資産保持／新しいMSIなし／新たな長期研究は推奨しない。**
