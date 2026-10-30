@@ -18,6 +18,7 @@ on:
       - fix/grid-rotation-lossless-safety-20261028
       - experiment/embedded-hevc-thumb-path-20261029
       - candidate/photos-responsive-1130-win10
+      - candidate/explorer-grid-cpu-1132-win10
       - experiment/shell-real-embedded-thumbnail-20261029
   workflow_dispatch:
 
@@ -296,7 +297,7 @@ jobs:
       # branch too. Previously a green repair-branch workflow skipped BOTH
       # fixture generation and worker/RGB-parity checks entirely.
       - name: Generate synthetic 12MP fixture for experimental HEVC workers
-        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10'
+        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' || github.ref == 'refs/heads/candidate/explorer-grid-cpu-1132-win10'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -320,7 +321,7 @@ jobs:
           Write-Host 'THUMB_WORKERS_12MP_SYNTHETIC_FIXTURE_PASS'
 
       - name: Compare 12MP cold HEVC 0 versus 2 versus 4 worker decode with exact RGB
-        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10'
+        if: github.ref == 'refs/heads/experiment/thumb-hevc-workers-1128-isolated' || github.ref == 'refs/heads/candidate/thumb-adaptive-1129-win10-pilot' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' || github.ref == 'refs/heads/candidate/explorer-grid-cpu-1132-win10'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -365,7 +366,7 @@ jobs:
       # New independent HEVC fixture rather than the legacy 12MP WIC encoder
       # (the latter does NOT embed thmb). Test branch only until CI passes.
       - name: Generate real HEVC container with embedded 320x240 thumbnail
-        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' || github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
+        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' || github.ref == 'refs/heads/candidate/explorer-grid-cpu-1132-win10' || github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -379,7 +380,7 @@ jobs:
           if(-not(Test-Path -LiteralPath $fixture)){throw 'Embedded HEVC fixture missing'}
 
       - name: Verify WIC embedded HEVC does not decode primary 12MP pixels
-        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' || github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
+        if: github.ref == 'refs/heads/experiment/embedded-hevc-thumb-path-20261029' || github.ref == 'refs/heads/fix/grid-rotation-lossless-safety-20261028' || github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' || github.ref == 'refs/heads/candidate/explorer-grid-cpu-1132-win10' || github.ref == 'refs/heads/experiment/shell-real-embedded-thumbnail-20261029'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -974,6 +975,56 @@ jobs:
           }
           Write-Host 'PHOTOS_UI_TIMELINE_DIAGNOSTICS_PS51_PASS'
 
+      - name: Verify actual WIC 48-tile CPU reduction and complete RGB parity
+        if: github.ref == 'refs/heads/candidate/explorer-grid-cpu-1132-win10'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/SyntheticGridCpuAB.vcxproj /m:1 /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Cannot build CPU grid artificial fixture generator'}
+          $generator=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/SyntheticGridCpuAB.exe').Path
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $tester=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $fixture=Join-Path $env:RUNNER_TEMP 'wicgrid_artificial_4096x3072_48tiles.heic'
+          $trace=Join-Path $env:RUNNER_TEMP 'wicgrid_worker_candidate_trace.txt'
+          if((Test-Path $fixture) -or (Test-Path $trace)){throw 'Refuse pre-existing diagnostic fixture'}
+          & $generator --fixture-only
+          if($LASTEXITCODE -ne 0 -or -not(Test-Path $fixture)){throw 'Grid artificial HEIC creation failed'}
+          $env:WIC_HEIC_TRACE_FILE=$trace
+          $reg=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($reg.ExitCode -ne 0){throw 'WIC grid test registration failed'}
+          try {
+            & $tester --cpu-grid-wic | Tee-Object -Variable gridOutput
+            if($LASTEXITCODE -ne 0){throw 'Actual WIC CPU/RGB parity test failed'}
+            $report=($gridOutput -join [Environment]::NewLine)
+            if(-not $report.Contains('WIC_GRID_CPU_POLICY_PARITY_PASS')){throw 'WIC grid parity gate missing'}
+            $a=[regex]::Match($report,'WIC_GRID_CPU_MEDIAN mode=baseline[^\r\n]*wall_ms=([0-9.]+) cpu_ms=([0-9.]+)')
+            $b=[regex]::Match($report,'WIC_GRID_CPU_MEDIAN mode=shell[^\r\n]*wall_ms=([0-9.]+) cpu_ms=([0-9.]+)')
+            if(-not ($a.Success -and $b.Success)){throw 'WIC grid CPU medians missing'}
+            $culture=[System.Globalization.CultureInfo]::InvariantCulture
+            $aWall=[double]::Parse($a.Groups[1].Value,$culture)
+            $aCpu=[double]::Parse($a.Groups[2].Value,$culture)
+            $bWall=[double]::Parse($b.Groups[1].Value,$culture)
+            $bCpu=[double]::Parse($b.Groups[2].Value,$culture)
+            if($bCpu -ge $aCpu*0.92 -or $bWall -gt $aWall*1.6){
+              throw ('WIC grid CPU reduction or latency tradeoff insufficient: '+$aCpu+'/'+$bCpu+' CPU-ms '+$aWall+'/'+$bWall+' wall-ms')
+            }
+            $records=Get-Content -LiteralPath $trace -Raw
+            foreach($check in @(
+              'event=DecoderTileBudget [^\r\n]*source=tile2 [^\r\n]*operation=2 ',
+              'event=DecoderGridWorkerBudget [^\r\n]*source=grid [^\r\n]*operation=1 ',
+              'event=DecoderWorkerSelect [^\r\n]*source=shell [^\r\n]*operation=1 '
+            )){
+              if($records -notmatch $check){throw ('WIC actual grid threading check failed: '+$check)}
+            }
+            Write-Host 'WIC_GRID_CPU_RELEASE_GATE_PASS'
+          } finally {
+            Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+            $un=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($un.ExitCode -ne 0){throw 'WIC unregister failed after grid test'}
+            Remove-Item -LiteralPath $fixture,$trace -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Build experimental replacement x64 MSI
         shell: pwsh
         run: |
@@ -988,7 +1039,7 @@ jobs:
           Get-FileHash 'WicHeic-HEIC-x64.msi' -Algorithm SHA256 |
             Format-List
 
-      - name: Confirm candidate MSI version is 1.1.30
+      - name: Confirm candidate MSI version is 1.1.32
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -1014,7 +1065,7 @@ jobs:
           } catch {
             throw "Missing or invalid MSI major-upgrade identity: Product=$productCode Upgrade=$upgradeCode"
           }
-          if($version -ne '1.1.30' -or $productName -ne 'WicHeic Repair Test') {
+          if($version -ne '1.1.32' -or $productName -ne 'WicHeic Repair Test') {
             throw "Candidate has unexpected identity: $productName $version"
           }
           Write-Host "MSI_RELEASE_VERSION_PASS version=$version"
@@ -1093,7 +1144,7 @@ jobs:
       # release(candidate): commit triggers ONE candidate only AFTER all
       # WIC, MSI install/uninstall and COM restoration checks passed.
       - name: Prepare MSI candidate checksum and provenance
-        if: ${{ github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
+        if: ${{ github.ref == 'refs/heads/candidate/explorer-grid-cpu-1132-win10' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -1101,7 +1152,7 @@ jobs:
           $sha=(Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash
           $fixture=Join-Path $env:RUNNER_TEMP 'wicfast_synthetic_4032x3024.heic'
           if(-not (Test-Path -LiteralPath $fixture -PathType Leaf)) {
-            throw 'Release fixture is missing; refuse to publish untestable 1.1.30'
+            throw 'Release fixture is missing; refuse to publish untestable 1.1.32'
           }
           $fixtureInfo=Get-Item -LiteralPath $fixture
           if($fixtureInfo.Length -lt 1000 -or $fixtureInfo.Length -gt 33554432) {
@@ -1116,19 +1167,19 @@ jobs:
             "SyntheticFixtureBytes: $($fixtureInfo.Length)"
             "Commit: $env:GITHUB_SHA"
             "Actions run: $env:GITHUB_RUN_ID"
-            "Status: Win10 Photos UI UNVERIFIED; Photos max 2 eligible workers, Explorer max 4; keep current MSI for rollback"
+            "Status: Win10 EXPLORER CPU UNVERIFIED; on 4 logical CPUs dllhost grid tile2/codec1, simple opaque HEIC codec2; Photos unchanged; retain 1.1.31 for rollback"
           ) | Set-Content -LiteralPath 'MSI_SHA256_AND_PROVENANCE.txt' -Encoding UTF8
           Get-Content -LiteralPath 'MSI_SHA256_AND_PROVENANCE.txt'
 
       - name: Upload one MSI candidate (Win10 Photos UNVERIFIED)
-        if: ${{ github.ref == 'refs/heads/candidate/photos-responsive-1130-win10' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
+        if: ${{ github.ref == 'refs/heads/candidate/explorer-grid-cpu-1132-win10' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release(candidate):') }}
         uses: actions/upload-artifact@v4
         with:
-          name: WicHeic-1.1.30-x64-Photos-Responsive-UNVERIFIED-RC
+          name: WicHeic-1.1.32-x64-Explorer-Grid-CPU-UNVERIFIED-RC
           path: |
             WicHeic-HEIC-x64.msi
             MSI_SHA256_AND_PROVENANCE.txt
-            docs/WIN10_PHOTOS_1130_RESPONSIVE_RELEASE_JA.md
+            docs/WIN10_EXPLORER_GRID_CPU_1132_RC_JA.md
             ${{ runner.temp }}/wicfast_synthetic_4032x3024.heic
             wictest/samples/fixture-irot3-exif6-noaux.heic
           if-no-files-found: error
