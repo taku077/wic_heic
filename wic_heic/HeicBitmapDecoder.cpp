@@ -101,7 +101,25 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
         // incur extra filesystem/COM work. Never request/log image paths.
         const ULONGLONG parseStarted=GetTickCount64();
 		m_Reader = new CHeifStreamReader(pIStream);
-		m_Context.read_from_reader(*m_Reader);
+        // CPU-high-load target: 2 physical/4 logical CPUs, COM Surrogate.
+        // Public libheif C API setting applies to this HEIC context only;
+        // neither Photos nor other machine-wide decoders are modified.
+        wchar_t exePath[MAX_PATH]{};
+        const DWORD exeLength=GetModuleFileNameW(nullptr,exePath,MAX_PATH);
+        const wchar_t* exeName=exePath;
+        if(exeLength && exeLength<MAX_PATH)
+            for(const wchar_t* q=exePath;*q;++q)
+                if(*q==L'\\' || *q==L'/')exeName=q+1;
+        SYSTEM_INFO sys{};
+        GetSystemInfo(&sys);
+        if(exeLength && exeLength<MAX_PATH &&
+           _wcsicmp(exeName,L"dllhost.exe")==0 &&
+           sys.dwNumberOfProcessors==4u)
+            m_Context.set_max_decoding_threads(2);
+        m_Context.read_from_reader(*m_Reader);
+        WicHeicDiagnostic::Emit("DecoderTileBudget",0,0,0,0,
+            m_Context.get_max_decoding_threads()==2?"tile2":"default",
+            S_OK,static_cast<UINT>(m_Context.get_max_decoding_threads()));
         // Snapshot the published top-level image list exactly once.
         // The context is never mutated after Initialize; this reduces
         // repeated libheif metadata work and avoids fresh vector allocations
