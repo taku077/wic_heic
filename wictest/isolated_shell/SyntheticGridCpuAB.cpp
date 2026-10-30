@@ -95,9 +95,11 @@ Result Decode(const std::string& path,int tileThreads,
  heif_image_handle* nativeHandle=nullptr;
  Check(heif_context_get_primary_image_handle(ctx.get(),&nativeHandle),"get primary");
  Handle handle(nativeHandle,heif_image_handle_release);
- Require(heif_image_handle_get_width(handle.get())==width &&
-         heif_image_handle_get_height(handle.get())==height,
-         "Unexpected grid size");
+ const int gotW=heif_image_handle_get_width(handle.get());
+ const int gotH=heif_image_handle_get_height(handle.get());
+ std::printf("GRID_CPU_PRIMARY_DIM width=%d height=%d expected=%dx%d\n",
+             gotW,gotH,width,height);
+ Require(gotW==width && gotH==height,"Unexpected grid size");
  heif_decoding_options* opt=heif_decoding_options_alloc();
  Require(opt!=nullptr,"decoder options");
  // Codec thread count fixed at one: isolate the grid tile parallelism.
