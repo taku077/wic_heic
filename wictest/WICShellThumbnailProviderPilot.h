@@ -718,14 +718,14 @@ inline void RunGridPatternQuality() {
              SUCCEEDED(frame->GetSize(&fw,&fh)) &&
              ew==320 && eh==240 && fw==4032 && fh==3024,
              "Pattern WIC geometry invalid");
-        const auto small=render(embedded);
-        const auto full=render(frame);
+        const auto previewPixels=render(embedded);
+        const auto fullPixels=render(frame);
         double sum=0.0,peak=0.0;
         unsigned large=0;
         unsigned histogram[256]{};
         for(size_t pixel=0;pixel<256u*192u;++pixel){
             for(size_t ch=0;ch<3;++ch){
-                int d=abs(int(small[pixel*4+ch])-int(full[pixel*4+ch]));
+                int d=abs(int(previewPixels[pixel*4+ch])-int(fullPixels[pixel*4+ch]));
                 sum+=d;
                 if(d>20)large++;
                 if(double(d)>peak)peak=d;
