@@ -49,6 +49,21 @@ internal static class Program {
             !name.StartsWith("Process(",StringComparison.OrdinalIgnoreCase) &&
             !name.StartsWith("PID_",StringComparison.OrdinalIgnoreCase);
     }
+    private static string Canonical(string name) {
+        var n=Short(name);
+        return n.EndsWith(".exe",StringComparison.OrdinalIgnoreCase) ?
+            n.Substring(0,n.Length-4) : n;
+    }
+    private static void RecordUniqueProcessName(
+        Dictionary<int,string> names,HashSet<int> conflicted,int pid,string name) {
+        if(pid<=0 || !Known(name) || conflicted.Contains(pid))return;
+        string prior;
+        if(names.TryGetValue(pid,out prior) &&
+           !string.Equals(Canonical(prior),Canonical(name),StringComparison.OrdinalIgnoreCase)){
+            names.Remove(pid);
+            conflicted.Add(pid);
+        } else if(!names.ContainsKey(pid)) names[pid]=name;
+    }
     private static string Short(string name) {
         if(string.IsNullOrWhiteSpace(name))return "(unknown)";
         name=name.Replace('/','\\');
@@ -69,7 +84,14 @@ internal static class Program {
             TrackUniqueTid(tidMap,10,936);
             TrackUniqueTid(tidMap,11,936);
             TrackUniqueTid(tidMap,11,3284);
-            if(tidMap[10]!=936 || tidMap[11]!=-1 ||
+            var namesTest=new Dictionary<int,string>();
+            var conflictsTest=new HashSet<int>();
+            RecordUniqueProcessName(namesTest,936,"explorer");
+            RecordUniqueProcessName(namesTest,936,"explorer.exe");
+            RecordUniqueProcessName(namesTest,936,"different.exe");
+            RecordUniqueProcessName(namesTest,936,"explorer.exe");
+            if(namesTest.ContainsKey(936) || !conflictsTest.Contains(936) ||
+               tidMap[10]!=936 || tidMap[11]!=-1 ||
                b.Samples!=3 || b.TotalSamples!=4 || b.NoThreadIdSamples!=1 ||
                b.Names["dllhost.exe"]!=3 ||
                b.Instances["dllhost.exe [PID 111]"]!=2 ||
@@ -104,6 +126,8 @@ internal static class Program {
         }
         var namesByPid=new Dictionary<int,string>();
         var sampleNamesByPid=new Dictionary<int,string>();
+        var conflictingNamePids=new HashSet<int>();
+        long processStartEvents=0,processEndEvents=0;
         // Collect aggregated sample counts first: process/thread rundown may be
         // emitted AFTER CPU samples. This uses no extra ETL, no intermediate file.
         var uniquePidByTid=new Dictionary<int,int>();
@@ -120,10 +144,20 @@ internal static class Program {
                 // ProcessStartGroup includes process rundown for programs
                 // already running when WPR began.
                 source.Kernel.ProcessStartGroup += e => {
+                    processStartEvents++;
                     if(e.ProcessID<=0)return;
                     var n=Short(e.KernelImageFileName);
                     if(!Known(n))n=Short(e.ProcessName);
-                    if(Known(n))namesByPid[e.ProcessID]=n;
+                    RecordUniqueProcessName(namesByPid,conflictingNamePids,e.ProcessID,n);
+                };
+                // When a process was already alive at trace start its image name
+                // may only be present in the process end/DCStop rundown.
+                source.Kernel.ProcessEndGroup += e => {
+                    processEndEvents++;
+                    if(e.ProcessID<=0)return;
+                    var n=Short(e.KernelImageFileName);
+                    if(!Known(n))n=Short(e.ProcessName);
+                    RecordUniqueProcessName(namesByPid,conflictingNamePids,e.ProcessID,n);
                 };
                 // Also learn thread mappings from rundown events even when
                 // those events occur after the sampled CPU workload.
@@ -154,8 +188,7 @@ internal static class Program {
                     if(pid<0)pid=0;
                     if(pid>0) {
                         var n=Short(e.ProcessName);
-                        if(Known(n) && !sampleNamesByPid.ContainsKey(pid))
-                            sampleNamesByPid[pid]=n;
+                        RecordUniqueProcessName(sampleNamesByPid,conflictingNamePids,pid,n);
                     }
                     var key=Tuple.Create(pid,e.ThreadID,windowId);
                     long prev;
@@ -180,7 +213,7 @@ internal static class Program {
                     } else unresolvedPidSamples+=count;
                 }
                 string name=null;
-                if(pid>0) {
+                if(pid>0 && !conflictingNamePids.Contains(pid)) {
                     if(!namesByPid.TryGetValue(pid,out name) || !Known(name)) {
                         sampleNamesByPid.TryGetValue(pid,out name);
                     }
@@ -213,7 +246,11 @@ internal static class Program {
                 " DeferredUniqueTIDRecovered="+recoveredTidSamples+
                 " PIDUnresolved="+unresolvedPidSamples+
                 " ThreadIDsAmbiguous="+uniquePidByTid.Values.Count(x=>x<0));
-            sb.AppendLine("Attribution is conservative: reused TIDs are NOT backfilled.");
+            sb.AppendLine("ProcessStartOrDCStartEvents="+processStartEvents+
+                " ProcessEndOrDCEndEvents="+processEndEvents+
+                " ConflictingNamePIDs="+conflictingNamePids.Count+
+                " UniqueNamedPIDs="+namesByPid.Count);
+            sb.AppendLine("Attribution is conservative: reused TIDs and conflicting PID names are NOT backfilled.");
             sb.AppendLine("Unknown PID/name must not be treated as idle or System.");
             sb.AppendLine("SampleTimeWindowUTC="+start.ToString("o")+" to "+end.ToString("o"));
             sb.AppendLine();
