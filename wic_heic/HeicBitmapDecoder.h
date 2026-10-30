@@ -1,12 +1,13 @@
 #pragma once
 #include <vector>
 #include <mutex>
+#include "WicHeifDecodeContext.h"
 
 class CHeicBitmapDecoder : public IWICBitmapDecoder
 {
 private:
 	std::atomic<uint32_t> m_Count;
-	heif::Context m_Context;
+	CWicHeifDecodeContext m_Context;
 	CHeifStreamReader* m_Reader;
     // HEIF context is immutable after Initialize; reuse stable top-level
     // ids instead of allocating/enumerating the same list on every GetFrame.
