@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+ <ItemGroup Label="ProjectConfigurations">
+  <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+ </ItemGroup>
+ <PropertyGroup Label="Globals"><ProjectGuid>{FB6DD362-85F1-46AC-832D-6F2942821898}</ProjectGuid><Keyword>Win32Proj</Keyword><RootNamespace>SyntheticGridCpuAB</RootNamespace><WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion></PropertyGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props"/>
+ <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+  <ConfigurationType>Application</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet><WholeProgramOptimization>true</WholeProgramOptimization>
+ </PropertyGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props"/>
+ <ImportGroup Label="ExtensionSettings"/><ImportGroup Label="Shared"/>
+ <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform"/>
+ </ImportGroup>
+ <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  <OutDir>$(ProjectDir)(Build)\x64\Release\</OutDir>
+  <IntDir>$(ProjectDir)(Temp)\x64\Release\SyntheticGridCpuAB\</IntDir>
+  <TargetName>SyntheticGridCpuAB</TargetName>
+ </PropertyGroup>
+ <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  <ClCompile>
+   <WarningLevel>Level4</WarningLevel><LanguageStandard>stdcpp17</LanguageStandard>
+   <PreprocessorDefinitions>WIN32;_CONSOLE;NDEBUG;LIBHEIF_STATIC_BUILD;LIBDE265_STATIC_BUILD;KVZ_STATIC_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+   <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\wic_heic\3rdparty\_out\x64\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+   <RuntimeLibrary>MultiThreaded</RuntimeLibrary><ExceptionHandling>Sync</ExceptionHandling>
+  </ClCompile>
+  <Link><SubSystem>Console</SubSystem>
+   <AdditionalLibraryDirectories>$(MSBuildThisFileDirectory)..\..\wic_heic\3rdparty\_out\x64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+   <AdditionalDependencies>heif.lib;libde265.lib;libkvazaar.lib;%(AdditionalDependencies)</AdditionalDependencies>
+  </Link>
+ </ItemDefinitionGroup>
+ <ItemGroup><ClCompile Include="SyntheticGridCpuAB.cpp"/></ItemGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets"/>
+</Project>
