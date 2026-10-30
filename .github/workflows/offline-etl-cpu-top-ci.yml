@@ -51,6 +51,52 @@ jobs:
           Copy-Item -LiteralPath 'tools/etl_cpu_top/Run_Existing_ETL_CPU_Report.cmd' -Destination $outDir
           Copy-Item -LiteralPath 'tools/etl_cpu_top/README_JA.md' -Destination $outDir
           Write-Host 'ETL_CPU_ALL_PROCESS_TOOL_BUILD_AND_NO_OVERWRITE_PASS'
+      - name: Smoke-test real short synthetic WPR CPU ETL (never user data)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $wpr=Get-Command wpr.exe -ErrorAction SilentlyContinue
+          if(-not $wpr){
+            Write-Host 'ETL_PARSER_REAL_WPR_TEST_SKIPPED_NO_WPR'
+            exit 0
+          }
+          $etl=Join-Path $env:RUNNER_TEMP 'ci_short_kernel_cpu_synthetic.etl'
+          $report=Join-Path $env:RUNNER_TEMP 'ci_short_kernel_cpu_report.txt'
+          if((Test-Path $etl) -or (Test-Path $report)){throw 'Do not overwrite pre-existing fixtures'}
+          $started=$false
+          try {
+            & $wpr.Source -start CPU.light
+            $code=$LASTEXITCODE
+            if($code -ne 0){
+              Write-Host ('ETL_PARSER_REAL_WPR_TEST_SKIPPED_NO_KERNEL_PRIVILEGES exit='+$code)
+              $global:LASTEXITCODE=0
+            } else {
+              $started=$true
+              $sw=[System.Diagnostics.Stopwatch]::StartNew()
+              $value=0.0
+              while($sw.Elapsed.TotalSeconds -lt 3){
+                for($i=1;$i -le 10000;$i++){ $value+=[Math]::Sqrt($i) }
+              }
+              & $wpr.Source -stop $etl -skipPdbGen
+              if($LASTEXITCODE -ne 0){throw 'WPR synthetic CPU stop failed'}
+              $started=$false
+              if(-not(Test-Path $etl)){throw 'Synthetic WPR trace missing'}
+              $exe=(Resolve-Path 'tools/etl_cpu_top/bin/Release/net48/WicHeic_EtlCpuTop_ReadOnly.exe').Path
+              & $exe $etl $report
+              if($LASTEXITCODE -ne 0){throw 'ETL CPU parser failed on real WPR synthetic fixture'}
+              $summary=Get-Content -LiteralPath $report -Raw
+              if(-not $summary.Contains('TOP EXECUTABLE NAMES') -or
+                 -not $summary.Contains('NonIdle=')){
+                throw 'Synthetic ETL CPU report missing all-process sample summary'
+              }
+              Write-Host 'ETL_CPU_ALL_PROCESS_REAL_WPR_SAMPLED_PARSE_PASS'
+              $global:LASTEXITCODE=0
+            }
+          } finally {
+            if($started){ & $wpr.Source -cancel | Out-Null }
+            Remove-Item -LiteralPath $etl,$report -Force -ErrorAction SilentlyContinue
+          }
+          $global:LASTEXITCODE=0
       - name: Upload read-only offline Windows 10 tool
         uses: actions/upload-artifact@v4
         with:
