@@ -30,6 +30,7 @@
 #include "WICThumbnailMixedFormatProbe.h"
 #include "WICThumbnailEmbeddedProbe.h"
 #include "WICShellThumbnailProviderPilot.h"
+#include "WICShellCpuWorkProbe.h"
 
 #pragma comment (lib, "windowscodecs.lib")
 
@@ -430,6 +431,8 @@ int main(int argc,char** argv)
             WICShellThumbnailProviderPilot::RunOrientationGate();
         } else if(argc==2 && std::strcmp(argv[1],"--shell-thumb-provider-fallback")==0){
             WICShellThumbnailProviderPilot::RunFallback();
+        } else if(argc==2 && std::strcmp(argv[1],"--shell-cpu-work")==0){
+            WICShellCpuWorkProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--shell-thumb-provider-pilot")==0){
             WICShellThumbnailProviderPilot::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--embedded-thumbnail-probe")==0){
