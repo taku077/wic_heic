@@ -169,7 +169,7 @@ int main(){
   struct Combo {int tiles,codec;};
   constexpr std::array<Combo,5> combinations{{{4,4},{4,2},{2,2},{2,1},{1,2}}};
   std::array<std::vector<Result>,5> combinationsOut;
-  for(int round=0;round<3;round++){
+  for(int round=0;round<7;round++){
    for(size_t off=0;off<combinations.size();off++){
     const size_t i=(size_t(round)+off)%combinations.size();
     const auto c=combinations[i];
@@ -179,14 +179,14 @@ int main(){
   for(size_t i=0;i<combinations.size();i++){
    std::vector<double> wall,cpu;
    for(const auto& x:combinationsOut[i]){wall.push_back(x.wall);cpu.push_back(x.cpu);}
-   Require(wall.size()==3 && cpu.size()==3,"incomplete combo");
+   Require(wall.size()==7 && cpu.size()==7,"incomplete combo");
    std::sort(wall.begin(),wall.end());
    std::sort(cpu.begin(),cpu.end());
    std::printf("GRID_CPU_COMBO_MEDIAN tile_threads=%d codec_threads=%d "
                "wall_ms=%.2f process_cpu_ms=%.2f cpu_per_wall=%.3f "
-               "samples=3 rgb_exact=1\n",
+               "samples=7 rgb_exact=1\n",
                combinations[i].tiles,combinations[i].codec,
-               wall[1],cpu[1],cpu[1]/wall[1]);
+               wall[3],cpu[3],cpu[3]/wall[3]);
   }
   Require(DeleteFileA(path.c_str())!=0,"fixture cleanup failed");
   std::puts("GRID_CPU_AB_RGB_PARITY_PASS tiles=48 original_files_touched=0");
