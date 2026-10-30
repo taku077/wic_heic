@@ -34,3 +34,15 @@
 - libheif grid encoding: https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images
 - darktable HEIF orientation example: https://fossies.org/linux/darktable/src/imageio/imageio_heif.c
 - KDE kimageformats HEIF rotation+mirror cases: https://invent.kde.org/frameworks/kimageformats
+
+
+## 過去のWindows10実機結果を踏まえたProgID優先順位ゲート
+
+2026-10-17に別の自作thumbnail providerの実機試験で、COMオブジェクト生成とHEIC直接復号は合格したが、Shellによる実際の選択は標準の写真プロバイダーCLS​​ID {C7657C4A-9F68-40fa-A4DF-96BC08EB3551} になり、自作ハンドラーの実用起動ができなかった。診断ログでは .heic の既定ProgIDとして copytransviewer_heicfile が報告されている。既往失敗を新1.1.31で繰り返さないこと。
+
+- GitHub runner上の単一拡張子 .heic / SystemFileAssociations 登録だけで、Windows10実機の既定ProgID / UserChoice / 他社ShellExとの優先関係を証明したことにはならない。
+- 製品MSIはユーザーの既定アプリを勝手に変更せず、CopyTrans等の既存のShell関連付けを上書きしない。
+- 配布前に、隔離されたCIで有効なProgID配下に他社のthumbnail handlerがある場合、またはUserChoiceが別ProgIDを選んでいる場合の実際のIThumbnailCache選択を検査する。正しく自分のハンドラーが選べなければ、最適化の登録を安全にスキップする。実機の既定アプリを変える処置は採用しない。
+- 既存コードの1.1.30 MSIが実際のShell最適化を登録したと誤認しない。Releaseの前にインストールと復元の実CIが必要。
+
+参考：Microsoft [Shell extension registration](https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts)、[Thumbnail handlers](https://learn.microsoft.com/en-us/windows/win32/shell/thumbnail-providers)。
