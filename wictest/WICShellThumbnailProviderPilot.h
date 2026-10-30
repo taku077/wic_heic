@@ -489,6 +489,20 @@ inline void RunGridEmbeddedShadow() {
     const auto top=HeicLosslessNative::Children(raw,0,raw.size());
     const auto meta=HeicLosslessNative::One(top,"meta");
     const auto sub=HeicLosslessNative::Children(raw,meta.data+4,meta.end);
+    size_t gridOffset=0,gridLength=0;
+    Need(WicShellLabSafety::ResearchGridPayloadRange(raw,sub,
+         HeicLosslessNative::Primary(raw,meta),gridOffset,gridLength) &&
+         (gridLength==8 || gridLength==12),
+         "Cannot locate real grid item payload via iloc/idat");
+    for(const auto& test:std::vector<std::pair<size_t,unsigned char>>{
+           {0,1},{1,2},{2,4},{3,6},
+           {gridLength==8?4u:7u,0}}) {
+       auto bad=raw;
+       bad[gridOffset+test.first]=test.second;
+       Need(!WicShellLabSafety::ResearchGrid48PreviewSafe(bad),
+            "Malformed actual grid rows/cols/dimensions admitted");
+    }
+    std::puts("CI_GRID48_GRID_PAYLOAD_GEOMETRY_MUTATIONS_REJECTED_PASS");
     const auto iref=HeicLosslessNative::One(sub,"iref");
     auto relations=HeicLosslessNative::Children(raw,iref.data+4,iref.end);
     int negativeCases=0;
@@ -505,11 +519,19 @@ inline void RunGridEmbeddedShadow() {
     const auto ipco=HeicLosslessNative::One(iprpList,"ipco");
     const auto properties=HeicLosslessNative::Children(raw,ipco.data,ipco.end);
     bool bitDepthRefused=false,rotationRefused=false,iccRefused=false;
+    bool wrongTileSizeRefused=false;
     for(const auto& property:properties){
        if(property.type=="hvcC"&&!bitDepthRefused){
           auto bad=raw;
           bad[property.data+17]|=2;
           bitDepthRefused=!WicShellLabSafety::ResearchGrid48PreviewSafe(bad);
+       }
+       if(property.type=="ispe"&&!wrongTileSizeRefused &&
+          HeicLosslessNative::Read(raw,property.data+4,4)==504 &&
+          HeicLosslessNative::Read(raw,property.data+8,4)==504){
+          auto bad=raw;
+          bad[property.data+7]=0xf7; // 504 -> 503
+          wrongTileSizeRefused=!WicShellLabSafety::ResearchGrid48PreviewSafe(bad);
        }
        if(property.type=="ispe"&&!rotationRefused){
           auto bad=raw;
@@ -522,8 +544,9 @@ inline void RunGridEmbeddedShadow() {
           iccRefused=!WicShellLabSafety::ResearchGrid48PreviewSafe(bad);
        }
     }
-    Need(negativeCases==2 && bitDepthRefused && rotationRefused,
-         "Strict grid did not reject relation, 10bit, or orientation mutations");
+    Need(negativeCases==2 && bitDepthRefused && rotationRefused &&
+         wrongTileSizeRefused,
+         "Strict grid did not reject invalid relationships, tiles, 10bit or rotation");
     // Some legal generated fixtures have no explicit colr property. When
     // present, an ICC tag must never be allowed by the 8bit SDR research gate.
     if(std::any_of(properties.begin(),properties.end(),
