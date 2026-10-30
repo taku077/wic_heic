@@ -87,6 +87,12 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Alpha-bearing HEIC fixture failed'}
           & $generator (Join-Path $env:RUNNER_TEMP 'wicfast_with_grid_4032x3024.heic') --with-grid
           if($LASTEXITCODE -ne 0){throw 'Valid 8x6 grid and embedded thumb generator failed'}
+          foreach($pattern in @('gradient','detail')){
+            $fixture=Join-Path $env:RUNNER_TEMP ('wicfast_with_grid_'+$pattern+'_4032x3024.heic')
+            if(Test-Path -LiteralPath $fixture){throw 'Refuse existing pattern fixture'}
+            & $generator $fixture ('--with-grid-'+$pattern)
+            if($LASTEXITCODE -ne 0){throw ('Valid synthetic grid pattern generator failed: '+$pattern)}
+          }
           foreach($mode in @('pq','hlg')){
             & $generator (Join-Path $env:RUNNER_TEMP ('wicfast_with_'+$mode+'_4032x3024.heic')) ('--with-'+$mode)
             if($LASTEXITCODE -ne 0){throw ('NCLX transfer test fixture failed: '+$mode)}
@@ -105,6 +111,19 @@ jobs:
               throw ('Grid candidate real ICC/Exif/alpha/HDR rejection test failed: '+($orientation -join ' | '))
             }
             $orientation | ForEach-Object {Write-Host $_}
+            # Independent quality probe with no WIC trace contamination.
+            # It reports ALL 256x192 RGB samples: not just 64x64.
+            $quality=@(& $exe --shell-grid-pattern-quality)
+            if($LASTEXITCODE -ne 0 -or
+               -not (($quality -join ' ') -match 'CI_GRID_CONTENT_QUALITY_REPORTED_NO_FASTPATH_EXPANSION_PASS')){
+               throw ('Artificial grid content quality measurement failed: '+($quality -join ' | '))
+            }
+            foreach($pattern in @('gradient','detail')){
+               if(-not (($quality -join ' ') -match ('CI_GRID_CONTENT_QUALITY pattern='+$pattern+' mae_all='))){
+                  throw ('Missing '+$pattern+' pixel quality sample')
+               }
+            }
+            $quality | ForEach-Object {Write-Host $_}
             # On a real synthetic 8x6 HEIF grid: compare embedded-only
             # preview to normal full master pixels without enabling the
             # grid fast path or altering any user HEIC file.
