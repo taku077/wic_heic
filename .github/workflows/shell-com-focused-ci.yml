@@ -85,6 +85,10 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'ICC-bearing HEIC fixture failed'}
           & $generator (Join-Path $env:RUNNER_TEMP 'wicfast_with_alpha_4032x3024.heic') --with-alpha
           if($LASTEXITCODE -ne 0){throw 'Alpha-bearing HEIC fixture failed'}
+          foreach($mode in @('pq','hlg')){
+            & $generator (Join-Path $env:RUNNER_TEMP ('wicfast_with_'+$mode+'_4032x3024.heic')) ('--with-'+$mode)
+            if($LASTEXITCODE -ne 0){throw ('NCLX transfer test fixture failed: '+$mode)}
+          }
           $wic=(Resolve-Path 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
           $exe=(Resolve-Path 'wictest/(Build)/x64/Release/wictest.exe').Path
           $r=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $wic)) -Wait -PassThru
