@@ -539,7 +539,7 @@ void CHeicBitmapFrameDecode::DecodeImage()
             GetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_SHELL",
                                      shellTest,4)==1 && shellTest[0]==L'1');
         const bool shellSurrogate=!photos && (realShell || syntheticShell);
-        const unsigned workers=photos
+        unsigned workers=photos
           ? HeicThumbnailWorkerPolicy::SelectForPhotos(
               static_cast<unsigned>(m_Handle.get_width()),
               static_cast<unsigned>(m_Handle.get_height()),
@@ -558,6 +558,30 @@ void CHeicBitmapFrameDecode::DecodeImage()
               m_Handle.get_luma_bits_per_pixel(),
               m_Handle.get_chroma_bits_per_pixel(),
               m_Handle.has_alpha_channel(),info.dwNumberOfProcessors,already);
+        // A real grid can independently schedule many tile decoders. The
+        // original 1.1.31 changed codec workers but left 4 tile workers.
+        // If THIS heif context is capped to 2 tile threads, reduce the
+        // internal codec workers for genuine multi-tile images to 1.
+        // No metadata or pixel buffers are changed; non-grids stay at 2.
+        bool tiledImage=false;
+        if(shellSurrogate && workers==2u && m_pDecoder &&
+           m_pDecoder->GridTileThreadBudget()==2) {
+            heif_image_tiling layout{};
+            layout.version=1;
+            const auto e=heif_image_handle_get_image_tiling(
+                m_Handle.get_raw_image_handle(),0,&layout);
+            if(e.code==heif_error_Ok &&
+               layout.num_columns>0 && layout.num_rows>0 &&
+               uint64_t(layout.num_columns)*layout.num_rows>1u) {
+                workers=1u;
+                tiledImage=true;
+            }
+        }
+        WicHeicDiagnostic::Emit("DecoderGridWorkerBudget",
+            static_cast<UINT>(m_Handle.get_width()),
+            static_cast<UINT>(m_Handle.get_height()),0,0,
+            tiledImage?"grid":"other",S_OK,workers,
+            m_pDecoder?m_pDecoder->GridTileThreadBudget():0);
         // Privacy-safe, opt-in numeric trace. This runs once per cold HEIC
         // decode and records neither paths nor image bytes. It proves which
         // worker budget was ACTUALLY selected inside dllhost vs Photos.
