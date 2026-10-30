@@ -113,6 +113,68 @@ inline bool SimplePreviewSafe(const Bytes& bytes) noexcept {
   return true;
  } catch (...) {return false;}
 }
+// Strictly resolve one grid payload only for the CI research fixture.
+// ISO/IEC 14496-12 iloc construction_method=1 points into meta/idat.
+// Unsupported variants fail closed; never infer a grid's placement from
+// FOURCC scans or from the number of references alone.
+inline bool ResearchGridPayloadRange(const Bytes& b,
+  const std::vector<Box>& metaChildren,uint32_t primary,
+  size_t& position,size_t& length)
+{
+ const auto iloc=One(metaChildren,"iloc");
+ const auto idat=One(metaChildren,"idat");
+ const uint32_t version=uint32_t(Read(b,iloc.data,1));
+ if(version<1||version>2)return false;
+ const size_t offsetSize=size_t(Read(b,iloc.data+4,1)>>4);
+ const size_t lengthSize=size_t(Read(b,iloc.data+4,1)&15);
+ const size_t baseSize=size_t(Read(b,iloc.data+5,1)>>4);
+ const size_t indexSize=size_t(Read(b,iloc.data+5,1)&15);
+ if(offsetSize!=4 && offsetSize!=8)return false;
+ if(lengthSize!=4 && lengthSize!=8)return false;
+ if(baseSize!=0 && baseSize!=4 && baseSize!=8)return false;
+ if(indexSize!=0)return false;
+ size_t p=iloc.data+6;
+ const size_t itemWidth=version==2?4:2;
+ const uint64_t count=Read(b,p,itemWidth);p+=itemWidth;
+ if(count!=50)return false;
+ bool found=false;
+ for(uint64_t i=0;i<count;i++) {
+  const uint32_t id=uint32_t(Read(b,p,itemWidth));p+=itemWidth;
+  const uint32_t method=uint32_t(Read(b,p,2));p+=2;
+  const uint32_t ref=uint32_t(Read(b,p,2));p+=2;
+  const uint64_t base=Read(b,p,baseSize);p+=baseSize;
+  const uint64_t extents=Read(b,p,2);p+=2;
+  if(extents>4)return false;
+  for(uint64_t j=0;j<extents;j++) {
+   const uint64_t offset=Read(b,p,offsetSize);p+=offsetSize;
+   const uint64_t extentLen=Read(b,p,lengthSize);p+=lengthSize;
+   if(id!=primary)continue;
+   if(found || extents!=1 || method!=1 || ref!=0 ||
+      base>idat.end-idat.data || offset>idat.end-idat.data-base ||
+      extentLen>idat.end-idat.data-base-offset)return false;
+   position=idat.data+size_t(base+offset);
+   length=size_t(extentLen);
+   found=true;
+  }
+ }
+ return found && p==iloc.end;
+}
+inline bool ResearchGrid48PayloadMatches(const Bytes& b,
+ const std::vector<Box>& children,uint32_t primary)
+{
+ size_t p=0,n=0;
+ if(!ResearchGridPayloadRange(b,children,primary,p,n))return false;
+ if(n!=8 && n!=12)return false;
+ if(Read(b,p,1)!=0)return false; // grid version
+ const uint64_t flags=Read(b,p+1,1);
+ if(flags>1 || n!=(flags?12u:8u))return false;
+ const uint32_t rows=uint32_t(Read(b,p+2,1))+1u;
+ const uint32_t columns=uint32_t(Read(b,p+3,1))+1u;
+ if(rows!=6 || columns!=8)return false;
+ const uint32_t w=uint32_t(Read(b,p+4,flags?4:2));
+ const uint32_t h=uint32_t(Read(b,p+4+(flags?4:2),flags?4:2));
+ return w==4032 && h==3024;
+}
 // CI-only positive gate for a simple 8-bit SDR 8x6 grid with one HEVC
 // thumbnail. This is deliberately NOT used for production/user HEIC.
 // Reject unknown items/references/properties, metadata, transforms, alpha,
@@ -124,6 +186,9 @@ inline bool ResearchGrid48PreviewSafe(const Bytes& bytes) noexcept {
   const auto meta=One(top,"meta");
   const auto sub=Children(bytes,meta.data+4,meta.end);
   const auto primary=Primary(bytes,meta);
+  // Verify actual grid payload: rows=6, columns=8 and 4032x3024 canvas.
+  // The dimg reference count alone is NOT sufficient to prove geometry.
+  if(!ResearchGrid48PayloadMatches(bytes,sub,primary))return false;
   // Reject all unknown top-level metadata except the limited structural
   // boxes required for a HEVC still image.
   for(const auto& box:sub)
@@ -223,6 +288,12 @@ inline bool ResearchGrid48PreviewSafe(const Bytes& bytes) noexcept {
      const uint32_t w=uint32_t(Read(bytes,prop.data+4,4));
      const uint32_t h=uint32_t(Read(bytes,prop.data+8,4));
      if(!w||!h || w>16384 || h>16384)return false;
+     // Current experimental gate intentionally accepts only the known
+     // 4032x3024/8x6 artificial fixture and its 320x240 preview.
+     // No edge cropping, nonuniform tile, or upscale ambiguity.
+     const bool geometryOK=id==primary ? (w==4032&&h==3024) :
+       id==thumbId ? (w==320&&h==240) : (w==504&&h==504);
+     if(!geometryOK)return false;
      hasIspe=true;
     } else if(prop.type=="pixi"){
      const size_t n=Read(bytes,prop.data+4,1);
