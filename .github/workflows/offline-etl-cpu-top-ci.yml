@@ -40,6 +40,7 @@ jobs:
           if($LASTEXITCODE -ne 4 -or (Get-Content $out -Raw) -ne 'ORIGINAL'){
             throw 'Existing report overwritten or clobber gate failed'
           }
+          $global:LASTEXITCODE=0 # Expected prior tool failure (exit 4) was asserted above.
           Write-Host 'ETL_CPU_ALL_PROCESS_TOOL_BUILD_AND_NO_OVERWRITE_PASS'
       - name: Upload read-only offline Windows 10 tool
         uses: actions/upload-artifact@v4
