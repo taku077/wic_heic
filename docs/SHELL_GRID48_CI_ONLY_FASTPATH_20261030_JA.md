@@ -56,3 +56,19 @@
 - **参考した別系統の実装と文献**：libheif v1.23.7 `image-items/grid.cc` のヘッダー`rows/columns/output_size`解析、`box.cc` の`Box_iloc::parse`と`construction_method=1`、Nokia HEIFの`itemlocationbox.hpp`、libheif公式tiled image説明。https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images
 
 **次は**人工写真相当の高周波・グラデーション画質差の調査と、本経路が実際のiPhone系gridで何割利用可能か（複合カラー／Exif／HDRの頻度）の調査。実利が乏しければ、過度に一般化せずPhotos／Explorer側の別のフル復号削減策へ切り替える。
+
+## 2026-10-31 追加実験：内容依存の画質差（grid高速経路の採用判断）
+
+**同じ50-item・正規48tile・8bit SDR・4032x3024・320x240 thumbnailでも、内容によって埋込プレビューとフルWIC縮小結果が大きく異なる。メタデータだけによる広範なgrid高速化の採用を保留する根拠が得られた。**
+
+- **コード**：`wictest/isolated_shell/SyntheticEmbeddedHevcThumb.cpp` に `--with-grid-gradient` と `--with-grid-detail` を追加（どちらも8x6 gridの正規HEVCタイル48枚＋埋込サムネイル、人工画素のみ）。`wictest/WICShellThumbnailProviderPilot.h` に `RunGridPatternQuality` を追加。256x192表示をフルWICから生成したものと、直接GetThumbnailしたものをWIC Fant/BGRAで統一し、**全256x192x3=147,456成分の差分**を算出。グラデーションはxy軸に線形のRGB階調、高周波は9x11pxチェッカー・3px/5pxライン。
+- **CI**：[GitHub Actions #41080351783](https://github.com/taku077/wic_heic/actions/runs/41080351783) **SUCCESS**。コードコミット`1bba9cbc7db7669a903f0330d49cfefe6e8e0bf1`。初期CI #41080045653のエラーはMSVCの特別な識別子`small`を変数に使ったコンパイルエラー（C3530等）。`previewPixels/fullPixels`に改名して修正、CI成功。**コンパイルエラーは復号や画質の問題ではない**。
+- **実測（各1人工パターン、Windows Server 2022 CI、同一WIC Fant表示256x192）**：
+  - `gradient`：`mae_all=0.757`／RGB誤差P95=2／最大=5／誤差20超=0.000%。
+  - `detail`：`mae_all=52.124`／P95=113／最大=150／誤差20超=71.433%。
+  - 両者とも`accepted_metadata=1`。既存メタデータ構造ゲートは合格でも、後者は表示画質が顕著に異なる。**画素内容を見ない構造判定のみで埋込画像を安全な高品質代替と認めるのは不可**。ただし、人工の極端なパターンであり、実写真の平均画質劣化率の主張ではない。
+  - `CI_GRID_CONTENT_QUALITY_REPORTED_NO_FASTPATH_EXPANSION_PASS` がCIで確認済み。これは計測コードが完走したことを示すものであり、「すべての画像で高品質」のPASSではない。
+  - 従来の4色ブロック人工gridで `CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=1 embedded=2 pilot=1`、`CI_GRID48_CI_ONLY_DIRECT_PROVIDER_EMBEDDED_PASS`、Shell登録の復元・通常gridフォールバックもPASS。**一般のgrid高速許可は行っていない**。
+- **判断**：grid構造の検証・人工HEIC高速経路は研究成果として保管するが、実際のiPhone HEICへ一律適用しない。画素比較のためにフルサイズ復号するのでは高速化の目的が失われる。メタデータだけで内容差を完全に予測する方法は今回実証されなかった。追加の画質研究を無限に繰り返さず、**より汎用性の高いフルサイズHEVC復号の負荷軽減・重複復号抑制**に研究優先順位を移す。
+- **ユーザーの目標との距離**：今回の成果はCI限定で本番MSI未統合、ユーザーWin10実機のPhotos CPU100%には何も変更していない。メタデータ適格性だけで実際の画像適格率も性能改善率も断定不可。必要な実機素材は過去提出ライブラリから再提供し、ユーザーに保存継続を求めない。
+- **独立参考**：libvips `foreign/heifload.c` はHEIFプレビューとメイン画像のメタデータ・向き・色の区別を扱う https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c 。`resample/thumbnail.c` では埋込thumbのサイズ・色管理も条件に含める https://github.com/libvips/libvips/blob/master/libvips/resample/thumbnail.c 。正規タイル構成とtile単位アクセスはlibheif公式Wiki https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images 参照。
