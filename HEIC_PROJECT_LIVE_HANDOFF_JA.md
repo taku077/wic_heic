@@ -30,6 +30,8 @@
 
 > **2026-10-30 23:50 JST 最新研究結果（第19節）**：研究ブランチ `experiment/shell-com-focused-20261030` HEAD `aeeba5d31beead1aab4a9660f7e62709da674382`。**正規8×6=48タイルgrid+埋込320×240サムネイル**を人工生成し、自作WICでサムネイルを先に復号してから基準の4032×3024主画像を復号、256×192 RGBサンプル比較MAE=**0.038/255**（20階調超0%）。**WIC診断トレースから埋込復号1／フル主画像復号1**を確認。単回CI計測はembedded=0ms、full=109msだが0msはタイマー分解能に依存、Windows10実機速度やCPU100%解消の主張ではない。Actions **#41075151932 SUCCESS**。**まだgridを高速経路へ許可していない、製品MSI変更なし。** リポジトリのlibheifはv1.23.7（CPU枯渇のセキュリティ修正済み）。次はICC/HDR/Exif/alpha等を誤って高速化しない厳密なgrid資格判定、さらに人工複合HEICの画質一致を検証。第19節を参照。
 
+> **2026-10-30深夜の最新実装（第20節）**：`experiment/shell-com-focused-20261030` で**正規48タイルHEICのCI限定`IThumbnailProvider`高速経路が実装・試験成功**。研究用の明示フラグ `GITHUB_ACTIONS=true`+`WIC_HEIC_GRID48_RESEARCH=1`+要求256px以下で、厳格な50-item/48-tile/1-thumbの8bit SDR許可ゲートを通過した人工HEICだけ埋込サムネイルを使用。CI #41077558646 **SUCCESS**：復号ログ full_primary=1（画質比較用）、embedded=2（うち1回研究用プロバイダー）、pilot=1、RGB MAE 0.038/255。**ICC、Exif/irot、alpha、PQ/HLGの真性合成HEICは拒否**。通常の登録済みShell gridは従来どおりフルWICに安全フォールバック。実画像・Windows10・製品MSIには未統合、CPU100%は依然未解決。**「grid item payloadの行・列・タイル寸法を厳密確認」など本番安全要件は未実装**。次は人工自然画像相当の画質試験と属性の複合化、適格率・実機効果の見積もり。第20節と研究文書参照。
+
 ## 0. 新しいチャット用の最短開始指示
 
 「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
@@ -351,3 +353,21 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - **外部の新情報**：2026-10-26公開のlibheifセキュリティ勧告 https://github.com/strukturag/libheif/security/advisories/GHSA-48p4-gj45-w9v6 は悪意ある派生HEIFでのCPU枯渇を報告、`v1.23.7`で修正。研究ブランチのlibheif submodule SHA `12a259a5882dd99d45ec5fc77e296a3b620d1e2e` はv1.23.7リリース。**ユーザーのCPU100%はこの攻撃が原因だったとは言えない**。
 - **再利用用技術資料**： https://github.com/taku077/wic_heic/blob/experiment/shell-com-focused-20261030/docs/SHELL_GRID48_EMBEDDED_THUMB_PRELIGHT_20261030_JA.md
 - **再発防止**：過去実験を再実施する前に台帳第18～19節とCIを読む。個人画像/ETLを公開GitHubにアップロードしない。大容量ログの手元保存は前提としない。実機で過去ファイルが必要ならChatGPT Libraryを先に検索し、必要なZIP・ツールを依頼文に同梱または別添する。
+
+## 20. 2026-10-30 深夜：正規48-tile gridのCI限定Shell高速経路を実装しCI成功
+
+**今回の主目的**：CPUサンプル調査を繰返すのでなく、HEICのフルサイズ復号を減らす具体的な実装を進める。実際に人工48タイルHEICを研究用IThumbnailProviderからフル主画像の追加復号なしに表示できるようにした。
+
+- 研究ブランチ：`experiment/shell-com-focused-20261030`。**コード・CI完了コミット** `15944392c9387151f9191e7ab2c09f16b6cf1a25`。**ドキュメント更新後HEAD** `c4f7ac94b8d7f7b98ef02caeb6e4da912c7aa223`（新チャットで再取得必須）。
+- **Windows Actions #41077558646 SUCCESS**： https://github.com/taku077/wic_heic/actions/runs/41077558646
+- 実装：`wictest/WICShellOrientationGate.h` に `ResearchGrid48PreviewSafe/ResearchGrid48FromStream` を実装。HEIFのBMFF `iinf`、`iref`、`iprp/ipma`、`hvcC`、`ispe`、`pixi`、`colr` を確認し、50 item（grid×1 + HEVC tile×48 + HEVC thumbnail×1）、主→タイル`dimg`×48とサムネイル→主`thmb`×1、一意なitem/関連付け、8bit、限られたSDR色をチェック。不正・未対応データは**許可せず**既存フルWICへ戻す。
+- `wictest/WICShellThumbnailProviderPilot.h` で**CI環境かつ明示フラグのみ**grid候補経路を許可。条件は `GITHUB_ACTIONS=true`＋`WIC_HEIC_GRID48_RESEARCH=1`＋256px以下＋上記厳格許可ゲート。公開DLL/MSIに統合していない。通常のShellハンドラーはgridの高速化を有効化せず、従来のフルWIC復号を維持。
+- **実際の復号証拠**：`CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=1 embedded=2 pilot=1`。フル復号1回は研究用画質比較の基準のために意図して実施。埋込2回のうち1回は研究用Providerから返すDIB生成。**そのProvider操作によって余分なフル主画像復号は発生しなかった**。元画像4032x3024、サムネイル320x240、表示256x192。研究用プロバイダーvsフル主画像の64×64点RGB MAE 0.038/255（20階調超差分0%）。
+- **安全性否定試験**：`CI_GRID48_NEGATIVE_RELATION_BITDEPTH_ROTATION_COLOR_PASS`（メモリ内の参照auxl/tmap、10bit、irot等の異常変異を拒否）。さらに合成の真性ICC付き、Exif/irot付き、アルファ付き、PQ/HLG付き各HEICを`ResearchGrid48FromStream`へ実際に通し、`CI_GRID48_RESEARCH_REAL_ICC_IROT_ALPHA_PQ_HLG_REJECTION_PASS`。元のファイルを変更していない。
+- **通常登録Shellの非退行**：`SHELL_REGISTERED_GRID48_FULL_WIC_FALLBACK_PASS`、`SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS`。ICC、Alpha、PQ/HLG、回転の既存品質ゲートも成功。第三者ハンドラーの既定登録を上書きする製品修正はしていない。
+- **重要な未検証**：今回の合格素材は人工の限られた模様。全画素同一の保証も、iPhone実写真の適格率も、Windows10実機のCPU%/操作感も未確認。現parserは**48タイルの参照だけを検査し、grid item payloadから実際の行列配置や部分タイル座標を読み取って厳密検証する機能は未実装**。悪意あるメタデータとの厳密な整合性も本番導入前のゲート。8bit SDRでもICC/Exif/補助がある実iPhone HEICは不適格としてフルWICへ戻るため、普及率を推測して高速化率を大きく主張しない。
+- **研究詳細**： https://github.com/taku077/wic_heic/blob/experiment/shell-com-focused-20261030/docs/SHELL_GRID48_CI_ONLY_FASTPATH_20261030_JA.md
+- **次の技術ゲート**：HEIF grid payload のrows/columns＋サイズ・各タイルの情報の照合→人工写真相当の高周波パターンとグラデーションの縮小画質測定→合法なICC/HDR/gain map/Exif/grid複合素材を作り誤受理・向き・色を検証→候補の適格率と所要時間を比較。価値が乏しければ本番に採用しない。効果が見込めたらインストーラー安全性とWindows10 CPU100%体感の実機試験へ。ユーザーPCに古い添付・大容量ETLが残っている前提にせず、必要素材・実機ツールは当方が再配布する。
+- **外部一次資料**：libheif tiled-grid https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images 、libheif内部のthumbnail→master thmb https://github.com/strukturag/libheif/blob/v1.23.7/libheif/context.cc 、libvipsのICC/方向注意 https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c 、Shellのストリーム分離 https://learn.microsoft.com/ja-jp/windows/win32/shell/building-thumbnail-providers 。
+
+**ユーザー実機CPU100％未解決／MSI保留／生の写真・ETLは非公開のまま。**
