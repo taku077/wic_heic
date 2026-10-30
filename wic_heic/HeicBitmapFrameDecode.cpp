@@ -447,8 +447,9 @@ void CHeicBitmapFrameDecode::DecodeImage()
         L"WIC_HEIC_THUMB_LAB_WORKERS",workerSetting,12);
     if(enabledLength==4 && wcscmp(labEnabled,L"true")==0 &&
        settingLength==1 &&
-       (workerSetting[0]==L'0' || workerSetting[0]==L'2' ||
-        workerSetting[0]==L'4' || workerSetting[0]==L'a')) {
+       (workerSetting[0]==L'0' || workerSetting[0]==L'1' ||
+        workerSetting[0]==L'2' || workerSetting[0]==L'4' ||
+        workerSetting[0]==L'a')) {
         static std::atomic<unsigned> activeDecodeCount{0};
         // Never leave the counter elevated after libheif exceptions.
         const unsigned otherDecodes=activeDecodeCount.fetch_add(
@@ -468,7 +469,8 @@ void CHeicBitmapFrameDecode::DecodeImage()
                 m_Handle.get_chroma_bits_per_pixel(),
                 m_Handle.has_alpha_channel(),
                 sys.dwNumberOfProcessors,otherDecodes);
-        } else if(workerSetting[0]==L'2' || workerSetting[0]==L'4') {
+        } else if(workerSetting[0]==L'1' || workerSetting[0]==L'2' ||
+                  workerSetting[0]==L'4') {
             workers=workerSetting[0]-L'0';
         }
         printf("THUMB_WORKERS_POLICY_DECISION requested=%c selected=%u "
