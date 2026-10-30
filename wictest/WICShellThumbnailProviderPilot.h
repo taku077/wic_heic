@@ -327,6 +327,20 @@ inline void RunOrientationGate() {
     Need(!WicShellLabSafety::FromStream(alphaStream),
          "Real alpha auxiliary HEIF incorrectly admitted to embedded fast path");
     std::puts("CI_SHELL_REAL_ALPHA_HEIC_FASTPATH_REJECTED_PASS");
+    // Real encoded 8-bit HEIF images with explicit PQ/HLG NCLX metadata.
+    // This tests color signaling rejection, not HDR pixel/tone-map fidelity.
+    for(const wchar_t* name : {L"wicfast_with_pq_4032x3024.heic",
+                               L"wicfast_with_hlg_4032x3024.heic"}) {
+        CComPtr<IWICStream> candidate;
+        const std::wstring path=std::wstring(tmp,n)+L"\\"+name;
+        Need(SUCCEEDED(factory->CreateStream(&candidate)) &&
+             SUCCEEDED(candidate->InitializeFromFilename(path.c_str(),GENERIC_READ)),
+             "PQ/HLG NCLX synthetic HEIF missing");
+        Need(!WicShellLabSafety::FromStream(candidate),
+             "HDR transfer metadata admitted to SDR embedded preview shortcut");
+    }
+    std::puts("CI_SHELL_PQ_HLG_NCLX_COLOR_FAIL_CLOSED_PASS");
+
 
     std::puts("CI_SHELL_ORIENTATION_METADATA_FAIL_CLOSED_PASS");
 }
