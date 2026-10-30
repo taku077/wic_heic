@@ -26,6 +26,8 @@
 
 > **2026-10-30 23時台の最新状態（過去記述に優先）:** 新しい実機ETLレポート CPU_AllProcesses_20261030_230208_049.txt は正常。PID不明は249,525件（54.72%）→9,888件（2.17%）へ改善したが、プロセス名不明は293,247件（64.31%）で不変。既存提出ZIPのProcess_CPU_1s.csvとの照合により PID936=explorer 70,212件、PID10084=Photos 5,034件を識別。未識別は同一PID再利用なしの前提付きで218,001件（47.81%）。PID11664の87,383件（19.16%）は依然不明。ProcessEnd/DCStopからの名前収集を追加、Actions #41069110425 SUCCESS。**実機での追加改善率は未確認、CPU100%は未解決、新規MSIは保留。**
 
+> **2026-10-30 23時台のShell改善成果（第18節を優先確認）:** CPU全体100%は未解決。実験ブランチ `experiment/shell-com-focused-20261030` 最新HEAD `fba2d3e92d8157187ac58664a493d3c22362f4ec`。複雑HEICの事前判定を64KiBまでで早期拒否する研究コードを追加し、過去のiPhone系HEIC（読み取り専用のメタ構造調査）でgrid/dimg/auxlがファイル先頭にあることを確認。人工131072Bで先頭65536Bだけの読込みをCI検証。**新たな正規8×6=48タイル+埋込HEVCサムネイルの人工HEICを生成**し、登録済みShellハンドラーでフルWICフォールバック、RGB MAE0.00、元の関連付け復元を検証。Actions #41071529559 SUCCESS。単純人工HEICの埋込経路では既定93.5ms→12.0ms（各8枚の中央値）を維持。**この速度値は複雑gridへの適用効果ではない**。製品MSIには未統合。詳細は第18節、個人画像／ETLは公開していない。
+
 ## 0. 新しいチャット用の最短開始指示
 
 「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
@@ -315,3 +317,19 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - 詳細（匿名化済み）: https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-20261030/docs/WIN10_1133_ETL_V2_CROSSCHECK_20261030_JA.md
 - 外部根拠: Microsoft PerfViewプロセス生涯 https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Computers/TraceProcess.cs ; TraceEvent parser https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Parsers/kerneltraceeventparser.cs.base ; WPA CPU解釈 https://learn.microsoft.com/en-us/windows-hardware/test/wpt/cpu-analysis
 - **次に進む条件**: 無限に診断をやり直さず、既存のShell/dllhostフルサイズ復号削減の実装研究へも進む。追加実機検証が必要となったときだけ、過去提出ZIPと最新ツールを**当方から再添付**する。新MSIはCPU改善と安全性が確認できるまで作らない。
+
+## 18. 2026-10-30 23時台：Shellフル復号コスト削減研究の再開と正規48タイルgridゲート
+
+**重要：** 前のCPUレポート解析だけで足踏みせず、HEIC復号負荷を直接減らすためShell高速経路の研究コードを改良した。CIは成功したがユーザーWindows10の本番WIC/MSIには反映しておらず、**CPU100%は未解決**。ユーザーの大容量ETL・写真を再提出させる必要はない。
+
+- **研究ブランチ：** `experiment/shell-com-focused-20261030` / 記録時HEAD `fba2d3e92d8157187ac58664a493d3c22362f4ec`。実装／テスト：`wictest/WICShellOrientationGate.h`、`wictest/WICShellThumbnailProviderPilot.h`、`wictest/isolated_shell/SyntheticEmbeddedHevcThumb.cpp`、`.github/workflows/shell-com-focused-ci.yml`。
+- **実装1：** `IThumbnailProvider` が起動する前に、`FromStream` は従来最大24MiBの全HEICを確保・読み込んでいた。新コードはまず64KiBだけ確保・読込み、`grid`・`auxl`・`dimg`・`tmap` という複合HEIF関係の印が見つかった場合に**早期に通常フルWICへ安全に戻る**。この4文字列は**拒否だけに使用**し、許可に使わない。該当しない場合は以前の完全なBMFF構文・色・Exif検査を維持する。
+- **既存写真のメタデータだけを読む私的調査：** 過去提出のiPhone系HEIC（元1,721,813 bytes）の先頭64KiBでgrid=1173 byte、dimg=1550、auxl=1708、ICC prof=1770を確認。画像画素の復号／書換えは行わず、ファイル名や個人メタデータはGitHub未公開。64KiB早期拒否により、**この事前判定に限りファイルコピー・メモリ確保が設計上約96.2%削減**される。WICフル復号そのものが減る効果ではなく、実機CPU改善率でもない。
+- **試験1：** 人工・無効gridマーカー入りメモリストリーム131072Bを作り、65536B読んだ時点で拒否することをCI確認（`CI_SHELL_COMPLEX_EARLY_REJECT_PASS`）。最初のα素材による「実ファイルの読込み削減」検証は素材全体が37087Bしかなく、成立しなかった。この初期試験の誤ったサイズ前提を訂正済み。
+- **実装2（既存研究の不足を解消）：** 有効な8×6=48タイル（4032×3024px、各504×504）と320×240埋込HEVCサムネイルを備えた**正規の人工grid HEIC**をPinned libheif APIで実際に生成。以前のFourCCだけ書換えた無効grid変異テストとは別。生成マーカー `CI_VALID_GRID_48_TILES_EMBEDDED_THUMB_CREATED_PASS`。
+- **試験2：** Windows Server 2022で隔離Shellハンドラーを実際に登録し `IThumbnailCache` 経由で生成した正規gridを取得。安全側にフルWICフォールバックし、登録前と出力256x192、64×64RGB比較MAE 0.00、強い差分0%。`SHELL_REGISTERED_GRID48_FULL_WIC_FALLBACK_PASS`。ICC、Exif/irot、alpha、PQ/HLG等の既存安全ゲートと関連付け復元もPASS。
+- **既存高速経路の維持：** 単純な人工HEIC（正規gridとは別）では8件中央値93.50ms（既定）→12.00ms（埋込thumb経路）、比0.128、元主画像のフル12MP復号0。**この数値を実iPhone複合gridの高速化達成と表現しない**。
+- **実装CI：** [Actions #41070865266](https://github.com/taku077/wic_heic/actions/runs/41070865266) SUCCESS（初期軽量化）、[Actions #41071529559](https://github.com/taku077/wic_heic/actions/runs/41071529559) SUCCESS（正規grid、画質、登録復旧、既存一式）。
+- **詳細な再利用可能資料：** https://github.com/taku077/wic_heic/blob/experiment/shell-com-focused-20261030/docs/SHELL_GRID48_EMBEDDED_THUMB_PRELIGHT_20261030_JA.md
+- **今後の本質的ゲート：** 実際のiPhoneのgrid+ICC/HDR/gain map+Exifを安全に埋込thumbから表示できるか、まず人工複合素材で**色・向き・HDRの基準画像比較**を検証。安全性を示せない場合は高速パスを拡大しない。Shell専用経路を本番に持ち込む場合は第三者ハンドラー保護、インストール／アンインストール復元、Win10実機のCPU100%・体感の改善を必須とする。**無意味な小刻みMSIを出さない**。
+- **参考：** libheif tiled official API https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images 、Microsoft Shell handlers https://learn.microsoft.com/ja-jp/windows/win32/shell/building-thumbnail-providers 、libvips thumbnail path https://github.com/libvips/libvips/blob/master/libvips/resample/thumbnail.c 、WIC thumbnail fallback https://learn.microsoft.com/en-us/windows/desktop/wic/-wic-imp-iwicbitmapframeencode 。
