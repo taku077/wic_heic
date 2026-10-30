@@ -102,16 +102,24 @@ inline void Run(){
  for(int round=0;round<7;round++){
   for(int off=0;off<2;off++){
    const int i=(round+off)%2;
-   const Sample result=RunOnce(factory,path,i==1);
-   cpu[i].push_back(result.cpu);
-   wall[i].push_back(result.wall);
+   // GetProcessTimes has a ~15.625-ms Windows CPU quantum on this
+   // runner. Aggregate 16 thumbnails so "0.00ms" does not falsely imply
+   // zero CPU work for a 2-ms embedded preview.
+   constexpr int batch=16;
+   const double before=ProcessCpuMs();
+   double wallSum=0;
+   for(int k=0;k<batch;++k)
+     wallSum+=RunOnce(factory,path,i==1).wall;
+   const double cpuAvg=(ProcessCpuMs()-before)/batch;
+   cpu[i].push_back(cpuAvg);
+   wall[i].push_back(wallSum/batch);
   }
  }
  for(int i=0;i<2;i++){
   std::sort(cpu[i].begin(),cpu[i].end());
   std::sort(wall[i].begin(),wall[i].end());
   std::printf("SHELL_CPU_WORK_MEDIAN path=%s cpu_ms=%.2f wall_ms=%.2f "
-              "samples=7 original_unchanged=1\n",
+              "samples=7 batch_size=16 original_unchanged=1\n",
               i?"embedded":"full-wic",cpu[i][3],wall[i][3]);
  }
  Need(cpu[1][3]<cpu[0][3]*0.90,
