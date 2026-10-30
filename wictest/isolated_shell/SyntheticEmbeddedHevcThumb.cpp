@@ -35,7 +35,10 @@ int wmain(int argc,wchar_t** argv) {
         const bool withAlpha=argc==3 && wcscmp(argv[2],L"--with-alpha")==0;
         const bool withPQ=argc==3 && wcscmp(argv[2],L"--with-pq")==0;
         const bool withHLG=argc==3 && wcscmp(argv[2],L"--with-hlg")==0;
-        const bool withGrid=argc==3 && wcscmp(argv[2],L"--with-grid")==0;
+        const bool gridGradient=argc==3 && wcscmp(argv[2],L"--with-grid-gradient")==0;
+        const bool gridDetail=argc==3 && wcscmp(argv[2],L"--with-grid-detail")==0;
+        const bool withGrid=(argc==3 && wcscmp(argv[2],L"--with-grid")==0) ||
+            gridGradient || gridDetail;
         Require(argc==2 || noThumb || withIcc || withAlpha || withPQ || withHLG || withGrid,"Invalid optional mode");
         Require(Env(L"GITHUB_ACTIONS")==L"true","Test generation is CI only");
         const auto root=Env(L"RUNNER_TEMP");
@@ -45,6 +48,8 @@ int wmain(int argc,wchar_t** argv) {
                  withAlpha?L"\\wicfast_with_alpha_4032x3024.heic":
                  withPQ?L"\\wicfast_with_pq_4032x3024.heic":
                  withHLG?L"\\wicfast_with_hlg_4032x3024.heic":
+                 gridGradient?L"\\wicfast_with_grid_gradient_4032x3024.heic":
+                 gridDetail?L"\\wicfast_with_grid_detail_4032x3024.heic":
                  withGrid?L"\\wicfast_with_grid_4032x3024.heic":
                          L"\\wicfast_embedded_4032x3024.heic");
         Require(_wcsicmp(argv[1],exact.c_str())==0,"Refuse non-CI output path");
@@ -66,9 +71,22 @@ int wmain(int argc,wchar_t** argv) {
             auto* row=pixels+size_t(y)*stride;
             for(int x=0;x<kWidth;++x) {
                 const int q=(y>=kHeight/2?2:0)+(x>=kWidth/2?1:0);
-                row[channels*x+0]=colors[q][0];
-                row[channels*x+1]=colors[q][1];
-                row[channels*x+2]=colors[q][2];
+                if(gridGradient){
+                    row[channels*x+0]=uint8_t((255*x)/(kWidth-1));
+                    row[channels*x+1]=uint8_t((255*y)/(kHeight-1));
+                    row[channels*x+2]=uint8_t((255*(x+y))/(kWidth+kHeight-2));
+                } else if(gridDetail){
+                    // 9x11px checker (near the 256px thumbnail sampling
+                    // limit) plus 3px and 5px channel-specific line detail.
+                    // Deterministic artificial pattern, no user photography.
+                    row[channels*x+0]=uint8_t(((x/9+y/11)&1)?240:16);
+                    row[channels*x+1]=uint8_t(((x/3)&1)?225:30);
+                    row[channels*x+2]=uint8_t(((y/5)&1)?220:25);
+                } else {
+                    row[channels*x+0]=colors[q][0];
+                    row[channels*x+1]=colors[q][1];
+                    row[channels*x+2]=colors[q][2];
+                }
                 if(withAlpha)row[channels*x+3]=uint8_t(64+((x/17+y/19)%192));
             }
         }
@@ -160,7 +178,8 @@ int wmain(int argc,wchar_t** argv) {
             auto thandle=primary.get_thumbnail(ids[0]);
             Require(thandle.get_width()==320&&thandle.get_height()==240,
                     "Grid thumb geometry invalid");
-            std::puts("CI_VALID_GRID_48_TILES_EMBEDDED_THUMB_CREATED_PASS");
+            std::printf("CI_VALID_GRID_48_TILES_EMBEDDED_THUMB_CREATED_PASS pattern=%s\n",
+                        gridGradient?"gradient":gridDetail?"detail":"quadrants");
             return 0;
         }
         heif::Context ctx;
