@@ -63,6 +63,23 @@ inline void RunPolicyCases() {
     printf("THUMB_WORKERS_POLICY_CASES_PASS count=%zu "
            "low_res=0 high_depth=0 alpha=0 concurrency_capped=1\n",
            cases.size());
+    // Explorer's high-CPU Shell surrogate has a separate, smaller codec budget.
+    constexpr std::array<Case,7> shell{{
+        {4032,3024,8,8,false,4,0,2},
+        {4032,3024,8,8,false,4,1,0},
+        {4032,3024,8,8,false,4,2,0},
+        {4032,3024,8,8,false,6,0,4},
+        {4032,3024,8,8,false,2,0,2},
+        {4032,3024,10,10,false,4,0,0},
+        {4032,3024,8,8,true,4,0,0}
+    }};
+    for(const auto& c:shell){
+        if(HeicThumbnailWorkerPolicy::SelectForShellCpuBudget(
+            c.w,c.h,c.luma,c.chroma,c.alpha,c.cpus,c.active)!=c.expected)
+            throw std::runtime_error("Shell CPU worker budget regression");
+    }
+    printf("SHELL_LOW_CPU_WORKER_POLICY_PASS cases=%zu target_4cpu=2\n",
+           shell.size());
     struct PhotosCase {unsigned w,h,cpus,active; int luma,chroma; bool alpha; unsigned expected;};
     constexpr std::array<PhotosCase,9> photos{{
       {4032,3024,4,0,8,8,false,2}, {4032,3024,4,1,8,8,false,0},
@@ -111,8 +128,11 @@ inline void RunSmallFallback(IWICImagingFactory* factory) {
 // Verify the PILOT production path without the CI-only worker override.
 inline void RunPilotAutoWithoutOverride(IWICImagingFactory* factory,
     const std::wstring& path,const std::vector<BYTE>& baseline,
-    bool photos=false) {
+    bool photos=false,bool shell=false) {
     SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr);
+    if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_SHELL",
+                                shell?L"1":nullptr))
+        throw std::runtime_error("CI Shell mode could not be set");
     if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",
                                 photos?L"1":nullptr))
         throw std::runtime_error("CI Photos mode could not be set");
@@ -149,9 +169,12 @@ inline void RunPilotAutoWithoutOverride(IWICImagingFactory* factory,
         "Pilot production path changed thumbnail RGB");
     if(photos)
         printf("PHOTOS_UI_2WORKER_RGB_PARITY_PASS source=12MP thumb=256x192\n");
+    else if(shell)
+        printf("SHELL_LOW_CPU_RGB_PARITY_PASS source=12MP thumb=256x192\n");
     else
         printf("THUMB_PILOT_NOENV_RGB_PARITY_PASS source=12MP thumb=256x192\n");
     SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",nullptr);
+    SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_SHELL",nullptr);
 }
 inline void Run() {
     wchar_t enabled[12]{};
@@ -273,5 +296,6 @@ inline void Run() {
     RunSmallFallback(factory);
     RunPilotAutoWithoutOverride(factory,path,referenceThumb);
     RunPilotAutoWithoutOverride(factory,path,referenceThumb,true);
+    RunPilotAutoWithoutOverride(factory,path,referenceThumb,false,true);
 }
 }
