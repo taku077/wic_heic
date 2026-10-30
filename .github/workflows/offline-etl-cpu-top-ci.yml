@@ -91,7 +91,9 @@ jobs:
               $summary=Get-Content -LiteralPath $report -Raw
               if(-not $summary.Contains('TOP EXECUTABLE NAMES') -or
                  -not $summary.Contains('TOP PROCESS INSTANCES') -or
-                 -not $summary.Contains('NonIdle=')){
+                 -not $summary.Contains('TOP 10-SECOND WINDOWS') -or
+                 -not $summary.Contains('WithThreadID=') -or
+                 -not $summary.Contains('NoThreadID=')){
                 throw 'Synthetic ETL CPU report missing all-process sample summary'
               }
               Write-Host 'ETL_CPU_ALL_PROCESS_REAL_WPR_SAMPLED_PARSE_PASS'
