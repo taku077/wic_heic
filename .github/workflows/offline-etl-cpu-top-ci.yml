@@ -109,7 +109,11 @@ jobs:
                  -not $summary.Contains('TOP PROCESS INSTANCES') -or
                  -not $summary.Contains('TOP 10-SECOND WINDOWS') -or
                  -not $summary.Contains('WithThreadID=') -or
-                 -not $summary.Contains('NoThreadID=')){
+                 -not $summary.Contains('NoThreadID=') -or
+                 -not $summary.Contains('AttributionRawPID=') -or
+                 -not $summary.Contains('DeferredUniqueTIDRecovered=') -or
+                 -not $summary.Contains('PIDUnresolved=') -or
+                 -not $summary.Contains('ThreadIDsAmbiguous=')){
                 throw 'Synthetic ETL CPU report missing all-process sample summary'
               }
               Write-Host 'ETL_CPU_ALL_PROCESS_REAL_WPR_SAMPLED_PARSE_PASS'
