@@ -1,0 +1,50 @@
+name: Offline ETL all-process CPU summary (NO uploaded user trace)
+on:
+  push:
+    branches:
+      - investigate/win10-100cpu-after-1133-20261030
+    paths:
+      - 'tools/etl_cpu_top/**'
+      - '.github/workflows/offline-etl-cpu-top-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-readonly:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Compile Windows 10 native ETL offline CPU attribution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          dotnet build tools/etl_cpu_top/EtlCpuTop.csproj -c Release /p:PlatformTarget=x64 --nologo
+          if($LASTEXITCODE -ne 0){throw 'NET48 offline CPU analyzer compilation failed'}
+          $exe='tools/etl_cpu_top/bin/Release/net48/WicHeic_EtlCpuTop_ReadOnly.exe'
+          if(-not(Test-Path $exe)){throw 'No executable'}
+          $help=& $exe --help
+          if($LASTEXITCODE -ne 0 -or -not (($help -join ' ').Contains('OFFLINE') -or ($help -join ' ').Contains('offline'))){
+            throw 'Command help smoke test failed'
+          }
+          $out=Join-Path $env:RUNNER_TEMP 'cpu_report_never_overwrite.txt'
+          Set-Content -LiteralPath $out -Value 'ORIGINAL' -NoNewline
+          $source=Join-Path $env:RUNNER_TEMP 'artificial-blank.etl'
+          Set-Content -LiteralPath $source -Value 'INVALID'
+          & $exe $source $out | Out-Null
+          if($LASTEXITCODE -ne 4 -or (Get-Content $out -Raw) -ne 'ORIGINAL'){
+            throw 'Existing report overwritten or clobber gate failed'
+          }
+          Write-Host 'ETL_CPU_ALL_PROCESS_TOOL_BUILD_AND_NO_OVERWRITE_PASS'
+      - name: Upload read-only offline Windows 10 tool
+        uses: actions/upload-artifact@v4
+        with:
+          name: WicHeic-Offline-Existing-ETL-CPU-Reader-ReadOnly-UNVERIFIED
+          path: tools/etl_cpu_top/bin/Release/net48/**
+          if-no-files-found: error
+          retention-days: 7
