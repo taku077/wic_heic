@@ -192,7 +192,7 @@ jobs:
             'PQ'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_pq_4032x3024.heic')
             'HLG'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_hlg_4032x3024.heic')
           }
-          foreach($label in @('NO_EMBEDDED','IROT3_EXIF6','IROT3_EXIF6_NOAUX','ICC','ALPHA')) {
+          foreach($label in @('NO_EMBEDDED','IROT3_EXIF6','IROT3_EXIF6_NOAUX','ICC','ALPHA','PQ','HLG')) {
             $source=$sourceByLabel[$label]
             $ref=[WicShellCacheAB20261028.Inspect]::One($source,256,4,'BEFORE_HANDLER')
             if($ref.Status -ne 'OK'){throw ('Cannot capture baseline for '+$label+' status='+$ref.Status)}
