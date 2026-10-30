@@ -14,11 +14,18 @@ internal static class Program {
         public long Samples;
         public readonly Dictionary<string,long> Names =
             new Dictionary<string,long>(StringComparer.OrdinalIgnoreCase);
-        public void Add(string n) {
+        // Separate same-named instances (especially multiple dllhost.exe/Photos PIDs).
+        // No command lines, paths, image names, memory addresses, or TIDs leave the PC.
+        public readonly Dictionary<string,long> Instances =
+            new Dictionary<string,long>(StringComparer.OrdinalIgnoreCase);
+        public void Add(string n, int pid) {
             Samples++;
             long prior;
             Names.TryGetValue(n,out prior);
             Names[n]=prior+1;
+            var instance = n + (pid>0 ? " [PID " + pid + "]" : " [PID unknown]");
+            Instances.TryGetValue(instance,out prior);
+            Instances[instance]=prior+1;
         }
     }
     private static string Short(string name) {
@@ -83,7 +90,7 @@ internal static class Program {
                     if(name.StartsWith("Process(",StringComparison.OrdinalIgnoreCase)
                         &&pid>0)name="PID_"+pid;
                     if(string.IsNullOrWhiteSpace(name)){unknown++;name="(unknown)";}
-                    all.Add(name);
+                    all.Add(name,pid);
                     var utc=e.TimeStamp.ToUniversalTime();
                     if(utc<start)start=utc;
                     if(utc>end)end=utc;
@@ -92,7 +99,7 @@ internal static class Program {
                     if(!windows.TryGetValue(bucket,out b)){
                         b=new Bucket();windows[bucket]=b;
                     }
-                    b.Add(name);
+                    b.Add(name,pid);
                 };
                 source.Process();
             }
@@ -119,12 +126,22 @@ internal static class Program {
                     "{0,7:F2}%  {1,10} samples  {2}",
                     100.0*n.Value/all.Samples,n.Value,n.Key));
             sb.AppendLine();
+            sb.AppendLine("TOP PROCESS INSTANCES BY SAMPLED ACTIVE CPU WORK (name + PID)");
+            sb.AppendLine("PIDs are local to this recording and may be reused after process exit.");
+            foreach(var n in all.Instances.OrderByDescending(x=>x.Value).Take(40))
+                sb.AppendLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "{0,7:F2}%  {1,10} samples  {2}",
+                    100.0*n.Value/all.Samples,n.Value,n.Key));
+            sb.AppendLine();
             sb.AppendLine("TOP 10-SECOND WINDOWS BY ACTIVE CPU SAMPLE COUNT");
             foreach(var win in windows.OrderByDescending(x=>x.Value.Samples).Take(16)) {
                 var at=new DateTime(win.Key*10*TimeSpan.TicksPerSecond,DateTimeKind.Utc);
                 sb.Append(at.ToString("o")).Append(" samples=").Append(win.Value.Samples)
                     .Append(" | ");
                 foreach(var n in win.Value.Names.OrderByDescending(x=>x.Value).Take(5))
+                    sb.Append(Short(n.Key)).Append('=').Append(n.Value).Append(' ');
+                sb.Append(" | instances: ");
+                foreach(var n in win.Value.Instances.OrderByDescending(x=>x.Value).Take(5))
                     sb.Append(Short(n.Key)).Append('=').Append(n.Value).Append(' ');
                 sb.AppendLine();
             }
