@@ -111,7 +111,9 @@ jobs:
               $gridShadow=@(& $exe --shell-grid-shadow)
               if($LASTEXITCODE -ne 0 -or
                  -not (($gridShadow -join ' ') -match 'CI_GRID48_EMBEDDED_SHADOW_QUALITY_PASS_NO_FASTPATH_CHANGE') -or
-                 -not (($gridShadow -join ' ') -match 'CI_GRID_SHADOW_EMBEDDED_DECODED_BEFORE_MASTER_PASS')){
+                 -not (($gridShadow -join ' ') -match 'CI_GRID_SHADOW_EMBEDDED_DECODED_BEFORE_MASTER_PASS') -or
+                 -not (($gridShadow -join ' ') -match 'CI_GRID48_CI_ONLY_DIRECT_PROVIDER_EMBEDDED_PASS') -or
+                 -not (($gridShadow -join ' ') -match 'CI_GRID48_NEGATIVE_RELATION_BITDEPTH_ROTATION_COLOR_PASS')){
                  throw ('Grid 48-tile preview-vs-full-WIC comparison failed: '+($gridShadow -join ' | '))
               }
               $gridShadow | ForEach-Object {Write-Host $_}
@@ -121,10 +123,11 @@ jobs:
             $gridEvents=Get-Content -LiteralPath $gridTrace -Raw
             $gridFull=([regex]::Matches($gridEvents,'event=DecoderFullDecode width=4032 height=3024')).Count
             $gridThumb=([regex]::Matches($gridEvents,'event=DecoderThumbnailEmbedded ')).Count
-            if($gridFull -ne 1 -or $gridThumb -lt 1){
+            $gridPilot=([regex]::Matches($gridEvents,'event=ShellLabGrid48ResearchEligible ')).Count
+            if($gridFull -ne 1 -or $gridThumb -lt 2 -or $gridPilot -ne 1){
               throw ('Grid shadow full-primary/embedded counters unexpected: full='+$gridFull+' thumb='+$gridThumb)
             }
-            Write-Host "CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=$gridFull embedded=$gridThumb"
+            Write-Host "CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=$gridFull embedded=$gridThumb pilot=$gridPilot"
             $env:WIC_HEIC_TRACE_FILE=$trace
             & $exe --shell-thumb-provider-fallback
             if($LASTEXITCODE -ne 0){throw 'Fallback native assertions failed'}
