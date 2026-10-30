@@ -21,7 +21,7 @@
 - `iprp/ipma`は50itemの一意なproperties対応。すべてのhvc1に8bit `hvcC`、`ispe`、存在する`pixi`も8bit。利用するpropertyはispe/hvcC/pixi/colrだけ。回転やトリミングの`irot/imir/clap/pasp`等を拒否。
 - `colr`が存在する場合は、ICC（prof/rICC）を拒否し、標準SDR寄りの限られたnclx値だけを許可する。未知のitem type、XMP、Exif、auxl、tmap等は拒否する。
 - **限定的なゲートの欠点**：現時点では`grid` item payloadから実際の行列数とタイル座標を直接検証していない。**このため許可条件は「8×6を必ず証明」ではなく「有効な48タイルへの参照を確認」**が正確。実装はCI限定で、本番／実機へ無条件展開しない。埋込サムネイルと主画像の内容一致を元ファイルのメタデータだけから暗号学的に保証できるわけでもない。
-- 色・向き・HDR・gain map・Exif・アルファが実際に入るHEICを、これまでの個別回帰CIで安全側にフォールバックさせている。追加の真性素材拒否試験も同ブランチに実装。**最終CI結果が出る前はPASSと記さない**。
+- 色・向き・HDR・gain map・Exif・アルファが実際に入るHEICを、これまでの個別回帰CIで安全側にフォールバックさせている。追加の真性素材拒否試験も同ブランチに実装。**実HEIC拒否を明示した最終コードCI： [Actions #41077558646](https://github.com/taku077/wic_heic/actions/runs/41077558646) SUCCESS。ログに `CI_GRID48_RESEARCH_REAL_ICC_IROT_ALPHA_PQ_HLG_REJECTION_PASS`、`CI_GRID48_CI_ONLY_DIRECT_PROVIDER_EMBEDDED_PASS`、`CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=1 embedded=2 pilot=1`、`SHELL_REGISTERED_GRID48_FULL_WIC_FALLBACK_PASS` と `SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS` を確認。**
 
 ## 前回からの進捗と再実施不要の研究
 
