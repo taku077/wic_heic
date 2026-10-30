@@ -118,3 +118,42 @@ jobs:
             if($stop.ExitCode -ne 0){Write-Warning 'WIC unregister returned nonzero'}
             if(Test-Path -LiteralPath $fixture){Remove-Item -LiteralPath $fixture -Force}
           }
+
+      - name: WIC actual 48-tile CPU budget and exact full RGB parity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dll=(Resolve-Path -LiteralPath 'wic_heic/(Build)/x64/Release/wic_heic.dll').Path
+          $gridGenerator=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/SyntheticGridCpuAB.exe').Path
+          $wicTester=(Resolve-Path -LiteralPath 'wictest/(Build)/x64/Release/wictest.exe').Path
+          $grid=Join-Path $env:RUNNER_TEMP 'wicgrid_artificial_4096x3072_48tiles.heic'
+          if(Test-Path -LiteralPath $grid){throw 'Refuse existing WIC grid fixture'}
+          & $gridGenerator --fixture-only
+          if($LASTEXITCODE -ne 0 -or -not(Test-Path -LiteralPath $grid)){
+            throw 'Artificial 48 tile WIC fixture missing'
+          }
+          $trace=Join-Path $env:RUNNER_TEMP 'wicgrid_cpu_numeric_trace_ci.txt'
+          if(Test-Path -LiteralPath $trace){throw 'Refuse existing WIC trace'}
+          $env:WIC_HEIC_TRACE_FILE=$trace
+          $register=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/s',('"{0}"' -f $dll)) -Wait -PassThru
+          if($register.ExitCode -ne 0){throw 'Grid test WIC COM registration failed'}
+          try {
+            & $wicTester --cpu-grid-wic
+            if($LASTEXITCODE -ne 0){throw 'WIC production grid CPU/RGB gate failed'}
+            $record=Get-Content -LiteralPath $trace -Raw
+            foreach($required in @(
+              'event=DecoderTileBudget [^\r\n]*source=tile2 [^\r\n]*operation=2 ',
+              'event=DecoderGridWorkerBudget [^\r\n]*source=grid [^\r\n]*operation=1 ',
+              'event=DecoderWorkerSelect [^\r\n]*source=shell [^\r\n]*operation=1 ',
+              'event=DecoderWorkerSelect [^\r\n]*source=other [^\r\n]*operation=4 '
+            )){
+              if($record -notmatch $required){throw ('Missing real WIC grid worker selection: '+$required)}
+            }
+            Write-Host 'WIC_GRID_CPU_2TILE_1CODEC_TRACE_GATE_PASS'
+          } finally {
+            Remove-Item Env:\WIC_HEIC_TRACE_FILE -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $trace -Force -ErrorAction SilentlyContinue
+            $unreg=Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList @('/u','/s',('"{0}"' -f $dll)) -Wait -PassThru
+            if($unreg.ExitCode -ne 0){throw 'Grid WIC unregister failed'}
+            Remove-Item -LiteralPath $grid -Force -ErrorAction SilentlyContinue
+          }
