@@ -1,9 +1,20 @@
-# Read-only Windows 10 ETL all-process CPU analyzer GUI.
+﻿# Read-only Windows 10 ETL all-process CPU analyzer GUI.
 # No network, registry edits, WPR recording, image edits or file deletion.
+param([switch]$SelfTest)
 $ErrorActionPreference='Stop'
-Add-Type -AssemblyName System.Windows.Forms
 $here=Split-Path -Parent $MyInvocation.MyCommand.Path
 $program=Join-Path $here 'WicHeic_EtlCpuTop_ReadOnly.exe'
+# Test the actual Windows PowerShell 5.1 -File loading path without opening a GUI.
+if($SelfTest){
+  if(-not [System.IO.File]::Exists($program)){throw 'Missing analyzer executable'}
+  $selfResult=& $program --self-test
+  if($LASTEXITCODE -ne 0 -or (($selfResult -join ' ') -notmatch 'PID_BUCKET_SELFTEST_PASS')){
+    throw 'CPU analyzer self-test failed'
+  }
+  Write-Output 'WINDOWS_POWERSHELL_51_LAUNCHER_SELFTEST_PASS'
+  exit 0
+}
+Add-Type -AssemblyName System.Windows.Forms
 if(-not [System.IO.File]::Exists($program)){
   [System.Windows.Forms.MessageBox]::Show('解析プログラムが見つかりません。同じフォルダー内のファイルを移動せず、ZIPをすべて展開してください。','CPU診断',[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Warning)|Out-Null
   exit 1
