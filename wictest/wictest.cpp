@@ -26,6 +26,7 @@
 #include "WICDecoderArbitrationAudit.h"
 #include "WICArbitrationMicroBench.h"
 #include "WICThumbnailWorkerLabProbe.h"
+#include "WICGridCpuParityProbe.h"
 #include "WICThumbnailConcurrentAutoProbe.h"
 #include "WICThumbnailMixedFormatProbe.h"
 #include "WICThumbnailEmbeddedProbe.h"
@@ -426,6 +427,8 @@ int main(int argc,char** argv)
             WICThumbnailWorkerLabProbe::Run();
             WICThumbnailConcurrentAutoProbe::Run();
             WICThumbnailMixedFormatProbe::Run();
+        } else if(argc==2 && std::strcmp(argv[1],"--cpu-grid-wic")==0){
+            WICGridCpuParityProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--cpu-budget-lab")==0){
             WICThumbnailWorkerLabProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--shell-orientation-gate")==0){
