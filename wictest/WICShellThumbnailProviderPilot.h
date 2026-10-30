@@ -478,9 +478,18 @@ inline void RunGridEmbeddedShadow() {
     };
     // Embedded preview BEFORE the full image: decode logs can prove it
     // does not force HEVC full-primary decompression.
+    const ULONGLONG thumbBegin=GetTickCount64();
     const auto preview=render(thumb,tw,th);
+    const ULONGLONG thumbElapsed=GetTickCount64()-thumbBegin;
     std::puts("CI_GRID_SHADOW_EMBEDDED_DECODED_BEFORE_MASTER_PASS");
+    const ULONGLONG masterBegin=GetTickCount64();
     const auto baseline=render(frame,mw,mh);
+    const ULONGLONG masterElapsed=GetTickCount64()-masterBegin;
+    // Informational SINGLE-FIXTURE timings only: do not use as a release
+    // benchmark or assert a speedup on the shared Windows CI runner.
+    std::printf("CI_GRID48_WIC_RENDER_TIMING_MS embedded=%llu full_master=%llu single_sample=1\\n",
+       static_cast<unsigned long long>(thumbElapsed),
+       static_cast<unsigned long long>(masterElapsed));
     double sum=0;
     unsigned intense=0;
     for(int iy=0;iy<64;++iy)for(int ix=0;ix<64;++ix){
