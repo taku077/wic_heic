@@ -32,6 +32,10 @@ jobs:
           if($LASTEXITCODE -ne 0 -or -not (($help -join ' ').Contains('OFFLINE') -or ($help -join ' ').Contains('offline'))){
             throw 'Command help smoke test failed'
           }
+          $pidTest=& $exe --self-test
+          if($LASTEXITCODE -ne 0 -or -not (($pidTest -join ' ').Contains('PID_BUCKET_SELFTEST_PASS'))){
+            throw 'Two same-name instances were not reliably separated by PID'
+          }
           $out=Join-Path $env:RUNNER_TEMP 'cpu_report_never_overwrite.txt'
           Set-Content -LiteralPath $out -Value 'ORIGINAL' -NoNewline
           $source=Join-Path $env:RUNNER_TEMP 'artificial-blank.etl'
