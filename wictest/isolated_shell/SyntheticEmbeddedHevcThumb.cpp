@@ -4,6 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <libheif/heif_cxx.h>
+#include <libheif/heif.h>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -34,7 +35,8 @@ int wmain(int argc,wchar_t** argv) {
         const bool withAlpha=argc==3 && wcscmp(argv[2],L"--with-alpha")==0;
         const bool withPQ=argc==3 && wcscmp(argv[2],L"--with-pq")==0;
         const bool withHLG=argc==3 && wcscmp(argv[2],L"--with-hlg")==0;
-        Require(argc==2 || noThumb || withIcc || withAlpha || withPQ || withHLG,"Invalid optional mode");
+        const bool withGrid=argc==3 && wcscmp(argv[2],L"--with-grid")==0;
+        Require(argc==2 || noThumb || withIcc || withAlpha || withPQ || withHLG || withGrid,"Invalid optional mode");
         Require(Env(L"GITHUB_ACTIONS")==L"true","Test generation is CI only");
         const auto root=Env(L"RUNNER_TEMP");
         Require(!root.empty(),"No CI runner temporary folder");
@@ -43,6 +45,7 @@ int wmain(int argc,wchar_t** argv) {
                  withAlpha?L"\\wicfast_with_alpha_4032x3024.heic":
                  withPQ?L"\\wicfast_with_pq_4032x3024.heic":
                  withHLG?L"\\wicfast_with_hlg_4032x3024.heic":
+                 withGrid?L"\\wicfast_with_grid_4032x3024.heic":
                          L"\\wicfast_embedded_4032x3024.heic");
         Require(_wcsicmp(argv[1],exact.c_str())==0,"Refuse non-CI output path");
         Require(GetFileAttributesW(argv[1])==INVALID_FILE_ATTRIBUTES,
@@ -85,6 +88,80 @@ int wmain(int argc,wchar_t** argv) {
                                               std::istreambuf_iterator<char>());
             Require(bytes.size()>=132 && bytes.size()<=8192,"Unexpected ICC fixture size");
             source.set_raw_color_profile(heif_color_profile_type_prof,bytes);
+        }
+        if(withGrid) {
+            // A genuinely coded 8x6 HEIF grid: 48 independently encoded
+            // opaque 504x504 tiles and a separately encoded 320x240 preview.
+            // Unlike earlier metadata FourCC mutations, this is a valid grid.
+            // All pixels are artificial; files can only be written to CI temp.
+            constexpr int cols=8,rows=6,tw=kWidth/cols,th=kHeight/rows;
+            heif_context* gc=heif_context_alloc();
+            Require(gc!=nullptr,"No grid context");
+            heif_encoder* ge=nullptr;
+            heif_image_handle* grid=nullptr;
+            heif_image_handle* thumbnail=nullptr;
+            heif_image* full=nullptr;
+            auto ok=[&](heif_error error,const char* step){
+                Require(error.code==heif_error_Ok,step);
+            };
+            ok(heif_context_get_encoder_for_format(gc,heif_compression_HEVC,&ge),
+                "No HEVC grid encoder");
+            ok(heif_encoder_set_lossy_quality(ge,55),"Cannot set grid quality");
+            ok(heif_context_add_grid_image(gc,kWidth,kHeight,cols,rows,nullptr,&grid),
+                "Cannot create 8x6 HEIF grid");
+            for(int ty=0;ty<rows;++ty)for(int tx=0;tx<cols;++tx){
+                heif_image* tile=nullptr;
+                ok(heif_image_create(tw,th,heif_colorspace_RGB,
+                                     heif_chroma_interleaved_RGB,&tile),"Grid tile create failed");
+                ok(heif_image_add_plane(tile,heif_channel_interleaved,tw,th,8),
+                    "Grid tile plane failed");
+                size_t ts=0;
+                uint8_t* dest=heif_image_get_plane2(tile,heif_channel_interleaved,&ts);
+                Require(dest&&ts>=size_t(tw)*3,"Grid tile RGB unavailable");
+                for(int y=0;y<th;++y)
+                    memcpy(dest+size_t(y)*ts,
+                        pixels+size_t(ty*th+y)*stride+size_t(tx*tw)*3,
+                        size_t(tw)*3);
+                ok(heif_context_add_image_tile(gc,grid,tx,ty,tile,ge),
+                    "Grid tile encoder failed");
+                heif_image_release(tile);
+            }
+            // Only a separately allocated artificial full RGB image is used
+            // to create an embedded preview; it is never encoded as a second
+            // full-sized HEIC primary.
+            ok(heif_image_create(kWidth,kHeight,heif_colorspace_RGB,
+                    heif_chroma_interleaved_RGB,&full),"Grid thumb source failed");
+            ok(heif_image_add_plane(full,heif_channel_interleaved,kWidth,kHeight,8),
+                "Grid thumb source plane failed");
+            size_t fs=0;
+            uint8_t* fp=heif_image_get_plane2(full,heif_channel_interleaved,&fs);
+            Require(fp&&fs>=size_t(kWidth)*3,"Grid thumb source pixels missing");
+            for(int y=0;y<kHeight;++y)
+                memcpy(fp+size_t(y)*fs,pixels+size_t(y)*stride,size_t(kWidth)*3);
+            ok(heif_context_encode_thumbnail(gc,full,grid,ge,nullptr,
+                  kThumbBound,&thumbnail),"Grid embedded thumbnail failed");
+            Require(thumbnail!=nullptr,"No grid thumbnail handle");
+            ok(heif_context_set_primary_image(gc,grid),"Grid primary mark failed");
+            const std::string filename=std::filesystem::path(argv[1]).string();
+            ok(heif_context_write_to_file(gc,filename.c_str()),
+                "Grid file write failed");
+            heif_image_release(full);
+            heif_image_handle_release(thumbnail);
+            heif_image_handle_release(grid);
+            heif_encoder_release(ge);
+            heif_context_free(gc);
+            heif::Context verify;
+            verify.read_from_file(filename);
+            auto primary=verify.get_primary_image_handle();
+            auto ids=primary.get_list_of_thumbnail_IDs();
+            Require(primary.get_width()==kWidth&&primary.get_height()==kHeight,
+                    "Grid master geometry invalid");
+            Require(ids.size()==1,"Grid thumbnail association missing");
+            auto thandle=primary.get_thumbnail(ids[0]);
+            Require(thandle.get_width()==320&&thandle.get_height()==240,
+                    "Grid thumb geometry invalid");
+            std::puts("CI_VALID_GRID_48_TILES_EMBEDDED_THUMB_CREATED_PASS");
+            return 0;
         }
         heif::Context ctx;
         heif::Encoder encoder(heif_compression_HEVC);
