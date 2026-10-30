@@ -112,9 +112,15 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
                 if(*q==L'\\' || *q==L'/')exeName=q+1;
         SYSTEM_INFO sys{};
         GetSystemInfo(&sys);
-        if(exeLength && exeLength<MAX_PATH &&
-           _wcsicmp(exeName,L"dllhost.exe")==0 &&
-           sys.dwNumberOfProcessors==4u)
+        wchar_t ciFlag[12]{},ciShell[4]{};
+        const bool simulation=GetEnvironmentVariableW(
+            L"GITHUB_ACTIONS",ciFlag,12)==4 && wcscmp(ciFlag,L"true")==0 &&
+            GetEnvironmentVariableW(
+                L"WIC_HEIC_THUMB_TEST_SHELL",ciShell,4)==1 &&
+                ciShell[0]==L'1';
+        if(sys.dwNumberOfProcessors==4u &&
+           ((exeLength && exeLength<MAX_PATH &&
+             _wcsicmp(exeName,L"dllhost.exe")==0) || simulation))
             m_Context.set_max_decoding_threads(2);
         m_Context.read_from_reader(*m_Reader);
         WicHeicDiagnostic::Emit("DecoderTileBudget",0,0,0,0,
