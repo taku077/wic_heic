@@ -321,7 +321,9 @@ jobs:
               @{Label='NO_EMBEDDED';Source=(Join-Path $env:RUNNER_TEMP 'wicfast_no_thumb_4032x3024.heic');Reason='no-embedded'},
               @{Label='IROT3_EXIF6';Source=(Resolve-Path 'wictest/samples/fixture-irot3-exif6.heic').Path;Reason='orientation-exif-or-unsupported'},
               @{Label='IROT3_EXIF6_NOAUX';Source=(Resolve-Path 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path;Reason='orientation-exif-or-unsupported'},
-              @{Label='ALPHA';Source=(Join-Path $env:RUNNER_TEMP 'wicfast_with_alpha_4032x3024.heic');Reason='orientation-exif-or-unsupported'}
+              @{Label='ALPHA';Source=(Join-Path $env:RUNNER_TEMP 'wicfast_with_alpha_4032x3024.heic');Reason='orientation-exif-or-unsupported'},
+              @{Label='PQ';Source=(Join-Path $env:RUNNER_TEMP 'wicfast_with_pq_4032x3024.heic');Reason='orientation-exif-or-unsupported'},
+              @{Label='HLG';Source=(Join-Path $env:RUNNER_TEMP 'wicfast_with_hlg_4032x3024.heic');Reason='orientation-exif-or-unsupported'}
             )
             foreach($negative in $negativeCases) {
               $target=Join-Path $env:RUNNER_TEMP ('wicfast_shell_safety_'+$negative.Label+'.heic')
