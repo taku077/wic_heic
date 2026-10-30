@@ -37,6 +37,21 @@ internal static class Program {
         return name.Length>96?name.Substring(0,96):name;
     }
     private static int Main(string[] args) {
+        if(args.Length==1 && args[0]=="--self-test") {
+            var b=new Bucket();
+            b.Add("dllhost.exe",111);
+            b.Add("dllhost.exe",222);
+            b.Add("dllhost.exe",111);
+            if(b.Samples!=3 || b.Names["dllhost.exe"]!=3 ||
+               b.Instances["dllhost.exe [PID 111]"]!=2 ||
+               b.Instances["dllhost.exe [PID 222]"]!=1 ||
+               b.Instances.Count!=2) {
+                Console.Error.WriteLine("PID_BUCKET_SELFTEST_FAIL");
+                return 10;
+            }
+            Console.WriteLine("PID_BUCKET_SELFTEST_PASS");
+            return 0;
+        }
         if(args.Length==1&&(args[0]=="--help"||args[0]=="-h")) {
             Console.WriteLine("Read-only offline ETL CPU sample attribution; all processes.");
             Console.WriteLine("Usage: WicHeic_EtlCpuTop_ReadOnly.exe <CPU_Stacks.etl> <new_report.txt>");
