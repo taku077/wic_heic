@@ -27,6 +27,7 @@
 #include "WICArbitrationMicroBench.h"
 #include "WICThumbnailWorkerLabProbe.h"
 #include "WICGridCpuParityProbe.h"
+#include "WICPhotosGridCpuProbe.h"
 #include "WICThumbnailConcurrentAutoProbe.h"
 #include "WICThumbnailMixedFormatProbe.h"
 #include "WICThumbnailEmbeddedProbe.h"
@@ -427,6 +428,8 @@ int main(int argc,char** argv)
             WICThumbnailWorkerLabProbe::Run();
             WICThumbnailConcurrentAutoProbe::Run();
             WICThumbnailMixedFormatProbe::Run();
+        } else if(argc==2 && std::strcmp(argv[1],"--cpu-grid-wic-photos")==0){
+            WICPhotosGridCpuProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--cpu-grid-wic")==0){
             WICGridCpuParityProbe::Run();
         } else if(argc==2 && std::strcmp(argv[1],"--cpu-budget-lab")==0){
