@@ -73,8 +73,12 @@ inline bool SimplePreviewSafe(const Bytes& bytes) noexcept {
      // HEIF colr: 4-byte type followed by CICP for nclx.
      // Embedded previews are not independently tone-mapped or ICC matched.
      // Refuse PQ/HLG, wide gamut, opaque/unknown color encodings.
-     if(prop.end<prop.data || prop.end-prop.data<11)return false;
-     if(Read(bytes,prop.data,4)!=0x6e636c78u)return false; // only nclx
+     if(prop.end<prop.data || prop.end-prop.data<4)return false;
+     const auto colorType=Read(bytes,prop.data,4);
+     // Existing ICC route is already guarded by GetColorContexts and uses
+     // the full WIC image; retain that proven behavior and its diagnostics.
+     if(colorType==0x70726f66u || colorType==0x72494343u)continue; // prof/rICC
+     if(colorType!=0x6e636c78u || prop.end-prop.data<11)return false; // nclx
      const auto primaries=Read(bytes,prop.data+4,2);
      const auto transfer=Read(bytes,prop.data+6,2);
      const auto matrix=Read(bytes,prop.data+8,2);
