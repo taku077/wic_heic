@@ -99,8 +99,12 @@ jobs:
             $trace=Join-Path $env:RUNNER_TEMP 'wicfast_fallback_events.txt'
             # Isolate fallback trace counters from the independent grid shadow
             # comparison, which deliberately decodes one 48-tile full master.
-            & $exe --shell-orientation-gate
-            if($LASTEXITCODE -ne 0){throw 'Orientation metadata gate failed'}
+            $orientation=@(& $exe --shell-orientation-gate)
+            if($LASTEXITCODE -ne 0 -or
+               -not (($orientation -join ' ') -match 'CI_GRID48_RESEARCH_REAL_ICC_IROT_ALPHA_PQ_HLG_REJECTION_PASS')){
+              throw ('Grid candidate real ICC/Exif/alpha/HDR rejection test failed: '+($orientation -join ' | '))
+            }
+            $orientation | ForEach-Object {Write-Host $_}
             # On a real synthetic 8x6 HEIF grid: compare embedded-only
             # preview to normal full master pixels without enabling the
             # grid fast path or altering any user HEIC file.
