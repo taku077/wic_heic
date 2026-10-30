@@ -138,11 +138,18 @@ Result Decode(const std::string& path,int tileThreads,int codecThreads,
  return {wall,c1-c0};
 }
 }
-int main(){
+int main(int argc,char** argv){
  std::string path;
  try{
   path=FilePath();
   Generate(path);
+  // Standalone WIC grid parity test in the SAME disposable Actions job.
+  // Its caller must clean up this artificial fixture after the comparison.
+  if(argc==2 && std::strcmp(argv[1],"--fixture-only")==0) {
+   std::puts("GRID_CPU_WIC_FIXTURE_READY");
+   return 0;
+  }
+  Require(argc==1,"Unrecognized grid CPU fixture mode");
   std::vector<uint8_t> reference;
   constexpr std::array<int,4> modes{{4,2,1,0}};
   std::array<std::vector<Result>,4> results;
