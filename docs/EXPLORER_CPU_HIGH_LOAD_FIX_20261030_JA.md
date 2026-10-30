@@ -60,3 +60,17 @@ experiment/explorer-cpu-budget-20261030
 **未証明**：ユーザーの本物のdllhost.exeでのCPU使用率低下、gridでのlibheif独立4タイル並列による高CPU、複数フレーム同時の実機体感、Windows10 2C/4TとServer 2022 runnerの差。実機配布は保留し、他形式への影響、MSIロールバックを別途確認する。
 
 CI前段で混在画像fixture不足のため一度失敗したのでCPU専用テストを分離し、既存の混在形式の回帰試験は維持。製品不具合の修正ではなくテスト環境不足の分離。
+
+
+## 2026-10-30 新規：grid画像の独立CPU計測（実画像原本不使用）
+
+- libheif v1.23.7にはHEVC内部codec workerとは独立した、コンテキスト単位のheif_context_set_max_decoding_threads APIが存在する。0はタイルを呼び出しスレッドで順次復号、1は別背景スレッド1本。既定は4。これはcodec workerの0とは異なる。
+- wictest/isolated_shell/SyntheticGridCpuAB.cpp にWindows CI専用の48タイルHEVC grid合成器を作成。画像は使い捨てrunnerのRUNNER_TEMPにのみ生成され、試験後削除。C APIで完全に独立したコンテキストを作成し、タイル並列0/1/2/4およびHEVC codec worker1/2/4を交互に比較。全てのテストでRGB完全一致。
+- libheif v1.23.7のheif_tiling.hのencode_grid引数名の行・列順と実装heif_tiling.cc側の実際の解釈が逆であることに注意し、生成したgridの主画像サイズを読み戻して確認する。
+- [#41012547990](https://github.com/taku077/wic_heic/actions/runs/41012547990)：3072×2304の48タイル、codec worker=1でgrid4→2、CPU時間62.50→78.12msと増えた。小さい人工画像では「並列数を減らせば必ずCPU時間削減」は成立しない。
+- [#41012784412](https://github.com/taku077/wic_heic/actions/runs/41012784412)：4096×3072の12.6MP・48タイル、codec worker=1でgrid4→2、CPU時間218.75→187.50ms（約14.3%減）、壁時計時間90.92→106.33ms（約16.9%増）、RGB厳密一致。各3回中央値。
+- [#41013310048](https://github.com/taku077/wic_heic/actions/runs/41013310048)：12.6MP gridのコンビネーションを各7回。grid4/codec4はwall118.06ms・CPU312.50ms、grid4/codec2は114.09ms・296.88ms、grid2/codec2は119.27ms・296.88ms、grid2/codec1は126.35ms・203.12ms、grid1/codec2は148.43ms・203.12ms。すべてRGB厳密一致。grid2/codec1はこの1回のCIではgrid4/codec4よりCPU時間約35%減少、壁時計約7%増加した。ただし単一runnerの小規模試験であり、別実行との数値の振れもあるため、採用確定ではない。
+
+**重要な実装上の制限**：現在の自作WICはlibheif C++ラッパーheif::Contextを使用し、このラッパーにはCのheif_context_set_max_decoding_threadsに対応する公開setterがない。コンテキストのprivate shared_ptrを不正に取得したり、libheifのグローバル設定を無差別に変更したりしない。C APIでのコンテキスト管理への安全な移行または検証済みの追加ラッパーがない限り、grid上限を**製品経路へ組み込んだとは主張しない**。
+
+次の判断：単純12MPのHEVC codec 4→2は既に実装・CI合格。grid2＋codec1は有望な研究候補だが、追加A/Bと実際のWIC/Shell上で画素・プロファイル・回転・CPU・時間が妥当と確認できるまで試験専用とする。1.1.31 MSIはリリースしない。
