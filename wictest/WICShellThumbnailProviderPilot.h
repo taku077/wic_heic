@@ -317,6 +317,17 @@ inline void RunOrientationGate() {
              "Real EXIF6/irot3 HEIC accidentally accepted by fast path");
     }
     std::puts("CI_SHELL_REAL_IROT3_EXIF6_FAIL_CLOSED_PASS");
+    // Unlike the metadata tag-mutation tests, this file contains a genuine
+    // HEVC image with a separately encoded alpha plane / auxiliary relation.
+    const std::wstring alphaPath=std::wstring(tmp,n)+L"\\wicfast_with_alpha_4032x3024.heic";
+    CComPtr<IWICStream> alphaStream;
+    Need(SUCCEEDED(factory->CreateStream(&alphaStream)) &&
+         SUCCEEDED(alphaStream->InitializeFromFilename(alphaPath.c_str(),GENERIC_READ)),
+         "Genuine alpha HEIF fixture missing");
+    Need(!WicShellLabSafety::FromStream(alphaStream),
+         "Real alpha auxiliary HEIF incorrectly admitted to embedded fast path");
+    std::puts("CI_SHELL_REAL_ALPHA_HEIC_FASTPATH_REJECTED_PASS");
+
     std::puts("CI_SHELL_ORIENTATION_METADATA_FAIL_CLOSED_PASS");
 }
 inline void RunFallback() {
