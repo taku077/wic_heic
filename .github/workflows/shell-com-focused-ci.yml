@@ -298,6 +298,17 @@ jobs:
                throw 'Embedded preview differs in geometry or cannot be RGB compared'
             }
             Write-Host ('SHELL_EMBEDDED_VS_FULL_WIC_QUALITY {0}' -f $fastParity)
+            # Synthetic fixture A/B: strict threshold for visible drift.
+            $m=[regex]::Match($fastParity,'rgb_mae_64=([0-9]+(?:\\.[0-9]+)?)')
+            $p=[regex]::Match($fastParity,'pixels_gt20_percent_64=([0-9]+(?:\\.[0-9]+)?)')
+            if(-not $m.Success -or -not $p.Success){throw 'Missing embedded-vs-full WIC quality metrics'}
+            $mae=[double]::Parse($m.Groups[1].Value,[System.Globalization.CultureInfo]::InvariantCulture)
+            $changed=[double]::Parse($p.Groups[1].Value,[System.Globalization.CultureInfo]::InvariantCulture)
+            if($mae -gt 1.0 -or $changed -gt 0.5){
+              throw ('Embedded shortcut quality regression on synthetic test: '+$fastParity)
+            }
+            Write-Host 'SHELL_EMBEDDED_VS_FULL_WIC_SYNTHETIC_QUALITY_GATE_PASS'
+
 
             # One real, isolated Shell invocation on a genuine ICC-bearing
             # HEIC fixture must deliberately bypass the embedded shortcut.
