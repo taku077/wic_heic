@@ -28,8 +28,13 @@ inline double CpuMs(){
 struct Measure {double wall,cpu;};
 inline Measure One(IWICImagingFactory* factory,const std::wstring& file,
                    bool simulatePhotos,std::vector<BYTE>& reference) {
- Need(SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",
-                              simulatePhotos?L"1":nullptr)!=0,"set shell simulation");
+ // Run BOTH arms through the real Photos codec selection path. Only the
+ // CI-only tile-budget bypass distinguishes current 1.1.32 from this pilot.
+ Need(SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",L"1")!=0,
+      "simulate Photos host");
+ Need(SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS_BASELINE",
+                              simulatePhotos?nullptr:L"1")!=0,
+      "select production-equivalent Photos baseline");
  Need(SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr)!=0,"unset force mode");
  CComPtr<IWICStream> stream;
  Check(factory->CreateStream(&stream),"WIC stream");
@@ -61,7 +66,7 @@ inline Measure One(IWICImagingFactory* factory,const std::wstring& file,
  Need(wall>0&&after>=before,"Invalid measurement");
  std::printf("PHOTOS_GRID_CPU_SAMPLE mode=%s width=4096 height=3072 "
              "wall_ms=%.2f cpu_ms=%.2f exact_rgb=1\n",
-             simulatePhotos?"photos-tile2-codec1":"baseline-tile4-codec4",
+             simulatePhotos?"photos-tile2-codec1":"photos-v1132-tile4-codec2",
              wall,after-before);
  return {wall,after-before};
 }
@@ -86,15 +91,16 @@ inline void Run(){
     const auto result=One(factory,file,i==1,reference);
     wall[i].push_back(result.wall);cpu[i].push_back(result.cpu);
    }
- }catch(...){SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",nullptr);throw;}
+ }catch(...){SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",nullptr);SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS_BASELINE",nullptr);throw;}
  SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",nullptr);
+ SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS_BASELINE",nullptr);
  for(int i=0;i<2;i++){
   Need(cpu[i].size()==5&&wall[i].size()==5,"Insufficient WIC samples");
   std::sort(cpu[i].begin(),cpu[i].end());
   std::sort(wall[i].begin(),wall[i].end());
   std::printf("PHOTOS_GRID_CPU_MEDIAN mode=%s tile_threads=%d codec_threads=%d "
               "wall_ms=%.2f cpu_ms=%.2f samples=5 exact_rgb=1\n",
-              i?"photos":"baseline",i?2:4,i?1:4,
+              i?"photos":"baseline",i?2:4,i?1:2,
               wall[i][2],cpu[i][2]);
  }
  std::puts("PHOTOS_GRID_CPU_POLICY_PARITY_PASS samples=10 tiles=48 real_photos_unverified=1");
