@@ -158,6 +158,22 @@ jobs:
           }
           $baselineMedian=@($baselineSamples | Sort-Object)[3..4] | Measure-Object -Average
           Write-Host ('SHELL_A_B_DEFAULT_MEDIAN_MS={0:F2} samples=8' -f $baselineMedian.Average)
+          # In-memory pixel baseline BEFORE any ShellEx override.
+          # Native CI fixtures only; sample pixels are never written/logged.
+          $refSamples=@{}
+          $sourceByLabel=@{
+            'NO_EMBEDDED'=(Join-Path $env:RUNNER_TEMP 'wicfast_no_thumb_4032x3024.heic')
+            'IROT3_EXIF6'=(Resolve-Path 'wictest/samples/fixture-irot3-exif6.heic').Path
+            'IROT3_EXIF6_NOAUX'=(Resolve-Path 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
+            'ICC'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_icc_4032x3024.heic')
+          }
+          foreach($label in @('NO_EMBEDDED','IROT3_EXIF6','IROT3_EXIF6_NOAUX','ICC')) {
+            $source=$sourceByLabel[$label]
+            $ref=[WicShellCacheAB20261028.Inspect]::One($source,256,4,'BEFORE_HANDLER')
+            if($ref.Status -ne 'OK'){throw ('Cannot capture baseline for '+$label+' status='+$ref.Status)}
+            $refSamples[$label]=$ref
+            Write-Host ('SHELL_PARITY_BASELINE_CAPTURED label={0} dims={1}x{2}' -f $label,$ref.Width,$ref.Height)
+          }
           try {
             # No override or deletion of pre-existing per-user settings.
             foreach($key in $keys){
@@ -264,6 +280,10 @@ jobs:
                   ($newIccFallback-$initialIccFallback) -ne 1) {
                  throw "Shell ICC handling failed closed? full_delta=$($newFull-$initialFull) fallback_delta=$($newIccFallback-$initialIccFallback)"
                }
+               $iccProbe=[WicShellCacheAB20261028.Inspect]::One($iccPath,256,4,'AFTER_HANDLER')
+               if($iccProbe.Status -ne 'OK'){throw ('Shell ICC parity capture failed: '+$iccProbe.Status)}
+               $iccParity=[WicShellCacheAB20261028.Inspect]::CompareSamples($refSamples['ICC'],$iccProbe)
+               Write-Host ('SHELL_IMAGE_PARITY label=ICC dims={0}x{1} compared={2}' -f $iccProbe.Width,$iccProbe.Height,$iccParity)
                Write-Host 'SHELL_REGISTERED_ICC_FULL_WIC_FALLBACK_PASS'
             } finally {
                Remove-Item -LiteralPath $iccPath -Force -ErrorAction SilentlyContinue
@@ -304,6 +324,10 @@ jobs:
                 if((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $hashBefore){
                   throw ('Shell test input bytes changed: '+$negative.Label)
                 }
+                $parityProbe=[WicShellCacheAB20261028.Inspect]::One($target,256,4,'AFTER_HANDLER')
+                if($parityProbe.Status -ne 'OK'){throw ('Shell orientation parity capture failed: '+$negative.Label)}
+                $parity=[WicShellCacheAB20261028.Inspect]::CompareSamples($refSamples[$negative.Label],$parityProbe)
+                Write-Host ('SHELL_IMAGE_PARITY label={0} original={1}x{2} registered={3}x{4} compared={5}' -f $negative.Label,$refSamples[$negative.Label].Width,$refSamples[$negative.Label].Height,$parityProbe.Width,$parityProbe.Height,$parity)
                 Write-Host ('SHELL_REGISTERED_{0}_FULL_WIC_FALLBACK_PASS' -f $negative.Label)
               } finally {
                 Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
