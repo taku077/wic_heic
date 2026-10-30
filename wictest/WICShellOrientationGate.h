@@ -69,6 +69,20 @@ inline bool SimplePreviewSafe(const Bytes& bytes) noexcept {
     const auto& prop=properties[index-1];
     if(prop.type!="hvcC" && prop.type!="ispe" && prop.type!="pixi" &&
        prop.type!="colr")return false;
+    if(prop.type=="colr") {
+     // HEIF colr: 4-byte type followed by CICP for nclx.
+     // Embedded previews are not independently tone-mapped or ICC matched.
+     // Refuse PQ/HLG, wide gamut, opaque/unknown color encodings.
+     if(prop.end<prop.data || prop.end-prop.data<11)return false;
+     if(Read(bytes,prop.data,4)!=0x6e636c78u)return false; // only nclx
+     const auto primaries=Read(bytes,prop.data+4,2);
+     const auto transfer=Read(bytes,prop.data+6,2);
+     const auto matrix=Read(bytes,prop.data+8,2);
+     // Transfer 16=PQ, 18=HLG (ITU-T H.273). Restrict to SDR.
+     if(transfer!=1 && transfer!=13)return false;
+     if(primaries!=1 && primaries!=2)return false;
+     if(matrix!=0 && matrix!=1 && matrix!=2)return false;
+    }
     if(prop.type=="hvcC") {
      // ISO/IEC 14496-15 HEVCDecoderConfigurationRecord:
      // offsets 17 and 18 carry bitDepthLumaMinus8/chromaMinus8.
