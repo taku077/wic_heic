@@ -190,3 +190,18 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - GitHub Actionsの公式な代替取得先： https://github.com/taku077/wic_heic/actions/runs/41059547959 の `Artifacts` > `WicHeic-Offline-Existing-ETL-CPU-Reader-ReadOnly-UNVERIFIED`。GitHubログインとリポジトリ読取り権限が必要。**workflowで保持期間7日**が設定されており長期配布先には不適切。
 - 今後「リンクがダウンロードできない」ときは、その場で同一CIバイナリを再梱包してCRC検証し、ChatGPTダウンロードとGitHub Actions両方を示す。GitHub Releasesへの恒久配布はアップロード実行手段とユーザーが望む公開範囲を確認してから検討。リンクが直ったと断定しない。
 - このCPU解析ツールのWindows10実機ETL動作およびCPU100%解決は**引き続き未検証**。新しいWPR録画は不要。
+
+## 12. 2026-10-30：Windows PowerShell 5.1での日本語PS1起動不能を修正
+
+**ユーザー実機で確認された不具合**：`WicHeic_CPU_Analyzer_Win10_20261030_REPACK` の `Run_Existing_ETL_CPU_Report.ps1` 8行目・24行目などで `MissingEndParenthesisInMethodCall`、文字化けした日本語（例 `CPU險ｺ譁...`）、引用符・括弧・閉じ波括弧の構文エラーが連鎖し、ファイル選択ダイアログさえ開かなかった。CPU解析ロジックや既存ETLが壊れたことを意味しない。
+
+**根本原因を実配布ZIPのバイト列で確認**：日本語文字列を含む `.ps1` が**UTF-8 BOMなし**（先頭 `EF BB BF` なし）。Windows PowerShell 5.1はBOMなしファイルをANSIコードページとして解釈し得る。従来のCIはPowerShell 7 (`pwsh`) のParser.ParseFileでしか検証しておらず、Windows10で実際に起動される5.1のパーサを未検証。Microsoft一次根拠：https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_Character_Encoding?view=powershell-5.1
+
+**修正**：
+- 研究ブランチ `investigate/win10-100cpu-after-1133-20261030` の `tools/etl_cpu_top/Run_Existing_ETL_CPU_Report.ps1` をUTF-8 BOM付き（バイト列 `EF BB BF`）へ更新、日本語画面は維持。GUI表示せず解析EXEの内蔵テストを実行する `-SelfTest` を追加。コミット `3c36528162b50ee9c5ac93d8d369764a54b09854`。
+- `.github/workflows/offline-etl-cpu-top-ci.yml` に**Windows PowerShell 5.1本体 `powershell.exe -File ... -SelfTest` を実行**する検査を追加、配布対象PS1のBOM `EF BB BF` をバイト列で判定。コミット `ea043f87ff5e773611b8609cc9c8df66d820a157`。
+- [GitHub Actions #41061935218](https://github.com/taku077/wic_heic/actions/runs/41061935218) **SUCCESS**。CIログに `ETL_WINDOWS_POWERSHELL_51_JAPANESE_LAUNCHER_PASS`、人工短時間WPR ETLで `REPORT_CREATED` と記録。旧CIのPowerShell7構文検査のみの問題を解消。**ユーザーWindows10のGUI実機テストは未完了**。
+- 旧CI生成バイナリは維持し、修正PS1と日本語案内を入れ直した37エントリCRC合格ZIP `WicHeic_CPU_Analyzer_Win10_PS51_Fixed_20261030.zip` を同チャットに提供。SHA256 `372a2f49c86f1a75eff83ad6fa00b9b6621c7d81160b2079569a0e410db05f24`。チャットリンクは恒久的URLではないため、取得不能時の代替はActions #41061935218のArtifacts（通常ログイン・保存期間7日）。
+- **再発防止ルール**：`powershell.exe` 経由で起動する、日本語を含む全`.ps1`はUTF8 BOMを要求。コード生成・ZIP再梱包後もBOMのバイト列・ZIP CRC・**実際のWindows PowerShell 5.1での動作**を検証する。PowerShell7のみの検査を合格としない。
+
+**次の作業**：ユーザーが修正版ZIPを展開して既存 `CPU_Stacks.etl` を選び、レポートを作成できるか実機で確認する。旧ZIPを混ぜない。写真原本・既存ETLを上書きしない。CPU100%自体は依然未解決。新規WPRの再録画を求めない。
