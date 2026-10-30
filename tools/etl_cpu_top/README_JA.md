@@ -8,6 +8,14 @@
 2. `Run_Existing_ETL_CPU_Report.cmd` をダブルクリックし、既存の `CPU_Stacks.etl` を選択する。例えば従来の `COM_CPU_WPR_Manual_20261030_203013_576` フォルダー内のファイル。現在の1.1.33のWPRを**もう一度録画する必要はない**。
 3. 同じフォルダーに作成される `CPU_AllProcesses_日時.txt` を開いてレビューし、問題なければその**テキストレポートだけ**共有する。生ETLやフルパスは共有不要。
 
+## 2026-10-30の実機提出結果と新しい解析方法
+
+ユーザー提出の `CPU_AllProcesses_20261030_224307_303.txt` は正しい形式で生成されていたが、同レポートのプロセス名不明は **293,247/456,016サンプル（64.31%）** だった。うち **249,525件（54.72%）** はPIDも不明。別の提出済み `Process_CPU_1s.csv` を照合すると、レポートで不明とされたPID936はExplorerだと確認できる。アプリのCPU100%問題の原因が64.31%を占めるという意味ではない。
+
+このバージョンでは、**CPUイベントの受信時に名前が不明でも、即座にunknownへ固定しない**。ETL内のプロセス／スレッドのrundownを最後まで読んだ後で帰属を行う。スレッドIDが複数のPIDに使われたときは再利用と判断し、誤った推測による復元を拒否する。新レポートの `AttributionRawPID`、`DeferredUniqueTIDRecovered`、`PIDUnresolved`、`ThreadIDsAmbiguous` で、どの程度復元できたか検証する。なお、実ユーザーETLでの改善率は **未確認**。
+
+**同じ診断をもう一度録画する必要はない**。過去の提出ZIPはChatGPTのファイルライブラリから回収できている。必要であれば、ツールと元ZIPはその都度こちらで再添付する。生ETLを公開GitHub・CIへアップロードしない。
+
 ## 内容と制限
 
 - Microsoft公式OSS `Microsoft.Diagnostics.Tracing.TraceEvent`（NuGet 3.2.8）で、CPUのETW `PerfInfoSample` とプロセス／スレッド情報を読み取る。
