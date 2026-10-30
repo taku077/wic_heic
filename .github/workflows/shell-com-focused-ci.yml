@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - experiment/shell-com-focused-20261030
+      - experiment/shell-cpu-work-reduction-20261030
   workflow_dispatch:
 permissions:
   contents: read
@@ -96,6 +97,11 @@ jobs:
           try {
             $trace=Join-Path $env:RUNNER_TEMP 'wicfast_fallback_events.txt'
             $env:WIC_HEIC_TRACE_FILE=$trace
+            # This direct-provider CPU-millisecond test is separate from the
+            # registered Shell latency A/B below. An embedded thumbnail must
+            # actually REDUCE PROCESS CPU WORK, not just finish sooner.
+            & $exe --shell-cpu-work
+            if($LASTEXITCODE -ne 0){throw 'Shell embedded thumbnail CPU-ms reduction gate failed'}
             & $exe --shell-orientation-gate
             if($LASTEXITCODE -ne 0){throw 'Orientation metadata gate failed'}
             & $exe --shell-thumb-provider-fallback
