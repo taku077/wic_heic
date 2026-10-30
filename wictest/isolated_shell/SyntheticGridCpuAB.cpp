@@ -75,7 +75,10 @@ void Generate(const std::string& file){
   raw.push_back(img);
  }
  heif_image_handle* gridRaw=nullptr;
- Check(heif_context_encode_grid(ctx.get(),raw.data(),rows,cols,
+ // libheif v1.23.7 API implementation interprets args as (columns,rows)
+ // despite the public heif_tiling.h declaration naming them (rows,columns).
+ // Pass actual columns first and verify the decoded primary geometry.
+ Check(heif_context_encode_grid(ctx.get(),raw.data(),cols,rows,
                                 enc.get(),nullptr,&gridRaw),"encode grid");
  Handle grid(gridRaw,heif_image_handle_release);
  Require(grid!=nullptr,"grid handle");
