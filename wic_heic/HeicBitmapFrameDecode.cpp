@@ -564,7 +564,7 @@ void CHeicBitmapFrameDecode::DecodeImage()
         // internal codec workers for genuine multi-tile images to 1.
         // No metadata or pixel buffers are changed; non-grids stay at 2.
         bool tiledImage=false;
-        if(shellSurrogate && workers==2u && m_pDecoder &&
+        if((shellSurrogate || photos) && workers==2u && m_pDecoder &&
            m_pDecoder->GridTileThreadBudget()==2) {
             heif_image_tiling layout{};
             layout.version=1;
