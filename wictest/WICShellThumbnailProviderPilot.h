@@ -439,6 +439,9 @@ inline void RunGridEmbeddedShadow() {
          "Cannot open genuine CI grid HEIC");
     Need(!WicShellLabSafety::FromStream(stream),
          "Safety gate unexpectedly admitted an unvalidated grid image");
+    Need(WicShellLabSafety::ResearchGrid48FromStream(stream),
+         "Strict CI-only SDR grid48 metadata gate incorrectly rejected a genuine fixture");
+    std::puts("CI_GRID48_STRICT_METADATA_GATE_PASS");
     CComPtr<IWICBitmapDecoder> decoder;
     Need(SUCCEEDED(CoCreateInstance(CLSID_HEICDecoder,nullptr,CLSCTX_INPROC_SERVER,
          IID_PPV_ARGS(&decoder))) &&
