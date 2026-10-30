@@ -20,7 +20,7 @@
 - `iref`は主grid→48tileの`dimg`参照が一つ、縮小画像→主gridの`thmb`参照が一つだけ。補助画像やHDR/Exif関係は未知として拒否。
 - `iprp/ipma`は50itemの一意なproperties対応。すべてのhvc1に8bit `hvcC`、`ispe`、存在する`pixi`も8bit。利用するpropertyはispe/hvcC/pixi/colrだけ。回転やトリミングの`irot/imir/clap/pasp`等を拒否。
 - `colr`が存在する場合は、ICC（prof/rICC）を拒否し、標準SDR寄りの限られたnclx値だけを許可する。未知のitem type、XMP、Exif、auxl、tmap等は拒否する。
-- **限定的なゲートの欠点**：現時点では`grid` item payloadから実際の行列数とタイル座標を直接検証していない。**このため許可条件は「8×6を必ず証明」ではなく「有効な48タイルへの参照を確認」**が正確。実装はCI限定で、本番／実機へ無条件展開しない。埋込サムネイルと主画像の内容一致を元ファイルのメタデータだけから暗号学的に保証できるわけでもない。
+- **2026-10-31更新：grid payloadの行列・サイズ検証を実装済み。** 詳細は末尾の「第21節相当」追記。現時点のゲートは **実際の6行×8列、4032×3024のgrid header＋各504×504タイル／320×240のサムネイルispe** を要求し、未対応の`iloc`構成や不正な範囲は拒否。**ただし各HEVCタイルの符号化画素とサムネイルの全内容が一致すること、ICC/HDR/Exif等の複合iPhone写真の高速化は保証しない。**
 - 色・向き・HDR・gain map・Exif・アルファが実際に入るHEICを、これまでの個別回帰CIで安全側にフォールバックさせている。追加の真性素材拒否試験も同ブランチに実装。**実HEIC拒否を明示した最終コードCI： [Actions #41077558646](https://github.com/taku077/wic_heic/actions/runs/41077558646) SUCCESS。ログに `CI_GRID48_RESEARCH_REAL_ICC_IROT_ALPHA_PQ_HLG_REJECTION_PASS`、`CI_GRID48_CI_ONLY_DIRECT_PROVIDER_EMBEDDED_PASS`、`CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=1 embedded=2 pilot=1`、`SHELL_REGISTERED_GRID48_FULL_WIC_FALLBACK_PASS` と `SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS` を確認。**
 
 ## 前回からの進捗と再実施不要の研究
@@ -42,3 +42,17 @@
 - Microsoftの隔離Shellハンドラー： https://learn.microsoft.com/ja-jp/windows/win32/shell/building-thumbnail-providers
 
 **生のiPhone写真・個人メタデータ・ETL・パスはGitHubへ公開していない。**
+
+## 2026-10-31：grid本体と50itemの寸法を検証するゲートを追加（CI検証成功）
+
+- **コードコミット**：`9df1b8011fd7d6119c0c8a56f3e2ee0e34975f6a`、安全性変異試験 `230efc7b8a46be30af292aebd68c78b7b87b0475`。
+- **最終CI**： https://github.com/taku077/wic_heic/actions/runs/41078596089 **SUCCESS**。実行ログの `CI_GRID48_STRICT_METADATA_GATE_PASS`、`CI_GRID48_GRID_PAYLOAD_GEOMETRY_MUTATIONS_REJECTED_PASS`、`CI_GRID48_CI_ONLY_DIRECT_PROVIDER_EMBEDDED_PASS`、`CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=1 embedded=2 pilot=1`、`CI_GRID48_RESEARCH_REAL_ICC_IROT_ALPHA_PQ_HLG_REJECTION_PASS`、`SHELL_REGISTERED_GRID48_FULL_WIC_FALLBACK_PASS`、`SHELL_REGISTERED_LAB_REGISTRY_RESTORED_PASS`を確認。
+- **新規実装**：`wictest/WICShellOrientationGate.h` に`ResearchGridPayloadRange`／`ResearchGrid48PayloadMatches` を追加。`meta/iloc` でgridのprimary itemを見つけ、`construction_method=1`の1つのextentが`meta/idat`のどのバイト範囲を参照するかを境界検証付きで算出。ilocバージョン1/2、offset/length 4/8 byte、base 0/4/8 byteの範囲に厳格限定し、未対応のデータ参照方式・index・複数extentは許可しない。
+- **実grid payloadの8/12 byte**：バージョン0、予約flagsは0/1のみ、`rows_minus_one=5`、`columns_minus_one=7`、幅4032、高さ3024を明示検証。HEIFの`grid`項目は参照件数だけでは配置・出力寸法を証明できないため、位置を任意のFourCC文字列検索で推測せず、正規iloc/idatから確定する。
+- **各itemの画像寸法**：主gridの`ispe`は4032×3024、48枚のhvc1 tileは504×504、埋込thumbnailは320×240だけを許可。これにより端数タイル・部分クロップ・縦横反転・異なるタイル寸法を現研究ゲートではすべて不適格とする。
+- **CIの不正変異（人工データをメモリ上だけで変更）**：grid payloadのバージョン、flags、行数、列数、幅を改変して全て拒否。tile`ispe`の504幅を503に改変して拒否。生のユーザーHEICを変更しない。
+- **全体の結果**：合法な人工48タイル＋埋込サムネイルは候補として受理し、研究用`IThumbnailProvider`で主画像を余分にフル復号せず256px表示。色・回転・ICC・HDR・アルファに対する従来の安全側フォールバックを維持。CIのRGBサンプル画質試験（MAE0.038/255）も継続成功。
+- **適用範囲の厳密な限界**：これは意図的に狭い **人工8bit SDR／48タイル固定のCI専用実験**。タイルの符号化画素の整合性、外部からの悪意ある全てのBMFF構成、実際のiPhone写真の適格割合、Windows10のCPU使用率低下、Photos回転保存動作は未実証。本番MSIの配布・Shell登録の変更はしない。
+- **参考した別系統の実装と文献**：libheif v1.23.7 `image-items/grid.cc` のヘッダー`rows/columns/output_size`解析、`box.cc` の`Box_iloc::parse`と`construction_method=1`、Nokia HEIFの`itemlocationbox.hpp`、libheif公式tiled image説明。https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images
+
+**次は**人工写真相当の高周波・グラデーション画質差の調査と、本経路が実際のiPhone系gridで何割利用可能か（複合カラー／Exif／HDRの頻度）の調査。実利が乏しければ、過度に一般化せずPhotos／Explorer側の別のフル復号削減策へ切り替える。
