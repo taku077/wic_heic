@@ -1038,6 +1038,7 @@ jobs:
             if($newCPU -ge $baseCPU*0.95 -or $newWall -gt $baseWall*1.6){
               throw ('Photos CPU tradeoff insufficient: '+$baseCPU+' -> '+$newCPU+' CPU-ms and '+$baseWall+' -> '+$newWall+' wall-ms')
             }
+            $records=Get-Content -LiteralPath $trace -Raw
             if($records -notmatch 'event=DecoderWorkerSelect [^\r\n]*source=photos [^\r\n]*operation=1 ' -or
                $records -notmatch 'event=DecoderWorkerSelect [^\r\n]*source=photos [^\r\n]*operation=2 ') {
               throw 'Photos CPU optimization or original baseline was not genuinely selected'
