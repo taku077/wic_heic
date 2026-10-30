@@ -77,3 +77,10 @@
 - インストーラーは [SHELL_1131_INSTALLER_RESTORE_GATE_20261030_JA.md](SHELL_1131_INSTALLER_RESTORE_GATE_20261030_JA.md) の第三者ハンドラー保持・ロールバック条件を満たす実製品テストが未完了。1.1.31 MSIは現時点ではリリースしない。
 
 外部根拠：Microsoft Shell IThumbnailProvider/ハンドラー登録、libvips heifloadのICC/Exif処理、ITU-T H.273のPQ=16/HLG=18、libheif v1.23.7のnclx API、ExifTool/GPACによる構造確認。
+
+
+### 2026-10-30 最終追記：画質指標をCI必須合格ゲート化
+
+埋込320x240サムネイルを利用する人工HEICについて、従来フル12MP WIC抽出と試作Shell抽出の表示寸法一致、64x64 RGBサンプルMAE <= 1.0/255、強い差分のあるピクセル割合 <= 0.5% をCIの必須条件に追加。Windows Server 2022 Actions [#41009020344](https://github.com/taku077/wic_heic/actions/runs/41009020344) SUCCESS。実測は MAE=0.04、強い差分0.00%、従来102ms対試作12ms（各8ファイル中央値）。Exif/irot、ICC、実アルファ、PQ、HLG、インストーラー試験用Shell登録復元の既存CIもPASS。
+
+注意：これは一つの人工パターンの縮小RGB画質ゲートであり、全画素の厳密一致や実iPhoneのgrid/HDR/gain mapの画質を証明しない。Windows10でのカメラ固有・実フォルダ全体の効果は未検証。旧実機ではCopyTransのProgIDがShellハンドラー選択に影響した事例があり、[インストーラー復元ゲート](SHELL_1131_INSTALLER_RESTORE_GATE_20261030_JA.md) に実環境の関連付け優先順位と第三者ハンドラー保護を追記。1.1.31 MSIリリースは引き続き保留。
