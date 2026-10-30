@@ -13,7 +13,7 @@
 #include <memory>
 #pragma comment(lib,"kernel32.lib")
 namespace {
-constexpr int tw=384,th=384,cols=8,rows=6;
+constexpr int tw=512,th=512,cols=8,rows=6;
 constexpr int width=tw*cols,height=th*rows;
 void Require(bool ok,const char* reason){if(!ok)throw std::runtime_error(reason);}
 void Check(heif_error e,const char* stage){
@@ -41,7 +41,7 @@ std::string FilePath(){
  char flag[10]{};
  Require(GetEnvironmentVariableA("GITHUB_ACTIONS",flag,10)==4 &&
          std::strcmp(flag,"true")==0,"CI only");
- return std::string(root,n)+"\\wicgrid_artificial_3072x2304_48tiles.heic";
+ return std::string(root,n)+"\\wicgrid_artificial_4096x3072_48tiles.heic";
 }
 void Generate(const std::string& file){
  Require(GetFileAttributesA(file.c_str())==INVALID_FILE_ATTRIBUTES,
