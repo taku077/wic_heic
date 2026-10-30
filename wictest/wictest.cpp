@@ -426,6 +426,8 @@ int main(int argc,char** argv)
             WICThumbnailWorkerLabProbe::Run();
             WICThumbnailConcurrentAutoProbe::Run();
             WICThumbnailMixedFormatProbe::Run();
+        } else if(argc==2 && std::strcmp(argv[1],"--shell-grid-pattern-quality")==0){
+            WICShellThumbnailProviderPilot::RunGridPatternQuality();
         } else if(argc==2 && std::strcmp(argv[1],"--shell-grid-shadow")==0){
             WICShellThumbnailProviderPilot::RunGridEmbeddedShadow();
         } else if(argc==2 && std::strcmp(argv[1],"--shell-orientation-gate")==0){
