@@ -664,6 +664,92 @@ inline void RunGridEmbeddedShadow() {
          "Genuine grid preview color / geometry differs from primary WIC");
     std::puts("CI_GRID48_EMBEDDED_SHADOW_QUALITY_PASS_NO_FASTPATH_CHANGE");
 }
+// CI-only measurement on valid 48-tile images with difficult artificial
+// source content. Does NOT turn on the grid fast path: metadata cannot prove
+// that an embedded thumbnail preserves high-frequency content.
+inline void RunGridPatternQuality() {
+    wchar_t dir[32768]{},ci[16]{};
+    const DWORD n=GetEnvironmentVariableW(L"RUNNER_TEMP",dir,32768);
+    Need(n>0&&n<32768 &&
+         GetEnvironmentVariableW(L"GITHUB_ACTIONS",ci,16)==4 &&
+         wcscmp(ci,L"true")==0,
+         "Grid content-quality tests are allowed in CI only");
+    CComPtr<IWICImagingFactory> factory;
+    Need(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,
+         CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory))),
+         "WIC factory missing for artificial grid pattern test");
+    auto render=[&](IWICBitmapSource* source)->std::vector<BYTE>{
+        CComPtr<IWICBitmapScaler> scaler;
+        Need(SUCCEEDED(factory->CreateBitmapScaler(&scaler)) &&
+             SUCCEEDED(scaler->Initialize(source,256,192,WICBitmapInterpolationModeFant)),
+             "Pattern WIC scaler failed");
+        CComPtr<IWICFormatConverter> convert;
+        Need(SUCCEEDED(factory->CreateFormatConverter(&convert)) &&
+             SUCCEEDED(convert->Initialize(scaler,GUID_WICPixelFormat32bppBGRA,
+               WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom)),
+             "Pattern WIC BGRA conversion failed");
+        std::vector<BYTE> out(256u*192u*4u);
+        Need(SUCCEEDED(convert->CopyPixels(nullptr,256u*4u,
+             static_cast<UINT>(out.size()),out.data())),
+             "Pattern WIC pixels failed");
+        return out;
+    };
+    for(const wchar_t* pattern:{L"gradient",L"detail"}){
+        std::wstring file=std::wstring(dir,n)+L"\\wicfast_with_grid_"+
+             pattern+L"_4032x3024.heic";
+        CComPtr<IWICStream> stream;
+        Need(SUCCEEDED(factory->CreateStream(&stream)) &&
+             SUCCEEDED(stream->InitializeFromFilename(file.c_str(),GENERIC_READ)),
+             "Generated artificial grid pattern HEIC missing");
+        Need(WicShellLabSafety::ResearchGrid48FromStream(stream),
+             "Artificial grid pattern rejected by strict metadata gate");
+        CComPtr<IWICBitmapDecoder> decoder;
+        Need(SUCCEEDED(CoCreateInstance(CLSID_HEICDecoder,nullptr,
+             CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&decoder))) &&
+             SUCCEEDED(decoder->Initialize(stream,WICDecodeMetadataCacheOnDemand)),
+             "Pattern HEIC decoder failed");
+        CComPtr<IWICBitmapSource> embedded;
+        CComPtr<IWICBitmapFrameDecode> frame;
+        Need(SUCCEEDED(decoder->GetThumbnail(&embedded)) &&
+             SUCCEEDED(decoder->GetFrame(0,&frame)) && embedded && frame,
+             "Pattern does not provide valid thumbnail and primary");
+        UINT ew=0,eh=0,fw=0,fh=0;
+        Need(SUCCEEDED(embedded->GetSize(&ew,&eh)) &&
+             SUCCEEDED(frame->GetSize(&fw,&fh)) &&
+             ew==320 && eh==240 && fw==4032 && fh==3024,
+             "Pattern WIC geometry invalid");
+        const auto small=render(embedded);
+        const auto full=render(frame);
+        double sum=0.0,peak=0.0;
+        unsigned large=0;
+        unsigned histogram[256]{};
+        for(size_t pixel=0;pixel<256u*192u;++pixel){
+            for(size_t ch=0;ch<3;++ch){
+                int d=abs(int(small[pixel*4+ch])-int(full[pixel*4+ch]));
+                sum+=d;
+                if(d>20)large++;
+                if(double(d)>peak)peak=d;
+                histogram[d]++;
+            }
+        }
+        const unsigned long total=256ul*192ul*3ul;
+        unsigned long cumulative=0;
+        unsigned p95=255;
+        for(unsigned d=0;d<256;++d){
+            cumulative+=histogram[d];
+            if(cumulative*100ul>=total*95ul){p95=d;break;}
+        }
+        const double mae=sum/double(total);
+        const double pct=100.0*double(large)/double(total);
+        std::printf("CI_GRID_CONTENT_QUALITY pattern=%ls mae_all=%.3f p95=%u max=%.0f "
+             "gt20_pct=%.3f samples=%lu accepted_metadata=1 "
+             "reference=full_WIC output=256x192\n",
+             pattern,mae,p95,peak,pct,total);
+        Need(mae>=0.0 && mae<=255.0 && pct>=0.0 && pct<=100.0,
+             "Artificial grid pattern quality statistics invalid");
+    }
+    std::puts("CI_GRID_CONTENT_QUALITY_REPORTED_NO_FASTPATH_EXPANSION_PASS");
+}
 inline void Run() {
     wchar_t temp[32768]{};
     const auto n=GetEnvironmentVariableW(L"RUNNER_TEMP",temp,32768);
