@@ -41,6 +41,15 @@ jobs:
             throw 'Existing report overwritten or clobber gate failed'
           }
           $global:LASTEXITCODE=0 # Expected prior tool failure (exit 4) was asserted above.
+          $tokens=$null; $parseErrors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path tools/etl_cpu_top/Run_Existing_ETL_CPU_Report.ps1).Path,
+            [ref]$tokens,[ref]$parseErrors)
+          if($parseErrors.Count -gt 0){throw 'PowerShell GUI entrypoint has parser errors'}
+          $outDir='tools/etl_cpu_top/bin/Release/net48'
+          Copy-Item -LiteralPath 'tools/etl_cpu_top/Run_Existing_ETL_CPU_Report.ps1' -Destination $outDir
+          Copy-Item -LiteralPath 'tools/etl_cpu_top/Run_Existing_ETL_CPU_Report.cmd' -Destination $outDir
+          Copy-Item -LiteralPath 'tools/etl_cpu_top/README_JA.md' -Destination $outDir
           Write-Host 'ETL_CPU_ALL_PROCESS_TOOL_BUILD_AND_NO_OVERWRITE_PASS'
       - name: Upload read-only offline Windows 10 tool
         uses: actions/upload-artifact@v4
