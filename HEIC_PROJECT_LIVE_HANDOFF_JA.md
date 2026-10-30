@@ -31,7 +31,7 @@
 |Explorer grid CPU研究|`experiment/shell-cpu-work-reduction-20261030` / `2c26f94b912b5038d4b2ddc740348d4a0df2f735`|Shell CPU計測専用実験。|
 |v1.1.32比較候補|`candidate/explorer-grid-cpu-1132-win10` / `2c7878a2671e9616dd32ae72a707c36b99d8fcca`|COM Surrogateでタイル2/codec1の評価。|
 |**v1.1.33実機評価候補**|`candidate/photos-grid-cpu-1133-win10` / `0580b959a684cc63a305aa5c24478ddb2a7359a9`|Photosの48タイルgridを4/2→2/1に制限。Actions #41046215352 SUCCESS。**実機CPU100%は未解決**。|
-|**直近作業の先端**|`investigate/win10-100cpu-after-1133-20261030` / `cc155f220b30c4e65b951aa1f65af61e98727631`|既存WPR ETLから全プロセスCPU寄与を抽出するオフライン解析ツール。Actions #41054479043 SUCCESS。実ユーザーETLでの解析結果は**未取得／未確認**。|
+|**直近作業の先端**|`investigate/win10-100cpu-after-1133-20261030` / `1b3cf460436ad23e7a7cc39cff1c8fadef4b31a4`|既存WPR ETLから全プロセス・同名プロセスPID別のCPUサンプルを集計するオフライン診断ツール。Actions #41057776963 **SUCCESS**。実ユーザーETLでの解析結果は**未取得／未確認**。|
 
 **重要**：メインの作業先端は過去の `fix/photos-118-selfwic-incremental` や10月29日の引継ぎ記載SHAではない。研究ブランチと安全性本線を混同しない。新チャットでは `compare` と最新CIを確認してから変更を提案する。
 
@@ -82,7 +82,7 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 
 ## 5. 現在の成果物・未完了ゲート（新チャット開始時に確認）
 
-**実験先端**：`investigate/win10-100cpu-after-1133-20261030`（上記SHA参照）に `tools/etl_cpu_top/` の **既存ETL読み取り専用 全プロセスCPU集計ツール**を追加済み。Windows .NET Framework 4.8／TraceEventを利用。専用Actions #41054479043 SUCCESS（短いCI合成WPR ETLを読み、上書き禁止・プライバシー・基本動作を確認）。**ユーザーの2026-10-30 ETLそのものに対する実行結果はまだない**。
+**実験先端**：`investigate/win10-100cpu-after-1133-20261030`（上記SHA参照）に `tools/etl_cpu_top/` の **既存ETL読み取り専用 全プロセス＋PID別CPU集計ツール**を追加済み。Windows .NET Framework 4.8／TraceEventを利用。専用Actions #41057776963 **SUCCESS**（短いCI合成WPR ETLを読み、同名 `dllhost.exe` の2 PIDを区別する回帰試験、上書き禁止、プライバシー・基本動作を確認）。**ユーザーの2026-10-30 ETLそのものに対する実行結果はまだない**。
 
 ツール案内（実験ブランチ）:
 https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-20261030/tools/etl_cpu_top/README_JA.md
@@ -135,3 +135,24 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 ---
 
 **最終台帳編集:** 2026-10-30 JST。最終技術確認は上記ブランチHEAD / CI。次回は必ず現在値に更新する。
+
+## 9. 2026-10-30 続編の実作業と横断調査の追加成果
+
+### GitHubへ実際に反映した変更
+
+- **固定台帳を `master` に新規作成：** 初回コミット `74f55bd5872b5118369e88ab25ba9b32211017f9`。以降は本ファイルを最新版に更新する。既存の作業コードブランチとは独立。
+- **ETL CPU解析をPID別に詳細化：** `tools/etl_cpu_top/Program.cs` で「同じ名前の実行ファイルでもPIDごとにCPUサンプルを分ける」集計を追加。`dllhost.exe`、複数Windowsフォト、サービスホストの負荷発生元を調べやすくする。プロセス名の集計も残す。
+- **回帰テスト：** `--self-test` が同名 `dllhost.exe` のPID 111と222を3サンプルで正しく別集計することを確認。既存WPRを使った小型のCI ETL読み取り、レポート上書き拒否、GUIスクリプトの構文検査も維持。
+- **直近コードHEAD:** `1b3cf460436ad23e7a7cc39cff1c8fadef4b31a4`（`investigate/win10-100cpu-after-1133-20261030`）。
+- **CI:** https://github.com/taku077/wic_heic/actions/runs/41057776963 **SUCCESS**（2026-10-30 21:46 JST頃）。これは **Windows Server 2022で合成短時間WPR ETLを処理できる**ことの確認であり、個人ETL解析と実機CPU100%解決の証拠ではない。
+- **注意：** PIDは一つの記録で有効な一時的識別子であり、プロセス終了後は再利用される場合がある。同じPIDの一意なプロセス生涯を厳密に分離する機能は未実装。新しい解析ツールはCPUサンプル割合のみで、タスクマネージャーCPU Utilityや全CPU-msそのものではない。写真・ファイルパス・コマンドラインを出力しない。
+
+### 今回の横断確認（実装判断に反映）
+
+- MicrosoftのWPR CPU sampledの説明では、プロセス別／スレッド別集計を行う必要があり、サンプル数だけでは短いISR/DPCやCPU Utilityを完全に再現できない： https://learn.microsoft.com/en-us/windows-hardware/test/wpt/cpu-analysis
+- GitHub上のMicrosoft PerfView TraceEvent実装も `PerfInfoSample` とプロセス生涯／スレッド対応を参照： https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Computers/TraceProcess.cs
+- Intel 第7世代GPUにHEVCデコード機能は存在するが、現在のlibheif/libde265ソフト復号が自動でそれを使う証拠ではない： https://www.intel.com/content/www/us/en/support/articles/000055741/graphics/processor-graphics.html
+- libvips HEIFは埋込サムネイルを利用する際も寸法・比率検査と元画像メタデータを考慮する： https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c
+- libheifのグリッドタイル並列とコーデック内部並列は別のCPU調整対象であり、0指定の意味も異なる： https://github.com/strukturag/libheif/security/advisories/GHSA-prgh-72vc-3xmc
+
+**次の作業開始点：** 既存の2026-10-30 20:30 WPR `CPU_Stacks.etl` に対してPID別/10秒区間の解析結果を得て、高負荷がPhotos／dllhost／System／その他のどこに集中するかを特定する。**新しい長時間録画を要求しない。** 利用できない場合は未確認を維持し、同じ仮説の無限反復や無意味なMSI発行はしない。CPU100%問題は引き続き**未解決**。
