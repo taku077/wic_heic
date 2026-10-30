@@ -1,0 +1,137 @@
+# HEIC / WIC 長期開発・常時更新引継ぎ台帳（正本）
+
+**台帳作成日:** 2026-10-30 JST  
+**対象シリーズ:** ChatGPT「HEIC表示方式比較 1～15」および今後の続編  
+**正本の固定URL:** https://github.com/taku077/wic_heic/blob/master/HEIC_PROJECT_LIVE_HANDOFF_JA.md  
+**リポジトリ:** https://github.com/taku077/wic_heic
+
+> **このファイルがチャット移行用の唯一の入口。** 新チャットではまず本ファイルを取得し、**ここに書いたSHAやCIはスナップショットなので、その時点でGitHubの各ブランチHEAD・CI・直近の変更を再取得**する。既存研究・失敗を繰り返さない。作業中も重要な決定・実装・CI・実機評価のたびにこのファイルを更新する。更新不能時は「更新できなかった」と明示する。過去15スレッドの全メッセージ・添付がこのファイルだけで完全復元できるとは主張しない。
+
+## 0. 新しいチャット用の最短開始指示
+
+「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
+
+## 1. 目的・判定基準・禁止事項（固定）
+
+- **最優先：** Windows 10標準「フォト」を開くとPC全体CPU100%が続き、操作が重くなる問題の軽減。Explorer/COM Surrogateとの競合も対象。**単一デコードの速度だけ上がってもCPU問題が残れば未解決**。
+- **併走目標：** Windows標準ExplorerのHEIC初回サムネイルとフォト表示を実用的な速度に近づけ、回転・保存・ICC/Exif/アルファ/HDR/グリッド画像を破壊しない。JPEG並みが理想だが理論値だけ追い続けず現実的な妥協点を探す。
+- **試験環境：** Windows 10 Pro 22H2 x64／第7世代Core i5系（既存調査ではi5-7200U、2C/4T）／Intel HD Graphics 620／RAM16GB／約1,894枚混在フォルダ。Windows Server 2022 Actionsでの成功はWin10実機成功と区別。
+- **原本保護：** ユーザーのHEIC/JPEG/PNG等の原本を**書換え・削除・上書きしない**。編集・保存の検証は人工HEICまたは専用コピーのみ。過去に復元した `IMG_4074` は**再実験禁止**。`IMG_4425`も原本での変更禁止。
+- WPR/ETL、写真、ユーザーPCのファイルパス、加工前生ログ、個人情報は**公開GitHubへ投稿しない**。台帳には匿名化・集計済み結果と検証済みURLのみ。
+- 既存WIC/ShellEx登録、他社ハンドラー（CopyTrans等）の優先順位を強引に変更・無効化せず、MSIのアンインストール/復旧は破壊なし・元状態へのロールバックを必須とする。
+- 毎回MSIを発行しない。**コード変更→赤/緑回帰試験→CI全PASS→意味ある性能/CPU改善→慎重なMSI候補→ユーザー実機評価**。小刻みな見かけ改善だけでは公開しない。
+- ベンチは**同じ入力・同じ条件**でCPU-ms/画像、CPU使用率の持続、wall-ms、フル復号回数、表示画質、フォト応答、PC全体CPUを区別。異なるセッションの単純比較は因果効果と呼ばない。
+
+## 2. 2026-10-30 最終確認した現状・GitHub HEAD（更新時には再照合）
+
+|役割|ブランチ／記録時のHEAD|意味|
+|---|---|---|
+|安全性本線|`fix/grid-rotation-lossless-safety-20261028` / `724d0f44c7d42556b959a6364092be17fd8e4e2f`|無再圧縮回転・未認証保存拒否・ICC等の基準を保持。Actions #40856125988 SUCCESS。|
+|Shell埋込thumb研究|`experiment/shell-com-focused-20261030` / `0027cfcec69d8b1966bc349cde624a85d04d363a`|登録済Shell経路、Exif/irot/ICC/alpha/PQ/HLG、画質閾値、第三者ハンドラー保護を人工CI検証。**本番MSIには未統合**。|
+|Explorer grid CPU研究|`experiment/shell-cpu-work-reduction-20261030` / `2c26f94b912b5038d4b2ddc740348d4a0df2f735`|Shell CPU計測専用実験。|
+|v1.1.32比較候補|`candidate/explorer-grid-cpu-1132-win10` / `2c7878a2671e9616dd32ae72a707c36b99d8fcca`|COM Surrogateでタイル2/codec1の評価。|
+|**v1.1.33実機評価候補**|`candidate/photos-grid-cpu-1133-win10` / `0580b959a684cc63a305aa5c24478ddb2a7359a9`|Photosの48タイルgridを4/2→2/1に制限。Actions #41046215352 SUCCESS。**実機CPU100%は未解決**。|
+|**直近作業の先端**|`investigate/win10-100cpu-after-1133-20261030` / `cc155f220b30c4e65b951aa1f65af61e98727631`|既存WPR ETLから全プロセスCPU寄与を抽出するオフライン解析ツール。Actions #41054479043 SUCCESS。実ユーザーETLでの解析結果は**未取得／未確認**。|
+
+**重要**：メインの作業先端は過去の `fix/photos-118-selfwic-incremental` や10月29日の引継ぎ記載SHAではない。研究ブランチと安全性本線を混同しない。新チャットでは `compare` と最新CIを確認してから変更を提案する。
+
+## 3. 最新ユーザー実機報告：v1.1.33でもCPU100%（未解決）
+
+出典（匿名化技術記録）：
+https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-20261030/docs/WIN10_1133_CPU100_NOT_RESOLVED_20261030_JA.md
+
+- **2026-10-30 20:30～20:33 JSTの1.1.33実機WPR**は収集完了（WPR exit=0、ETL約1.50GB）。前の1.1.32 WPRは同日18:04～18:08。
+- 1.1.33でPhotosの `DecoderWorkerSelect source=photos operation=1`、`DecoderGridWorkerBudget source=grid operation=1` 等を確認。**修正コード自体は有効化されていた**。旧版が読み込まれたと決めつけない。
+- 同一セッション内のログ計数：1.1.33のWIC全解像度復号71回、そのうちPhotos6、dllhost65。旧1.1.32 WPRは総178（Photos24、dllhost154）。**収録時間・操作・画像・キャッシュが異なるため減少をバージョン改善率としない**。
+- 1.1.33の1秒CPUサンプラー（限定3プロセス）ではPhotos最大62%、dllhost合計45%、Explorer最大27%、この3系統の同一秒合計最大77%。**サンプラーはSystemやその他のプロセス等を網羅していない**のでTask ManagerのPC全体100%との不一致を矛盾としない。CPU指標の定義も同一でない。
+- 今後の軸は(1)既存ETLの全プロセス・スタックCPU帰属 (2)不要なShell全解像度復号の削減 (3)可能ならIntel GPUでのHEVC HW復号の**読み取り専用実現性評価**。CPUデコードの並列数だけをいじり続けない。
+- **再度の長時間WPR録画をユーザーへ要求しない。** 既に提供されたデータを最優先で再利用。生ETLをGitHubやCIへ送信しない。
+- 現状**v1.1.34 MSIリリースは保留**。
+
+## 4. 既存研究成果の不変台帳（同じ研究をやり直さない）
+
+### 保存・回転・品質
+
+- v1.1.18はHEVC警告解除・回転UI操作が可能な旧比較対象だが、回転保存で画像崩れがあり「正常版」ではない。
+- Exif OrientationとHEIF `irot` の同時存在（例：IMG_3916、Exif=3・irot=2）は複合処理が重要。人工HEICで無再圧縮90/180/270度と4連続回転の画素一致試験あり。ICC/Exif保持、未認証RGB由来の安全な保存拒否は維持する。
+- `IMG_4425` の回転後サムネイル消失／再度回転保存失敗の根本原因は未確定。48タイルgrid＋gain map＋ICC＋Exif＋埋込thumbなど複合構造。libheif 1.23.7導入は安全性改善だが特定実機不具合の因果証明ではない。
+- 1894枚混在フォルダでの縮小・回転連打によるPhotos横長固着／一時画像消失・向きの更新遅延の再現報告あり。フォト再起動で一時回復する例もあり、コーデック単独の断定は禁物。
+
+### CPU解析済み事項
+
+- 2026-10-29 WPRオフラインETL CPU IP分析済み：dllhost PID2712の153,543 CPUサンプル中 `wic_heic.dll` のアドレス領域113,221（73.739%）。dllhost高負荷とWIC経路は根拠がある。ただし静的リンクされたlibheif/libde265と自作ラッパー関数の内訳は別途PDB等の検証が必要。
+- 同PIDで `DecoderGetFrame=141`・`DecoderFullDecode=141`、埋込thumb取得イベント0。**CopyPixels行単位呼び出し多数を重複フル復号と誤認しない**。
+- 4論理CPUの従来4then0（別画像を同プロセスで並行する場合はcodec既定0）の実装済み。**codec worker=0 は停止ではない**。libheifのgrid tile thread=0とは別。
+- 固定2 codec workerの単純な案は単一画像の遅延が大きく本線不採用。条件付きPhotos/Shell制限やgridタイル制限とは別の試験。
+- Windows Server 2022人工12MP/48tileにおけるv1.1.33条件の安定化した7組×8枚比較：Photos tile4/codec2 **296.88 CPU-ms/画像、110.49 wall-ms** → tile2/codec1 **207.03 CPU-ms、120.85 wall-ms**。約30.3% CPU削減・9.4%遅延。**実機CPU100%改善は実証していない**。
+- 1.1.31→1.1.32の異なる実機セッションのdllhost平均CPU43.05%→21.51%、最大87%→46%という測定あり。ただし表示画像／処理速度／キャッシュ／録画時間が異なり、単純な改善率とはしない。
+
+### Shellサムネイル高速経路（先行成果を再利用）
+
+- 既存WIC `GetThumbnail` では人工12MP + 埋込320×240が主画像フル復号0で取得可能。しかし標準 `IThumbnailCache::GetThumbnail` はこのメソッドを呼ばず全解像度復号する場合があり、**GetThumbnail単独改善で解決とはならない**。
+- `IThumbnailProvider + IInitializeWithStream` のShell独立試作で、単純人工12MP/埋込320×240の場合、登録済Shell経路8件中央値が従来約103ms→試作約12ms、フル復号なし（Windows Server 2022 CI）。性能・画質の一例であり実画像・Windows10では未証明。
+- 2026-10-30のShell研究ではICC、Exif/irot、alpha、PQ/HLG nclx、>8bit、grid/gain map、非適格画像を**安全な通常WICフォールバック**へ。合成パターンの縮小RGB MAE0.04/255、強い差分0%のゲートも合格。ただし複合iPhone画像には高速経路が適用できない可能性が高く、全フォルダの適格率未測定。
+- 他社CopyTrans等の登録値保護・復元はCIの模擬/隔離試験あり。本番MSIへのShellEx切替は未完了。**他社ハンドラーを壊してまで採用しない**。
+- Shell高速thumb研究とPhotos CPU制御は別経路。直近ユーザーのWindows10では本番Shell高速ハンドラーは未搭載。
+
+### 他の非採用・重複禁止
+
+- WIC登録優先順位の強制変更、他社デコーダーの安易な無効化、キャッシュ全削除での性能偽装、毎回のMSI生成、単一スレッド/2ワーカー固定の無条件採用を繰り返さない。
+- 旧v0.4.0初回HEICサムネイルの2/4 **codec内部ワーカー**と複数ファイルのShell画像並列は別。古いCI warm-cacheの一括速度を実Explorer初回表示の証明としない。
+- HEIC Manager（独立WPFビューアー／サムネイル）の別スレッド開発とWindows標準フォトWIC開発を混同しない。競合するシェル拡張登録に注意。
+
+## 5. 現在の成果物・未完了ゲート（新チャット開始時に確認）
+
+**実験先端**：`investigate/win10-100cpu-after-1133-20261030`（上記SHA参照）に `tools/etl_cpu_top/` の **既存ETL読み取り専用 全プロセスCPU集計ツール**を追加済み。Windows .NET Framework 4.8／TraceEventを利用。専用Actions #41054479043 SUCCESS（短いCI合成WPR ETLを読み、上書き禁止・プライバシー・基本動作を確認）。**ユーザーの2026-10-30 ETLそのものに対する実行結果はまだない**。
+
+ツール案内（実験ブランチ）:
+https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-20261030/tools/etl_cpu_top/README_JA.md
+
+- この解析はCPU100%を治すものではなく、未集計プロセス・10秒区間を特定して次の改修対象を絞る。実ETL実行未確認の段階で成功と説明しない。
+- まず既存レポートと現在のCI成果物、同じETLの再解析可能性を調べる。ユーザーの操作は最小限にし、新たな大容量WPR収録は行わない。
+- 次にShell全解像度復号の削減が実複合grid/ICC/HDR画像で安全に可能か検討。ハードウェアHEVC復号はIntel HD620の機能があるが、libheif/libde265のソフトウェア経路に自動適用されない。Windows Media FoundationハードウェアMFT列挙・人工画像で安全に可否を調べ、製品実装を先走らない。
+- 何を試しても実機体感・PC全体CPUが改善しない場合は、費用対効果の観点で採用保留／旧版維持とする。
+
+## 6. 一次資料と横断調査・採用基準
+
+**一サイトだけを検索しない。** 新規仮説ごとに、Microsoft Learn、`strukturag/libheif` のリリース・実コード・issue、`strukturag/libde265`、`libvips/libvips` のHEIFロード/サムネイル実装、FFmpeg、GPAC MP4Box、ExifTool、Exiv2、Intelハードウェア資料、他のWIC Shell OSS、GitHub issue/PR、必要に応じStack Overflow等を突合する。GitHub・実装・公的仕様を優先。資料の単なる列挙ではなく **対象コード箇所・対応バージョン・採否・性能測定・未検証点**に反映する。
+
+- libheif v1.23.7: https://github.com/strukturag/libheif/releases/tag/v1.23.7 （2026-10-26のセキュリティ/CPU使い切り・グリッド並列の不具合修正。通常のフォトCPU100%の直接原因という証拠ではない）
+- libvipsのembedded HEIF thumbnail活用方針: https://github.com/libvips/libvips/blob/master/libvips/resample/thumbnail.c
+- WICとExplorer thumbnail統合: https://learn.microsoft.com/en-us/windows/win32/wic/-wic-integrationregentries
+- Shell thumbnail provider: https://learn.microsoft.com/en-us/windows/win32/shell/building-thumbnail-providers
+- WPR sampled CPU: https://learn.microsoft.com/en-us/troubleshoot/windows-server/support-tools/support-tools-xperf-wpa-wpr
+- Intel 7th gen HD620 HEVC HW機能: https://www.intel.com/content/www/us/en/developer/articles/technical/encode-and-decode-capabilities-for-7th-generation-intel-core-processors-and-newer.html
+- Windows MFT HW enum: https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mftenumex
+- libde265: https://github.com/strukturag/libde265
+- GPAC: https://github.com/gpac/gpac
+- FFmpeg: https://ffmpeg.org/
+- ExifTool: https://exiftool.org/
+- Exiv2: https://exiv2.org/
+
+## 7. 詳細エビデンスへの道筋（本台帳だけで省略した詳細を辿る）
+
+- 2026-10-29旧総合引継ぎ：過去のユーザーの添付 `HEIC_WIC_COMPLETE_HANDOFF_20261029_JA.md`（ChatGPTライブラリ）。**当時のHEADは古い**ので本台帳が優先。
+- 2026-10-30 1～14差分：過去の添付 `HEIC_WIC_HANDOFF_SERIES_1-14_UPDATED_20261030.md`。Shell研究初期を含む。**現在の研究ブランチより古い**。
+- v1.1.33未解決：`docs/WIN10_1133_CPU100_NOT_RESOLVED_20261030_JA.md`（`investigate/win10-100cpu-after-1133-20261030`）。
+- v1.1.33 CIベンチ：`docs/WIN10_PHOTOS_GRID_CPU_1133_RC_JA.md`（同ブランチ）。
+- v1.1.32実機ベンチ：`docs/WIN10_HEIC_CPU_WPR_20261030_180447_1132_JA.md`（同ブランチ）。
+- 初回CPU IP帰属：`docs/WIN10_HEIC_ETL_CPU_20261029_PID2712_JA.md`（同ブランチ）。
+- Shell埋込経路：`docs/EXPLORER_EMBEDDED_HEVC_PROVIDER_FEASIBILITY_20261030_JA.md`（Shell研究・調査ブランチ）。
+- インストーラー復元：`docs/SHELL_1131_INSTALLER_RESTORE_GATE_20261030_JA.md`（Shell研究ブランチ）。
+- 関連CI runは各文書内のリンクから確認。CI成功が機能の本番保証であると扱わない。
+
+## 8. 台帳運用ルール（強制）
+
+1. **作業開始時**：本台帳取得 → GitHub現HEAD/コミット差分/Actions・実装照合 → 最新ユーザー報告の再確認。古いSHAのまま開発しない。
+2. **作業の節目ごと**：新しいコミット/CI URL・成功失敗・実測値/対象素材・安全性・新たな不具合・棄却案をこのファイルに上書き更新。**「いつか移行するときにまとめて」は禁止**。
+3. 研究が失敗した場合も「理由と再実施不要条件」を書き、将来の再研究を抑制。
+4. 利用者の「体感上変わらない」「CPU100%」は実機評価として優先し、CIの改善値だけで打ち消さない。
+5. **masterにはこの台帳など文書のみを変更し、製品コードは用途別ブランチで作業。** 台帳がGitHubコミットを動かしてもコードブランチのHEADは動かさない。
+6. 各更新後、実際に `master` からこのファイルを再読して保存を確認。更新不能ならその場で報告し、次回の取得前提にしない。
+7. GitHub接続に失敗した場合、黙って古いスナップショットで続行せず、取得不能な点を明示して安全側に停止。
+8. **本台帳はチャット全文・個人ETLの保管庫ではない。** 実機データは会話添付・ライブラリ等で厳密に管理し、GitHubには匿名化要約のみ。
+
+---
+
+**最終台帳編集:** 2026-10-30 JST。最終技術確認は上記ブランチHEAD / CI。次回は必ず現在値に更新する。
