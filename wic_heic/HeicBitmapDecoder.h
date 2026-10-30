@@ -39,5 +39,6 @@ public:
 	virtual HRESULT STDMETHODCALLTYPE GetFrameCount(__RPC__out UINT *pCount);
 	virtual HRESULT STDMETHODCALLTYPE GetFrame(UINT index, __RPC__deref_out_opt IWICBitmapFrameDecode **ppIBitmapFrame);
 	HRESULT CopyOriginalBytes(std::vector<uint8_t>& content);
+	int GridTileThreadBudget() const noexcept {return m_Context.get_max_decoding_threads();}
 };
 
