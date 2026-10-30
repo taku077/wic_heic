@@ -1,0 +1,58 @@
+name: Read-only HEVC GPU capability research (NO user images)
+on:
+  push:
+    branches:
+      - investigate/win10-100cpu-after-1133-20261030
+    paths:
+      - 'tools/hevc_gpu_probe/**'
+      - '.github/workflows/hevc-gpu-probe-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-gpu-probe:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile and validate read-only hardware enumeration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $vswhere=Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if(-not(Test-Path $vswhere)){throw 'Visual Studio discovery missing'}
+          $vs=& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if(-not $vs){throw 'MSVC not found'}
+          $vcvars=Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+          if(-not(Test-Path $vcvars)){throw 'No vcvars64'}
+          $outDir='tools/hevc_gpu_probe/build'
+          New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+          $bat=Join-Path $env:RUNNER_TEMP 'compile_gpu_probe.cmd'
+          $src=(Resolve-Path 'tools/hevc_gpu_probe/HevcGpuReadOnly.cpp').Path
+          $exe=Join-Path (Resolve-Path $outDir).Path 'HevcGpuReadOnly.exe'
+          @(
+            '@echo off'
+            'call "'+$vcvars+'" >nul || exit /b 11'
+            'cl.exe /nologo /std:c++17 /EHsc /W4 /WX "'+$src+'" /link /out:"'+$exe+'" d3d11.lib mfplat.lib mfuuid.lib ole32.lib'
+            'exit /b %errorlevel%'
+          ) | Set-Content -LiteralPath $bat -Encoding ascii
+          & cmd.exe /d /c ('"'+$bat+'"')
+          if($LASTEXITCODE -ne 0 -or -not(Test-Path $exe)){throw 'HEVC GPU probe compiler failure'}
+          $result=& $exe --self-test
+          if($LASTEXITCODE -ne 0 -or (($result -join ' ') -notmatch 'HEVC_GPU_CAPABILITY_SELFTEST_PASS')){throw 'Logic self-test failed'}
+          $report=& $exe
+          if($LASTEXITCODE -ne 0 -or (($report -join ' ') -notmatch 'RESULT_SCOPE=CAPABILITY_ONLY_NOT_HEIC_DECODE') -or
+             (($report -join ' ') -notmatch 'NO_IMAGE_IO=1')){
+            throw 'Read-only CI runtime failed'
+          }
+          Write-Host 'GPU_CAPABILITY_COMPILE_AND_READONLY_SMOKE_PASS'
+          Write-Host 'CI runner GPU enumeration is not evidence of the users Windows 10 HEVC capabilities'
+      - name: Upload read-only capability tool only
+        uses: actions/upload-artifact@v4
+        with:
+          name: WicHeic-HEVC-GPU-Capability-ReadOnly-EXPERIMENTAL
+          path: tools/hevc_gpu_probe/build/HevcGpuReadOnly.exe
+          if-no-files-found: error
+          retention-days: 7
