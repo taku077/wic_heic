@@ -125,11 +125,35 @@ HRESULT STDMETHODCALLTYPE CHeicBitmapDecoder::Initialize(__RPC__in_opt IStream *
                                       photoSimulation,4)==1 &&
              photoSimulation[0]==L'1');
         const bool isPhotos=PhotosPureRotationBridge::IsWindowsPhotosHost() || photosCI;
-        if(sys.dwNumberOfProcessors==4u &&
-           ((exeLength && exeLength<MAX_PATH &&
-             _wcsicmp(exeName,L"dllhost.exe")==0) || simulation || isPhotos))
-            m_Context.set_max_decoding_threads(2);
+        const bool shellCap=sys.dwNumberOfProcessors==4u &&
+            ((exeLength && exeLength<MAX_PATH &&
+              _wcsicmp(exeName,L"dllhost.exe")==0) || simulation);
+        if(shellCap)m_Context.set_max_decoding_threads(2);
         m_Context.read_from_reader(*m_Reader);
+        // Only apply the new Photos cap to eligible 8-bit opaque GRID files.
+        // Photo UI orientation/metadata/encoder paths and non-grid formats
+        // retain the current 1.1.32 decoding policy.
+        if(!shellCap && isPhotos && sys.dwNumberOfProcessors==4u) {
+            try {
+                const auto primary=m_Context.get_primary_image_handle();
+                const uint64_t pixels=uint64_t(primary.get_width())*
+                                      uint64_t(primary.get_height());
+                heif_image_tiling grid{};
+                grid.version=1;
+                const auto status=heif_image_handle_get_image_tiling(
+                    primary.get_raw_image_handle(),0,&grid);
+                if(pixels>=6000000ull && !primary.has_alpha_channel() &&
+                   primary.get_luma_bits_per_pixel()==8 &&
+                   primary.get_chroma_bits_per_pixel()==8 &&
+                   status.code==heif_error_Ok &&
+                   grid.num_columns>0 && grid.num_rows>0 &&
+                   uint64_t(grid.num_columns)*grid.num_rows>1u)
+                    m_Context.set_max_decoding_threads(2);
+            } catch(...) {
+                // Never fail image opening because optional CPU preflight
+                // cannot inspect an unusual or malformed HEIF container.
+            }
+        }
         WicHeicDiagnostic::Emit("DecoderTileBudget",0,0,0,0,
             m_Context.get_max_decoding_threads()==2?"tile2":"default",
             S_OK,static_cast<UINT>(m_Context.get_max_decoding_threads()));
