@@ -186,7 +186,7 @@ jobs:
             'ICC'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_icc_4032x3024.heic')
             'ALPHA'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_alpha_4032x3024.heic')
           }
-          foreach($label in @('NO_EMBEDDED','IROT3_EXIF6','IROT3_EXIF6_NOAUX','ICC')) {
+          foreach($label in @('NO_EMBEDDED','IROT3_EXIF6','IROT3_EXIF6_NOAUX','ICC','ALPHA')) {
             $source=$sourceByLabel[$label]
             $ref=[WicShellCacheAB20261028.Inspect]::One($source,256,4,'BEFORE_HANDLER')
             if($ref.Status -ne 'OK'){throw ('Cannot capture baseline for '+$label+' status='+$ref.Status)}
