@@ -85,24 +85,35 @@ inline void Run(){
  std::vector<BYTE> reference;
  std::array<std::vector<double>,2> cpu,wall;
  try{
-  for(int round=0;round<5;round++)
+  // Each process CPU measurement is quantized on Windows; timing one
+ // 12MP decode and taking five medians is insufficient for a release gate.
+ // Measure 7 interleaved BATCHES of 8 independent WIC decodes each, including
+ // setup CPU as well as full-frame CopyPixels, then compare per-image averages.
+ constexpr int batchSize=8,rounds=7;
+ for(int round=0;round<rounds;round++)
    for(int step=0;step<2;step++){
-    const int i=(step+round)%2; // alternate to reduce cache bias
-    const auto result=One(factory,file,i==1,reference);
-    wall[i].push_back(result.wall);cpu[i].push_back(result.cpu);
+    const int i=(step+round)%2; // alternate baseline and candidate
+    const double cpuBefore=CpuMs();
+    double wallTotal=0.0;
+    for(int k=0;k<batchSize;k++)
+       wallTotal+=One(factory,file,i==1,reference).wall;
+    const double cpuAverage=(CpuMs()-cpuBefore)/double(batchSize);
+    Need(cpuAverage>=0.0,"Invalid aggregated CPU time");
+    wall[i].push_back(wallTotal/double(batchSize));
+    cpu[i].push_back(cpuAverage);
    }
  }catch(...){SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",nullptr);SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS_BASELINE",nullptr);throw;}
  SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS",nullptr);
  SetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_PHOTOS_BASELINE",nullptr);
  for(int i=0;i<2;i++){
-  Need(cpu[i].size()==5&&wall[i].size()==5,"Insufficient WIC samples");
+  Need(cpu[i].size()==7&&wall[i].size()==7,"Insufficient WIC batch samples");
   std::sort(cpu[i].begin(),cpu[i].end());
   std::sort(wall[i].begin(),wall[i].end());
   std::printf("PHOTOS_GRID_CPU_MEDIAN mode=%s tile_threads=%d codec_threads=%d "
-              "wall_ms=%.2f cpu_ms=%.2f samples=5 exact_rgb=1\n",
+              "wall_ms=%.2f cpu_ms=%.2f samples=7 batch_size=8 exact_rgb=1\n",
               i?"photos":"baseline",i?2:4,i?1:2,
-              wall[i][2],cpu[i][2]);
+              wall[i][3],cpu[i][3]);
  }
- std::puts("PHOTOS_GRID_CPU_POLICY_PARITY_PASS samples=10 tiles=48 real_photos_unverified=1");
+ std::puts("PHOTOS_GRID_CPU_POLICY_PARITY_PASS samples=112 tiles=48 real_photos_unverified=1");
 }
 }
