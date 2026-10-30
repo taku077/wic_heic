@@ -189,6 +189,8 @@ jobs:
             'IROT3_EXIF6_NOAUX'=(Resolve-Path 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
             'ICC'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_icc_4032x3024.heic')
             'ALPHA'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_alpha_4032x3024.heic')
+            'PQ'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_pq_4032x3024.heic')
+            'HLG'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_hlg_4032x3024.heic')
           }
           foreach($label in @('NO_EMBEDDED','IROT3_EXIF6','IROT3_EXIF6_NOAUX','ICC','ALPHA')) {
             $source=$sourceByLabel[$label]
