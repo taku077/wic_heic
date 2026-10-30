@@ -12,6 +12,12 @@ using Microsoft.Diagnostics.Tracing;
 internal static class Program {
     private sealed class Bucket {
         public long Samples;
+        public long TotalSamples;
+        public long NoThreadIdSamples;
+        public void AddNoThreadId() {
+            TotalSamples++;
+            NoThreadIdSamples++;
+        }
         public readonly Dictionary<string,long> Names =
             new Dictionary<string,long>(StringComparer.OrdinalIgnoreCase);
         // Separate same-named instances (especially multiple dllhost.exe/Photos PIDs).
@@ -19,6 +25,7 @@ internal static class Program {
         public readonly Dictionary<string,long> Instances =
             new Dictionary<string,long>(StringComparer.OrdinalIgnoreCase);
         public void Add(string n, int pid) {
+            TotalSamples++;
             Samples++;
             long prior;
             Names.TryGetValue(n,out prior);
@@ -42,7 +49,9 @@ internal static class Program {
             b.Add("dllhost.exe",111);
             b.Add("dllhost.exe",222);
             b.Add("dllhost.exe",111);
-            if(b.Samples!=3 || b.Names["dllhost.exe"]!=3 ||
+            b.AddNoThreadId();
+            if(b.Samples!=3 || b.TotalSamples!=4 || b.NoThreadIdSamples!=1 ||
+               b.Names["dllhost.exe"]!=3 ||
                b.Instances["dllhost.exe [PID 111]"]!=2 ||
                b.Instances["dllhost.exe [PID 222]"]!=1 ||
                b.Instances.Count!=2) {
@@ -96,7 +105,21 @@ internal static class Program {
                 };
                 source.Kernel.PerfInfoSample += e => {
                     total++;
-                    if(e.ThreadID<=0){idle++;return;}
+                    // Account for ALL samples before rejecting samples without
+                    // a usable thread ID; never silently change the denominator.
+                    var utc=e.TimeStamp.ToUniversalTime();
+                    if(utc<start)start=utc;
+                    if(utc>end)end=utc;
+                    var windowId=(utc.Ticks/TimeSpan.TicksPerSecond)/10;
+                    Bucket b;
+                    if(!windows.TryGetValue(windowId,out b)){
+                        b=new Bucket();windows[windowId]=b;
+                    }
+                    if(e.ThreadID<=0){
+                        idle++;
+                        b.AddNoThreadId();
+                        return;
+                    }
                     int pid=e.ProcessID;
                     if(pid<=0)pidByTid.TryGetValue(e.ThreadID,out pid);
                     string name;
@@ -106,14 +129,6 @@ internal static class Program {
                         &&pid>0)name="PID_"+pid;
                     if(string.IsNullOrWhiteSpace(name)){unknown++;name="(unknown)";}
                     all.Add(name,pid);
-                    var utc=e.TimeStamp.ToUniversalTime();
-                    if(utc<start)start=utc;
-                    if(utc>end)end=utc;
-                    var bucket=(utc.Ticks/TimeSpan.TicksPerSecond)/10;
-                    Bucket b;
-                    if(!windows.TryGetValue(bucket,out b)){
-                        b=new Bucket();windows[bucket]=b;
-                    }
                     b.Add(name,pid);
                 };
                 source.Process();
@@ -127,12 +142,14 @@ internal static class Program {
             sb.AppendLine("Only executable basenames + aggregate CPU sampling counts. No paths.");
             sb.AppendLine("Trace: [local ETL; filename omitted]");
             sb.AppendLine("Native ETW process sampling: NOT Task Manager's overall CPU utility.");
-            sb.AppendLine("Shares below are percent of NON-IDLE sampled CPU work, NOT total PC CPU %.");
+            sb.AppendLine("Shares below are percent of samples WITH THREAD IDs, NOT total PC CPU %.");
+            sb.AppendLine("ThreadID<=0 is counted separately (not assumed to measure all idle time).");
+            sb.AppendLine("ETW may omit idle / DPC / ISR or lose samples: never infer total CPU %.");
             sb.AppendLine("Kernel samples, unresolved PID, and samples lost in ETW can affect attribution.");
             sb.AppendLine("ETW sampling is not a per-image CPU timer. Do not infer per-image speed.");
             sb.AppendLine("LogicalProcessors="+cpus);
-            sb.AppendLine("SamplesAll="+total+" NonIdle="+all.Samples+
-                          " IdleOrTid0="+idle+" Unnamed="+unknown);
+            sb.AppendLine("SamplesAll="+total+" WithThreadID="+all.Samples+
+                          " NoThreadID="+idle+" Unnamed="+unknown);
             sb.AppendLine("SampleTimeWindowUTC="+start.ToString("o")+" to "+end.ToString("o"));
             sb.AppendLine();
             sb.AppendLine("TOP EXECUTABLE NAMES BY SAMPLED ACTIVE CPU WORK");
@@ -148,10 +165,15 @@ internal static class Program {
                     "{0,7:F2}%  {1,10} samples  {2}",
                     100.0*n.Value/all.Samples,n.Value,n.Key));
             sb.AppendLine();
-            sb.AppendLine("TOP 10-SECOND WINDOWS BY ACTIVE CPU SAMPLE COUNT");
+            sb.AppendLine("TOP 10-SECOND WINDOWS BY SAMPLES WITH THREAD ID");
+            sb.AppendLine("10-second bins use UTC epoch boundaries; first/last bins may be partial.");
+            sb.AppendLine("WITH THREAD ID / ALL-RECEIVED is event coverage, NOT total CPU %.");
             foreach(var win in windows.OrderByDescending(x=>x.Value.Samples).Take(16)) {
                 var at=new DateTime(win.Key*10*TimeSpan.TicksPerSecond,DateTimeKind.Utc);
-                sb.Append(at.ToString("o")).Append(" samples=").Append(win.Value.Samples)
+                sb.Append(at.ToString("o"))
+                    .Append(" withThreadID=").Append(win.Value.Samples)
+                    .Append(" allReceived=").Append(win.Value.TotalSamples)
+                    .Append(" noThreadID=").Append(win.Value.NoThreadIdSamples)
                     .Append(" | ");
                 foreach(var n in win.Value.Names.OrderByDescending(x=>x.Value).Take(5))
                     sb.Append(Short(n.Key)).Append('=').Append(n.Value).Append(' ');
