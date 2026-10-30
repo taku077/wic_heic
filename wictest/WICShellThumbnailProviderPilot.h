@@ -487,7 +487,7 @@ inline void RunGridEmbeddedShadow() {
     const ULONGLONG masterElapsed=GetTickCount64()-masterBegin;
     // Informational SINGLE-FIXTURE timings only: do not use as a release
     // benchmark or assert a speedup on the shared Windows CI runner.
-    std::printf("CI_GRID48_WIC_RENDER_TIMING_MS embedded=%llu full_master=%llu single_sample=1\\n",
+    std::printf("CI_GRID48_WIC_RENDER_TIMING_MS embedded=%llu full_master=%llu single_sample=1\n",
        static_cast<unsigned long long>(thumbElapsed),
        static_cast<unsigned long long>(masterElapsed));
     double sum=0;
