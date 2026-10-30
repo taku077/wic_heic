@@ -9,7 +9,7 @@ permissions:
 jobs:
   cpu-budget:
     runs-on: windows-2022
-    timeout-minutes: 18
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +58,15 @@ jobs:
           msbuild wic_heic/wic_heic.vcxproj /m /p:Configuration=Release /p:Platform=x64
           if($LASTEXITCODE -ne 0){throw 'WIC DLL build failed'}
 
+      - name: Benchmark 48-tile grid CPU-ms independently of HEVC workers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          msbuild wictest/isolated_shell/SyntheticGridCpuAB.vcxproj /m:1 /p:Configuration=Release /p:Platform=x64
+          if($LASTEXITCODE -ne 0){throw 'Artificial grid benchmark build failed'}
+          $tester=(Resolve-Path -LiteralPath 'wictest/isolated_shell/(Build)/x64/Release/SyntheticGridCpuAB.exe').Path
+          & $tester
+          if($LASTEXITCODE -ne 0){throw 'Grid CPU and exact RGB parity benchmark failed'}
       - name: Compare decoding CPU-ms and wall-ms for 0/1/2/4 workers
         shell: pwsh
         run: |
