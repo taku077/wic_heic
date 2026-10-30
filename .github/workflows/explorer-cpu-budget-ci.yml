@@ -80,7 +80,7 @@ jobs:
           try {
             Push-Location 'wictest'
             try {
-              & $tester --thumbnail-worker-lab
+              & $tester --cpu-budget-lab
               if($LASTEXITCODE -ne 0){throw 'CPU budget and exact RGB parity gate failed'}
             } finally {
               Pop-Location
