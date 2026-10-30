@@ -167,6 +167,8 @@ jobs:
           # In-memory pixel baseline BEFORE any ShellEx override.
           # Native CI fixtures only; sample pixels are never written/logged.
           $refSamples=@{}
+          $fastReference=[WicShellCacheAB20261028.Inspect]::One($fixture,256,4,'FAST_FULL_WIC_REFERENCE')
+          if($fastReference.Status -ne 'OK'){throw 'Missing full WIC baseline thumbnail pixels'}
           # Release gate: Shell output must match the pre-registration
           # default orientation, geometry and RGB (64x64 in-memory samples).
           function Assert-ShellParity([string]$label,$reference,$actual,[string]$comparison) {
@@ -284,6 +286,19 @@ jobs:
             if($embedded -lt 1){throw 'Registered Shell handler did not use embedded HEVC thumbnail'}
             if($full -ne 0){throw 'Registered Shell handler decoded full 12MP primary'}
             Write-Host 'SHELL_REGISTERED_EMBEDDED_HEVC_FAST_PATH_PASS'
+            # Compare the *optimized* embedded thumbnail to the normal 12MP
+            # WIC renderer. This is lossy HEVC, so do not demand bitwise parity:
+            # report MAE before choosing a grounded quality threshold.
+            $fastImage=[WicShellCacheAB20261028.Inspect]::One($labFixture,256,4,'FAST_SHELL_PROVIDER')
+            if($fastImage.Status -ne 'OK'){throw ('Fast image sample failed: '+$fastImage.Status)}
+            $fastParity=[WicShellCacheAB20261028.Inspect]::CompareSamples($fastReference,$fastImage)
+            if($fastReference.Width -ne $fastImage.Width -or
+               $fastReference.Height -ne $fastImage.Height -or
+               $fastParity -notmatch 'PIXEL_COMPARE=OK') {
+               throw 'Embedded preview differs in geometry or cannot be RGB compared'
+            }
+            Write-Host ('SHELL_EMBEDDED_VS_FULL_WIC_QUALITY {0}' -f $fastParity)
+
             # One real, isolated Shell invocation on a genuine ICC-bearing
             # HEIC fixture must deliberately bypass the embedded shortcut.
             $iccPath=Join-Path $env:RUNNER_TEMP 'wicfast_shell_icc_regression_4032x3024.heic'
