@@ -33,3 +33,14 @@ CI: https://github.com/taku077/wic_heic/actions/runs/41070865266 （64KiB事前�
 - Microsoft WICフル画像復号のコスト: https://learn.microsoft.com/en-us/windows/desktop/wic/-wic-imp-iwicbitmapframeencode
 
 **本資料は合格したGitHub実装・CIを記録する目的のものであり、個人画像やETLを含まない。**
+
+## 2026-10-30 23:44以降：正規48タイルの埋込thumb対フルWICの直接画質比較
+
+**CI #41074570057 SUCCESS**: https://github.com/taku077/wic_heic/actions/runs/41074570057
+
+- `wictest/WICShellThumbnailProviderPilot.h` にCI専用`RunGridEmbeddedShadow()`を追加。GitHub Actions上で生成する**正規8x6=48タイルgrid+320x240埋込thumb**を自作WICで開き、`IWICBitmapDecoder::GetThumbnail`で小さいサムネイルを先に復号。その後`GetFrame(0)`からフル4032x3024を復号し、**両者ともWIC Fant→32bit BGRA→256x192**に縮小して比較。ユーザー画像は未使用。
+- 64x64点のRGBチャンネル平均絶対誤差 **MAE=0.038/255**、20階調超の差分 **0.000%**。主画像にはICCがないことも検査。厳密な全画素比較、写実的な高周波テクスチャ、HDRや実iPhone複合構成を保証する数値ではない。
+- `WicShellLabSafety::FromStream`は今回も**gridの高速経路を拒否するまま**。この検証結果だけで本番gridを許可する実装変更はしていない。構造だけを理由にgridサムネイルが使えないわけではない、という肯定的な**技術可能性**が確認できた。
+- CI初回 #41074281935 では、基準画像のフル復号が既存3回のフォールバック回数に加算され `full=4` となり失敗。これは**画質比較失敗でも復号エラーでもない**。基準画像比較と通常フォールバックのWICイベント記録を分離して #41074570057 SUCCESS。
+- 次の研究では、WICトレースで埋込／フル復号件数を区別し、両経路の所要時間を測る。その後、Exif/ICC/HDR/alphaなしの**厳密な安全性ゲートに該当するgridだけ**を研究用シェルハンドラーで試す。混在iPhoneフォルダーへの一律の許可はしない。
+- 直近の重要な外部セキュリティ情報：libheif v1.23.7で複雑な派生画像のCPU枯渇脆弱性が修正されている（https://github.com/strukturag/libheif/security/advisories/GHSA-48p4-gj45-w9v6）。この研究ブランチのsubmoduleはリリース`v1.23.7`に対応する`12a259a5882dd99d45ec5fc77e296a3b620d1e2e`を指しているとGitHubで確認。これをユーザーのCPU100%の原因だと断定しない。
