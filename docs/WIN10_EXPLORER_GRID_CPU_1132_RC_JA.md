@@ -40,3 +40,8 @@
 - [libheif tiling API](https://github.com/strukturag/libheif/blob/v1.23.7/libheif/api/libheif/heif_tiling.h)
 - [Microsoft WIC Decoder](https://learn.microsoft.com/en-us/windows/win32/wic/-wic-imp-iwicbitmapdecoder)
 - [従来の実機CPU高負荷解析](WIN10_HEIC_CPU_WPR_20261030_165304_JA.md)
+
+
+## 事前フルCI確認
+
+[Windows Actions #41027611255](https://github.com/taku077/wic_heic/actions/runs/41027611255) **SUCCESS**。自作WICの実復号による人工12MP・48タイルのCPU削減/全RGB一致、HEIC回転/保存/ICC/Exif、MSI 1.1.32のバージョン・DLL SHA-256一致、インストール動作、アンインストール後のWIC登録状態復元まで完了した。MSI配布成果物は、**最終配布コミットの別CIが完了した場合に限り**公開する。
