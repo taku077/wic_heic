@@ -32,13 +32,17 @@ int wmain(int argc,wchar_t** argv) {
         const bool noThumb=argc==3 && wcscmp(argv[2],L"--without-thumbnail")==0;
         const bool withIcc=argc==3 && wcscmp(argv[2],L"--with-icc")==0;
         const bool withAlpha=argc==3 && wcscmp(argv[2],L"--with-alpha")==0;
-        Require(argc==2 || noThumb || withIcc || withAlpha,"Invalid optional mode");
+        const bool withPQ=argc==3 && wcscmp(argv[2],L"--with-pq")==0;
+        const bool withHLG=argc==3 && wcscmp(argv[2],L"--with-hlg")==0;
+        Require(argc==2 || noThumb || withIcc || withAlpha || withPQ || withHLG,"Invalid optional mode");
         Require(Env(L"GITHUB_ACTIONS")==L"true","Test generation is CI only");
         const auto root=Env(L"RUNNER_TEMP");
         Require(!root.empty(),"No CI runner temporary folder");
         const std::wstring exact=root+(noThumb?L"\\wicfast_no_thumb_4032x3024.heic":
                  withIcc?L"\\wicfast_with_icc_4032x3024.heic":
                  withAlpha?L"\\wicfast_with_alpha_4032x3024.heic":
+                 withPQ?L"\\wicfast_with_pq_4032x3024.heic":
+                 withHLG?L"\\wicfast_with_hlg_4032x3024.heic":
                          L"\\wicfast_embedded_4032x3024.heic");
         Require(_wcsicmp(argv[1],exact.c_str())==0,"Refuse non-CI output path");
         Require(GetFileAttributesW(argv[1])==INVALID_FILE_ATTRIBUTES,
@@ -64,6 +68,14 @@ int wmain(int argc,wchar_t** argv) {
                 row[channels*x+2]=colors[q][2];
                 if(withAlpha)row[channels*x+3]=uint8_t(64+((x/17+y/19)%192));
             }
+        }
+        if(withPQ || withHLG) {
+            heif::ColorProfile_nclx nclx;
+            nclx.set_color_primaries(static_cast<heif_color_primaries>(9));
+            nclx.set_transfer_characteristics(static_cast<heif_transfer_characteristics>(withPQ?16:18));
+            nclx.set_matrix_coefficients(static_cast<heif_matrix_coefficients>(9));
+            nclx.set_full_range_flag(false);
+            source.set_nclx_color_profile(nclx);
         }
         if(withIcc) {
             const std::filesystem::path profile=L"wictest/samples/Synthetic_sRGB_ICC_from_LittleCMS.icc";
