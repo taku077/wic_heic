@@ -86,10 +86,10 @@ internal static class Program {
             TrackUniqueTid(tidMap,11,3284);
             var namesTest=new Dictionary<int,string>();
             var conflictsTest=new HashSet<int>();
-            RecordUniqueProcessName(namesTest,936,"explorer");
-            RecordUniqueProcessName(namesTest,936,"explorer.exe");
-            RecordUniqueProcessName(namesTest,936,"different.exe");
-            RecordUniqueProcessName(namesTest,936,"explorer.exe");
+            RecordUniqueProcessName(namesTest,conflictsTest,936,"explorer");
+            RecordUniqueProcessName(namesTest,conflictsTest,936,"explorer.exe");
+            RecordUniqueProcessName(namesTest,conflictsTest,936,"different.exe");
+            RecordUniqueProcessName(namesTest,conflictsTest,936,"explorer.exe");
             if(namesTest.ContainsKey(936) || !conflictsTest.Contains(936) ||
                tidMap[10]!=936 || tidMap[11]!=-1 ||
                b.Samples!=3 || b.TotalSamples!=4 || b.NoThreadIdSamples!=1 ||
