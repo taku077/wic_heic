@@ -181,3 +181,12 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - WindowsのWPR/WPAで利用できるプロセス・スレッド／割り込み負荷分類: https://github.com/MicrosoftDocs/SupportArticles-docs/blob/main/support/windows-server/support-tools/support-tools-xperf-wpa-wpr.md
 
 **次の本質的なタスク**：ユーザーの2026-10-30 20:30 ETLを再録画せずローカル集計し、CPU負荷の内訳（Photos各PID、複数dllhost、System、その他、ThreadID不明）を確認。その結果を起点にWIC/libheif側のフル解像度デコード削減・GPU利用可否の研究優先順位を決める。単純なworker数変更とMSI乱発は継続して避ける。
+
+## 11. 2026-10-30：CPU解析ツールの取得不能報告と代替配布
+
+- ユーザーがChatGPT内のCPU解析ツールZIPリンクからダウンロードできないと報告。**原因（リンク期限切れ・ブラウザ制御・プラットフォーム側など）は未確定**。破損と決めつけない。
+- ローカルに存在したCI成果物 `WicHeic_ExistingETL_CPU_ReadOnly_CI_20261030.zip` は3,410,411 bytes、36エントリ、ZIP CRCすべてPASS、SHA256 `31d97330e1de39cc14ba17fd618c7fd7ee6aa7e1061e71198faab6316405e0e8`。
+- 同一バイナリを専用フォルダー `WicHeic_CPU_Analyzer/` に再梱包し、`START_HERE_JA.txt` を追加した `WicHeic_CPU_Analyzer_Win10_20261030_REPACK.zip`（3,338,438 bytes、37エントリ、CRC PASS、SHA256 `ca704b55d31be9bc4360187e68c9beb926ac498b8faf934f260e9dbddcb4c3a5`）をチャットに提供。**sandboxリンクはチャットのダウンロードUI依存なのでGitHub上に置いた恒久ファイルではない。**
+- GitHub Actionsの公式な代替取得先： https://github.com/taku077/wic_heic/actions/runs/41059547959 の `Artifacts` > `WicHeic-Offline-Existing-ETL-CPU-Reader-ReadOnly-UNVERIFIED`。GitHubログインとリポジトリ読取り権限が必要。**workflowで保持期間7日**が設定されており長期配布先には不適切。
+- 今後「リンクがダウンロードできない」ときは、その場で同一CIバイナリを再梱包してCRC検証し、ChatGPTダウンロードとGitHub Actions両方を示す。GitHub Releasesへの恒久配布はアップロード実行手段とユーザーが望む公開範囲を確認してから検討。リンクが直ったと断定しない。
+- このCPU解析ツールのWindows10実機ETL動作およびCPU100%解決は**引き続き未検証**。新しいWPR録画は不要。
