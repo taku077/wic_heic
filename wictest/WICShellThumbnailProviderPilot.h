@@ -267,6 +267,19 @@ inline void RunOrientationGate() {
             Need(changedRelation && !WicShellLabSafety::SimplePreviewSafe(changed),
                  "Alpha auxiliary reference incorrectly accepted");
             std::puts("CI_SHELL_AUXILIARY_REFERENCE_FAIL_CLOSED_PASS");
+            // Mutations prove fail-closed metadata recognition only.
+            // They are not valid fully encoded grid or HDR fixtures.
+            for(const char* tag : {"dimg","tmap"}) {
+                auto negative=original;
+                bool modified=false;
+                for(const auto& item:refs) if(item.type=="thmb") {
+                    for(int i=0;i<4;++i)negative[item.begin+4+i]=tag[i];
+                    modified=true;break;
+                }
+                Need(modified && !WicShellLabSafety::SimplePreviewSafe(negative),
+                     "Derived grid or HDR relation incorrectly accepted");
+            }
+            std::puts("CI_SHELL_GRID_HDR_REFERENCE_MUTATION_FAIL_CLOSED_PASS");
         }
         auto iprp=HeicLosslessNative::One(originalParts,"iprp");
         auto iprpParts=HeicLosslessNative::Children(original,iprp.data,iprp.end);
@@ -281,6 +294,16 @@ inline void RunOrientationGate() {
         Need(configChanged && !WicShellLabSafety::SimplePreviewSafe(changed),
              "10-bit HEVC configuration accepted as 8-bit");
         std::puts("CI_SHELL_10BIT_HEVC_CONFIG_FAIL_CLOSED_PASS");
+        bool rejects12=false;
+        for(const auto& prop:propBoxes) if(prop.type=="hvcC") {
+            auto negative=original;
+            negative[prop.data+17]=uint8_t(negative[prop.data+17]|4);
+            negative[prop.data+18]=uint8_t(negative[prop.data+18]|4);
+            rejects12=!WicShellLabSafety::SimplePreviewSafe(negative);
+            break;
+        }
+        Need(rejects12,"12-bit HEVC config accepted by 8-bit fast path");
+        std::puts("CI_SHELL_12BIT_HEVC_CONFIG_MUTATION_FAIL_CLOSED_PASS");
     }
     // Existing small HEIC fixtures with real, valid irot3+Exif6 metadata.
     // Unlike the in-memory fourCC mutation above, these are genuine HEIFs.
