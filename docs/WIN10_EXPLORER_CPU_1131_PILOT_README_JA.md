@@ -37,3 +37,7 @@
 GitHub Actionsで **WIC x64ビルド、人工HEIC回転/色/保存テスト、CPUポリシー、製品MSI 1.1.31の版数、Windows runnerでMSIのインストール→WIC画素/保存テスト→アンインストール→WIC登録の元状態比較** の全てが成功し、同一テスト済みMSIをSHA-256とともに配布したときのみRCとする。失敗・未確認の場合は配布しない。
 
 **意図的な保留項目**：本番Shell IThumbnailProviderへの置換、grid tile parallelism設定、他社Shell拡張の変更。速度よりCPU負荷が中心だが、安定性と原本保護を犠牲にしない。
+
+## RC配布の構成
+
+配布ZIPは、MSI本体・SHA-256/CI由来情報・本書・人工12MP HEIC（試験専用）で構成する。ユーザーの個人画像、WPR/ETL、実機ファイルのパスは一切含めない。**Windows10実機のCPU負荷改善値が未確定であることを隠さず、試験候補として扱う。**
