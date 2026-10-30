@@ -161,6 +161,22 @@ jobs:
           # In-memory pixel baseline BEFORE any ShellEx override.
           # Native CI fixtures only; sample pixels are never written/logged.
           $refSamples=@{}
+          # Release gate: Shell output must match the pre-registration
+          # default orientation, geometry and RGB (64x64 in-memory samples).
+          function Assert-ShellParity([string]$label,$reference,$actual,[string]$comparison) {
+            if($reference.Width -ne $actual.Width -or $reference.Height -ne $actual.Height){
+              throw ('SHELL_PARITY_GEOMETRY_MISMATCH: '+$label)
+            }
+            $match=[regex]::Match($comparison,'rgb_mae_64=([0-9]+(?:\.[0-9]+)?)')
+            $severe=[regex]::Match($comparison,'pixels_gt20_percent_64=([0-9]+(?:\.[0-9]+)?)')
+            if(-not $match.Success -or -not $severe.Success){throw ('SHELL_PARITY_NO_RGB_SAMPLES: '+$label)}
+            $mae=[double]::Parse($match.Groups[1].Value,[System.Globalization.CultureInfo]::InvariantCulture)
+            $percent=[double]::Parse($severe.Groups[1].Value,[System.Globalization.CultureInfo]::InvariantCulture)
+            if($mae -gt 1.0 -or $percent -gt 0.01){
+              throw ('SHELL_PARITY_RGB_MISMATCH: '+$label+' '+$comparison)
+            }
+            Write-Host ('SHELL_PARITY_{0}_GEOMETRY_RGB_PASS' -f $label)
+          }
           $sourceByLabel=@{
             'NO_EMBEDDED'=(Join-Path $env:RUNNER_TEMP 'wicfast_no_thumb_4032x3024.heic')
             'IROT3_EXIF6'=(Resolve-Path 'wictest/samples/fixture-irot3-exif6.heic').Path
@@ -284,6 +300,7 @@ jobs:
                if($iccProbe.Status -ne 'OK'){throw ('Shell ICC parity capture failed: '+$iccProbe.Status)}
                $iccParity=[WicShellCacheAB20261028.Inspect]::CompareSamples($refSamples['ICC'],$iccProbe)
                Write-Host ('SHELL_IMAGE_PARITY label=ICC dims={0}x{1} compared={2}' -f $iccProbe.Width,$iccProbe.Height,$iccParity)
+               Assert-ShellParity 'ICC' $refSamples['ICC'] $iccProbe $iccParity
                Write-Host 'SHELL_REGISTERED_ICC_FULL_WIC_FALLBACK_PASS'
             } finally {
                Remove-Item -LiteralPath $iccPath -Force -ErrorAction SilentlyContinue
@@ -328,6 +345,7 @@ jobs:
                 if($parityProbe.Status -ne 'OK'){throw ('Shell orientation parity capture failed: '+$negative.Label)}
                 $parity=[WicShellCacheAB20261028.Inspect]::CompareSamples($refSamples[$negative.Label],$parityProbe)
                 Write-Host ('SHELL_IMAGE_PARITY label={0} original={1}x{2} registered={3}x{4} compared={5}' -f $negative.Label,$refSamples[$negative.Label].Width,$refSamples[$negative.Label].Height,$parityProbe.Width,$parityProbe.Height,$parity)
+                Assert-ShellParity $negative.Label $refSamples[$negative.Label] $parityProbe $parity
                 Write-Host ('SHELL_REGISTERED_{0}_FULL_WIC_FALLBACK_PASS' -f $negative.Label)
               } finally {
                 Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
