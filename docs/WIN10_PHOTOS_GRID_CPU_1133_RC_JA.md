@@ -37,3 +37,8 @@
 ## 配布規則
 
 全CI合格後、**1MB前後の軽量ZIP（MSI・日本語説明書・SHA256）とMSI単体**を同時に提供。大容量のHEIC人工試験素材を同梱しない。MSIのSHA256をGitHub Actionsの生成物と照合する。GitHubからの代替ダウンロード先を示す。**CI合格≠Windows10実機検証済み**。
+
+
+## 配布前の最終候補CI
+
+[Windows Actions #41043004849](https://github.com/taku077/wic_heic/actions/runs/41043004849) **SUCCESS**。候補DLLのCPU削減・全画素一致ゲート、従来のExif/ICC/回転・保存回帰、MSIバージョン1.1.33、MSIインストールとアンインストール後のWIC登録復元に合格した。最終配布コミットで**同じ全ゲートを再実施し、そのコミットのMSIとSHA256を配布**する。
