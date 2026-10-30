@@ -146,20 +146,31 @@ inline bool FromStream(IStream* stream,size_t* bytesRead=nullptr) noexcept {
     st.cbSize.QuadPart<24 || st.cbSize.QuadPart>24ull*1024ull*1024ull)return false;
  if(FAILED(stream->Seek(zero,STREAM_SEEK_SET,nullptr)))return false;
  try {
-  Bytes bytes(static_cast<size_t>(st.cbSize.QuadPart));
+  // Allocate only a small prefix first: reserving/zeroing the whole HEIC
+  // before rejecting grid/alpha/HDR would defeat the memory optimization.
+  const size_t size=static_cast<size_t>(st.cbSize.QuadPart);
+  const size_t prefix=min(size,size_t(65536));
+  Bytes bytes(prefix);
   size_t done=0;
-  while(done<bytes.size()) {
+  while(done<prefix) {
    ULONG got=0;
-   ULONG amount=static_cast<ULONG>(min(size_t(65536),bytes.size()-done));
+   ULONG amount=static_cast<ULONG>(prefix-done);
    HRESULT hr=stream->Read(bytes.data()+done,amount,&got);
    if(FAILED(hr)||got==0)return false;
    done+=got;
    if(bytesRead)*bytesRead=done;
-   // A complex relation at the metadata head makes this preview shortcut
-   // ineligible. Never spend the remaining stream reads copying media data.
-   // Limit the check to an initial window to avoid scanning compressed pixels.
-   if(done==size_t(min(size_t(65536),bytes.size())) &&
-      ObviousComplexPrefix(bytes.data(),done))return false;
+  }
+  // Fail closed for obvious complex metadata without allocating or copying
+  // any media payload. This never ACCEPTS an unverified HEIC.
+  if(ObviousComplexPrefix(bytes.data(),done))return false;
+  bytes.resize(size);
+  while(done<size) {
+   ULONG got=0;
+   ULONG amount=static_cast<ULONG>(min(size_t(65536),size-done));
+   HRESULT hr=stream->Read(bytes.data()+done,amount,&got);
+   if(FAILED(hr)||got==0)return false;
+   done+=got;
+   if(bytesRead)*bytesRead=done;
   }
   return SimplePreviewSafe(bytes);
  } catch (...) {return false;}
