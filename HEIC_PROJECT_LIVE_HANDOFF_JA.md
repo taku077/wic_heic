@@ -32,6 +32,8 @@
 
 > **2026-10-30深夜の最新実装（第20節）**：`experiment/shell-com-focused-20261030` で**正規48タイルHEICのCI限定`IThumbnailProvider`高速経路が実装・試験成功**。研究用の明示フラグ `GITHUB_ACTIONS=true`+`WIC_HEIC_GRID48_RESEARCH=1`+要求256px以下で、厳格な50-item/48-tile/1-thumbの8bit SDR許可ゲートを通過した人工HEICだけ埋込サムネイルを使用。CI #41077558646 **SUCCESS**：復号ログ full_primary=1（画質比較用）、embedded=2（うち1回研究用プロバイダー）、pilot=1、RGB MAE 0.038/255。**ICC、Exif/irot、alpha、PQ/HLGの真性合成HEICは拒否**。通常の登録済みShell gridは従来どおりフルWICに安全フォールバック。実画像・Windows10・製品MSIには未統合、CPU100%は依然未解決。**「grid item payloadの行・列・タイル寸法を厳密確認」など本番安全要件は未実装**。次は人工自然画像相当の画質試験と属性の複合化、適格率・実機効果の見積もり。第20節と研究文書参照。
 
+> **2026-10-31最新：第21節参照。** `experiment/shell-com-focused-20261030` に、**真性48タイルgridのメタデータ本体をiloc/idatで特定・検査する実装**を追加。ヘッダーrows=6, columns=8, output=4032x3024、ispeのtile=504x504・thumbnail=320x240をすべて照合。行・列・幅・tile寸法の異常変異を拒否するCI **#41078596089 SUCCESS**。grid埋込thumbのCI専用256px高速表示、WIC復号trace全・画像品質・ICC/Exif/alpha/PQ/HLG拒否とShell登録復元もPASS。コードコミット`230efc7b8a46be30af292aebd68c78b7b87b0475`、研究文書コミット`3a21cff0ab85fdfd3c68aa0001d553529825855e`。**本番MSI未統合、Windows10実機のCPU100%未解決。** この経路は意図的に人工48タイル8bit SDR限定。次の研究は画質の高周波・自然画像近似、多様な合法HEICでの安全性と実効適格率に進む。ユーザーに過去診断ファイルの保存を前提として要求しない。
+
 ## 0. 新しいチャット用の最短開始指示
 
 「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
@@ -371,3 +373,19 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 - **外部一次資料**：libheif tiled-grid https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images 、libheif内部のthumbnail→master thmb https://github.com/strukturag/libheif/blob/v1.23.7/libheif/context.cc 、libvipsのICC/方向注意 https://github.com/libvips/libvips/blob/master/libvips/foreign/heifload.c 、Shellのストリーム分離 https://learn.microsoft.com/ja-jp/windows/win32/shell/building-thumbnail-providers 。
 
 **ユーザー実機CPU100％未解決／MSI保留／生の写真・ETLは非公開のまま。**
+
+## 21. 2026-10-31：正規grid本体の行列・寸法とtile ispeを照合する実装を完了
+
+**今回の目的はCPU100%原因のETL再調査ではなく、Shell/COM SurrogateのHEICフル復号を減らす実装の安全性を一歩進めること。**
+
+- **研究ブランチ**：`experiment/shell-com-focused-20261030`。コード実装 `9df1b8011fd7d6119c0c8a56f3e2ee0e34975f6a`、負例試験 `230efc7b8a46be30af292aebd68c78b7b87b0475`。研究記録 `docs/SHELL_GRID48_CI_ONLY_FASTPATH_20261030_JA.md` 更新コミット `3a21cff0ab85fdfd3c68aa0001d553529825855e`。
+- **CI**： https://github.com/taku077/wic_heic/actions/runs/41078596089 **SUCCESS**。合成合法gridの受理、ヘッダー／tile寸法改ざんの拒否、ICC/Exif/irot/alpha/PQ/HLG拒否、Shell既定フォールバック、Shell登録復元を維持。
+- **コードの実質的変更**：`wictest/WICShellOrientationGate.h` の`ResearchGridPayloadRange`が`meta/iloc`のバージョン1/2・constructor method1・一つのextentを検証し、`meta/idat`のgrid primaryペイロードの正規オフセットを確定。`ResearchGrid48PayloadMatches` が8/12byteの`version=0`、flags0/1、6行×8列、4032×3024画素を確認。これまで参照48件という**間接情報だけ**だった判定を実際のgrid item本文で補強。
+- 全50 itemの既存の構造・8bit SDR条件に加え、`ispe`サイズをgrid4032×3024、各48tile504×504、thumbnail320×240に限定（端数tileや拡大縮小を一般には許可しない）。
+- 追加した負例CIは、合法な人工gridの**メモリ上のコピー**のgridヘッダー（version/flags/row/column/width）とtile`ispe`を1バイト改ざんし、すべて拒否することを確認。人工写真を含めて個人画像やETLは変更／公開しない。
+- **WIC trace確認**：`CI_GRID48_SHADOW_WIC_TRACE_COUNTS_PASS full_primary=1 embedded=2 pilot=1`。フル復号1回は比較対象の基準画像専用。CI専用研究Providerでは埋込thumbを返し、追加フル復号なし。従来のRGB64×64点平均誤差0.038/255を維持。
+- **注意事項**：固定50item／8×6／4032×3024／504×504／320×240、ICC/Exif/HDR/gainmap/alphaなしの人工HEICでのみ検証済み。合法な複雑iPhone画像の対応範囲は狭く、実画像における高速化対象率は不明。フルWIC側の色・回転保存、CPU100%改善、実Windows10ユーザー環境での有効性は未検証。新しいMSI/製品WIC DLLは変更しない。
+- **参照した複数情報源**：libheif公式tiled画像ガイド https://github.com/strukturag/libheif/wiki/Reading-and-Writing-Tiled-Images、libheif v1.23.7`image-items/grid.cc`と`box.cc`、Nokia HEIFのitemlocationbox説明 https://fossies.org/linux/heif/srcs/common/itemlocationbox.hpp、WIC/Shell実装資料 https://learn.microsoft.com/ja-jp/windows/win32/shell/building-thumbnail-providers。
+- **次の開発作業**：合成高周波・グラデーション・非均一タイルや回転・カラー管理を含む人工合法HEIFを増やし、256px以下の描画誤差と効果を測る。結果が乏しければgrid高速化を無理に本番へ統合せず、他の全画像復号回避策に切り替える。必要な実機診断ファイルは既提出のChatGPT Libraryからこちらが回収し、必要時にツールへ同梱・別添する。ユーザーのPCに保存されている前提で依頼しない。
+
+**Windows10 CPU100%は未解決。安全なCI限定研究が進展した段階であり、MSIリリースは保留。**
