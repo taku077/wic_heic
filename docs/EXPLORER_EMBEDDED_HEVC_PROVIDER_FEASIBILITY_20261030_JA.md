@@ -61,3 +61,19 @@
 - [Microsoft Shell registration](https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts)
 - [libvips HEIF thumbnail](https://www.libvips.org/API/current/ctor.Image.heifload.html)
 - [libheif v1.23.7 release/security changes](https://github.com/strukturag/libheif/releases/tag/v1.23.7)
+
+
+## 2026-10-30追試：実アルファ、PQ/HLG、埋込画像の画質比較
+
+開発ブランチ：experiment/shell-com-focused-20261030。本試験は人工HEIC／Windows Server 2022 CIのみで、配布MSIは改変していない。
+
+- アルファ付きHEIC（HEVCエンコードされたRGBA素材）を生成し、Shell既定経路と登録試験用ハンドラーの256×192表示を比較。64×64 RGBサンプルMAE=0.00、通常WICへの安全フォールバック。[#41008039399](https://github.com/taku077/wic_heic/actions/runs/41008039399) SUCCESS。
+- colr/nclxの転送関数にPQ=16、HLG=18を指定した人工HEICを生成して安全側に拒否し、同じく登録済みShellの通常WIC経路で出力した256×192サムネイルのRGBサンプルMAE=0.00。[#41008580480](https://github.com/taku077/wic_heic/actions/runs/41008580480) SUCCESS。これは8bit素材にHDR色特性を付けた検査であり、実HDR映像のトーンマッピング検証ではない。
+- ICC付き人工HEICは従来のGetColorContextsによるフルWICフォールバックを保持。最初のNCLXガードでICC診断ラベルが変わりCI失敗したが、既存の安全なICC経路を維持する修正後 [#41008467114](https://github.com/taku077/wic_heic/actions/runs/41008467114) SUCCESS。
+- 埋込320×240 HEVC thumbnailを256×192へ縮小した試作ハンドラーと、12MP主画像から生成した既定Shellの256×192を比較。64×64 RGBサンプルMAE=0.04（0–255階調）、大差分ピクセル割合0.00%。速度：従来103ms、試作12ms（同一runner・各8ファイル中央値）。[#41008688369](https://github.com/taku077/wic_heic/actions/runs/41008688369) SUCCESS。この人工パターンでの近似であり実写真すべての画質一致・全画素厳密一致を意味しない。
+- 追加NCLXプレフライトはPQ/HLG、未知転送特性などのショートカットを拒否。ICCの既存フォールバックは維持。
+- ユーザー実機素材の適合可能性に重大な制約：従来の読取専用ボックス解析でIMG_4425.HEICの主画像は48タイルのgrid、HDR gain mapの補助grid、ICCプロファイルとExif、320×240の埋込thumbを持つと判明。現在の「単純hvc1 + 安全なSDRのみ」のショートカットではこの画像は不適合で全解像度フォールバックする見込み。埋込thumbのある実iPhone写真がすべて高速化するとは言えず、1,894枚全体の適合率も未計測。
+- 実装拡大前に必要：複合HEICに含まれるthumbとWindows ShellのSDRプレビューの色・向き・HDR/ICC情報が一致するかを、人工複合grid/HDRと読み取り専用実写真のコピーのみで比較。画質/保存互換性を犠牲にして一律に高速経路へ通さない。
+- インストーラーは [SHELL_1131_INSTALLER_RESTORE_GATE_20261030_JA.md](SHELL_1131_INSTALLER_RESTORE_GATE_20261030_JA.md) の第三者ハンドラー保持・ロールバック条件を満たす実製品テストが未完了。1.1.31 MSIは現時点ではリリースしない。
+
+外部根拠：Microsoft Shell IThumbnailProvider/ハンドラー登録、libvips heifloadのICC/Exif処理、ITU-T H.273のPQ=16/HLG=18、libheif v1.23.7のnclx API、ExifTool/GPACによる構造確認。
