@@ -522,8 +522,31 @@ void CHeicBitmapFrameDecode::DecodeImage()
                                     photoTest,4)==1 && photoTest[0]==L'1');
         const bool photos=PhotosPureRotationBridge::IsWindowsPhotosHost() ||
                           simulatedPhotos;
+        // Shell thumbnail extraction runs in dllhost.exe on the affected
+        // Windows 10 system. Limit codec worker occupancy there, not in Photos.
+        wchar_t hostPath[MAX_PATH]{};
+        const DWORD hostLen=GetModuleFileNameW(nullptr,hostPath,MAX_PATH);
+        const wchar_t* base=hostPath;
+        if(hostLen && hostLen<MAX_PATH) {
+            for(const wchar_t* p=hostPath;*p;++p)
+                if(*p==L'\\' || *p==L'/')base=p+1;
+        }
+        const bool realShell=(hostLen && hostLen<MAX_PATH &&
+                              _wcsicmp(base,L"dllhost.exe")==0);
+        wchar_t shellTest[4]{};
+        const bool syntheticShell=(enabledLength==4 &&
+            wcscmp(labEnabled,L"true")==0 &&
+            GetEnvironmentVariableW(L"WIC_HEIC_THUMB_TEST_SHELL",
+                                     shellTest,4)==1 && shellTest[0]==L'1');
+        const bool shellSurrogate=!photos && (realShell || syntheticShell);
         const unsigned workers=photos
           ? HeicThumbnailWorkerPolicy::SelectForPhotos(
+              static_cast<unsigned>(m_Handle.get_width()),
+              static_cast<unsigned>(m_Handle.get_height()),
+              m_Handle.get_luma_bits_per_pixel(),
+              m_Handle.get_chroma_bits_per_pixel(),
+              m_Handle.has_alpha_channel(),info.dwNumberOfProcessors,already)
+          : shellSurrogate ? HeicThumbnailWorkerPolicy::SelectForShellCpuBudget(
               static_cast<unsigned>(m_Handle.get_width()),
               static_cast<unsigned>(m_Handle.get_height()),
               m_Handle.get_luma_bits_per_pixel(),
@@ -540,10 +563,11 @@ void CHeicBitmapFrameDecode::DecodeImage()
         if(enabledLength==4 && wcscmp(labEnabled,L"true")==0) {
             printf("THUMB_PILOT_PRODUCTION_AUTO_SELECTED workers=%u "
                    "width=%d height=%d alpha=%d luma_bits=%d "
-                   "concurrent_before=%u photos=%u\n",
+                   "concurrent_before=%u photos=%u shell=%u\n",
                    workers,m_Handle.get_width(),m_Handle.get_height(),
                    m_Handle.has_alpha_channel()?1:0,
-                   m_Handle.get_luma_bits_per_pixel(),already,photos?1u:0u);
+                   m_Handle.get_luma_bits_per_pixel(),already,photos?1u:0u,
+                   shellSurrogate?1u:0u);
         }
         if(workers==0) {
             m_Image=m_Handle.decode_image(heif_colorspace_RGB,m_chroma);
