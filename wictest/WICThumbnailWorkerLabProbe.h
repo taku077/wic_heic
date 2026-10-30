@@ -1,5 +1,5 @@
 #pragma once
-// CI-only same-run A/B: 0/default, 2 and 4 libde265 codec worker hints.
+// CI-only same-run A/B: 0/default, 1, 2 and 4 libde265 codec worker hints.
 // This fixture and mode MUST NOT run against user photos or production PCs.
 // This is not a proof of Windows 10 Explorer initial thumbnail latency.
 #include <windows.h>
@@ -177,8 +177,9 @@ inline void Run() {
     constexpr UINT width=4032,height=3024,channels=3;
     constexpr UINT stride=width*channels;
     const size_t planeBytes=size_t(stride)*height;
-    const std::array<int,4> modes{{0,2,4,-1}};
-    std::array<std::vector<double>,4> readings;
+    const std::array<int,5> modes{{0,1,2,4,-1}};
+    std::array<std::vector<double>,5> readings;
+    std::array<std::vector<double>,5> cpuReadings;
     constexpr UINT thumbW=256,thumbH=192;
     constexpr UINT thumbStride=thumbW*channels;
     std::vector<BYTE> referenceFull,outputFull(planeBytes);
@@ -187,11 +188,12 @@ inline void Run() {
     // Trigger cold HEVC decode through an actual 256px Fant scaler and
     // verify BOTH its pixels and the untouched original full RGB raster.
     for(int round=0;round<5;round++) {
-        for(int slot=0;slot<4;slot++) {
-            const int index=(round+slot)%4;
+        for(int slot=0;slot<5;slot++) {
+            const int index=(round+slot)%5;
             const int workers=modes[index];
             const wchar_t* value=workers==0?L"0":
-                (workers==2?L"2":(workers==4?L"4":L"a"));
+                (workers==1?L"1":(workers==2?L"2":
+                (workers==4?L"4":L"a")));
             if(!SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",value))
                 throw std::runtime_error("Unable to set CI worker mode");
             CComPtr<IWICStream> stream;
@@ -214,6 +216,9 @@ inline void Run() {
             if(!IsEqualGUID(fmt,GUID_WICPixelFormat24bppRGB))
                 throw std::runtime_error("Unexpected 12MP pixel type");
             LARGE_INTEGER start{},finish{};
+            FILETIME born{},depart{},kernelBefore{},userBefore{};
+            if(!GetProcessTimes(GetCurrentProcess(),&born,&depart,&kernelBefore,&userBefore))
+                throw std::runtime_error("GetProcessTimes before decode failed");
             QueryPerformanceCounter(&start);
             CComPtr<IWICBitmapScaler> scaler;
             Check(factory->CreateBitmapScaler(&scaler),"create scaler");
@@ -222,6 +227,14 @@ inline void Run() {
             Check(scaler->CopyPixels(nullptr,thumbStride,
                   UINT(outputThumb.size()),outputThumb.data()),"first thumbnail pixels");
             QueryPerformanceCounter(&finish);
+            FILETIME kernelAfter{},userAfter{};
+            if(!GetProcessTimes(GetCurrentProcess(),&born,&depart,&kernelAfter,&userAfter))
+                throw std::runtime_error("GetProcessTimes after decode failed");
+            auto ticks=[](FILETIME t)->uint64_t {
+                return (uint64_t(t.dwHighDateTime)<<32)|t.dwLowDateTime;
+            };
+            const double cpuMs=double((ticks(kernelAfter)-ticks(kernelBefore))+
+                                      (ticks(userAfter)-ticks(userBefore)))/10000.0;
             if(referenceThumb.empty())referenceThumb=outputThumb;
             else if(referenceThumb!=outputThumb)
                 throw std::runtime_error("THUMB_WORKERS_AB_THUMB_RGB_MISMATCH");
@@ -234,22 +247,28 @@ inline void Run() {
                 throw std::runtime_error("THUMB_WORKERS_AB_FULL_RGB_MISMATCH");
             const double ms=Ms(start,finish,freq);
             readings[index].push_back(ms);
+            cpuReadings[index].push_back(cpuMs);
             printf("THUMB_WORKERS_AB_SAMPLE workers=%d pass=%d source=%ux%u "
                    "thumb=256x192 first_thumbnail_ms=%.3f "
+                   "process_cpu_ms=%.3f cpu_to_wall_ratio=%.3f "
                    "exact_full_rgb=1 exact_thumbnail_rgb=1\n",
-                   workers,round,w,h,ms);
+                   workers,round,w,h,ms,cpuMs,ms>0?cpuMs/ms:0.0);
         }
     }
     SetEnvironmentVariableW(L"WIC_HEIC_THUMB_LAB_WORKERS",nullptr);
-    for(int index=0;index<4;index++){
+    for(int index=0;index<5;index++){
         auto& v=readings[index];
         if(v.size()!=5)throw std::runtime_error("Incomplete worker samples");
         std::sort(v.begin(),v.end());
+        auto& cpu=cpuReadings[index];
+        if(cpu.size()!=5)throw std::runtime_error("Incomplete CPU time samples");
+        std::sort(cpu.begin(),cpu.end());
         printf("THUMB_WORKERS_AB_MEDIAN workers=%d samples=5 "
-               "first_thumbnail_256_ms=%.3f no_explorer_claim=1\n",
-               modes[index],v[2]);
+               "first_thumbnail_256_ms=%.3f process_cpu_ms=%.3f "
+               "cpu_to_wall_ratio=%.3f no_explorer_claim=1\n",
+               modes[index],v[2],cpu[2],v[2]>0?cpu[2]/v[2]:0.0);
     }
-    printf("THUMB_WORKERS_AB_PIXEL_PARITY_PASS source=4032x3024 thumb=256x192 modes=0,2,4,auto samples=20 "
+    printf("THUMB_WORKERS_AB_PIXEL_PARITY_PASS source=4032x3024 thumb=256x192 modes=0,1,2,4,auto samples=25 "
            "fixture=artificial_12MP no_msi_release=1\n");
     RunSmallFallback(factory);
     RunPilotAutoWithoutOverride(factory,path,referenceThumb);
