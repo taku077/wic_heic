@@ -19,6 +19,9 @@
 
 **運用上の訂正：実機テストが必要になれば実施する。以前使った解析プログラム／ツールは、その時点でこちらが再配布・ダウンロードリンクを添付する。** 不要な永続保存をユーザーに依頼しない。再提供可能な過去のツールと、既に消去された元のETLデータは区別し、後者を復元可能だと断定しない。
 
+
+> **2026-10-30 22:43 JST 更新（以下の過去記述より優先）:** 先にユーザーが提出した2026-10-30 20:30採取のWPR診断ZIPはChatGPTライブラリで再発見・取得済み。実機で生成されたテキスト報告 `CPU_AllProcesses_20261030_224307_303.txt` も提出済み・受領確認済み。ユーザーに旧ファイルの長期保存・再録画・再提出を求めない。現在、報告の64.31%が `(unknown)`、うち54.72%がPID不明のため、**全プロセスCPU帰属が確定したとは言わない**。次工程は**解析コードのプロセス／スレッド帰属の調査**であり、ユーザーの提出方法は正常。古い「元ETLがないので解析できない」は失効。
+
 ## 0. 新しいチャット用の最短開始指示
 
 「GitHub `taku077/wic_heic` の標準ブランチ `master` にある `HEIC_PROJECT_LIVE_HANDOFF_JA.md` を読み、記載の本線・研究ブランチの最新HEAD/CI/変更点と照合して『HEIC表示方式比較』開発を中断地点から継続。過去の研究を繰り返さず、Windows10実機のCPU100%問題を最優先。進捗と検証結果をこの台帳へ随時更新。Microsoft Learn以外のGitHub・libheif・libde265・libvips・FFmpeg・GPAC・ExifTool・Exiv2・Intel等も横断調査。私の写真原本・個人ログは公開しない。」
@@ -248,3 +251,11 @@ https://github.com/taku077/wic_heic/blob/investigate/win10-100cpu-after-1133-202
 参考：Microsoft WPRはメモリ記録モードも提供しており、ファイル記録は容量が膨らみ得る（https://learn.microsoft.com/ja-jp/windows-hardware/test/wpt/logging-mode）。GitHub Actions成果物は有効期限があるため、必要時に都度提供できる形を選ぶ（https://docs.github.com/ja/actions/how-tos/manage-workflow-runs/download-workflow-artifacts）。
 
 **この第14節と冒頭の訂正は、過去の「実機診断は避ける」「旧解析ツールは今後不要」などの過度に限定的な書き方に優先する。**
+
+## 15. 2026-10-30 22:43 JST：実機CPU解析レポート受領と次の原因調査
+
+- 受領レポート：`CPU_AllProcesses_20261030_224307_303.txt`（匿名化済みテキスト）。対応ETL記録時間2026-10-30 11:30:14〜11:33:18 UTC、論理CPU4、サンプル全461551／スレッドIDあり456016／不明または0が5535。
+- **サンプル内訳**：プロセス名不明293247（64.31%）、dllhost 92114（20.20%）、Photos 62848（13.78%）。これらは**スレッドID付きサンプル内の構成比**であり、タスクマネージャーのCPU使用率でもプロセスCPU使用率でもない。
+- **重大な未解決課題**：293247サンプルがプロセス名不明。そのうちPIDも不明249525サンプル（54.72%）。`Unnamed=0` は実際には名前が完全取得できたという意味ではなく、文字列 `(unknown)` が既に代入されているためカウンタが増えない可能性がある。GitHubの`tools/etl_cpu_top/Program.cs` における `e.ProcessID` と `ThreadStartGroup` 由来PIDマッピング、および`e.ProcessName` によるフォールバックの精度を検証する。
+- **判断**：提出されたレポートは正常に生成・提出されている。これ以上のユーザー操作を要求せず、既存提出ZIP・レポートをこちらから再取得して利用する。主要CPU寄与の全容は現レポートだけでは未確定。実機で報告されたCPU100%未解決。
+- **参考実装**：Microsoft PerfView のProcess/Thread lifetime tracking https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Computers/TraceProcess.cs 、Microsoft ETW Process rundown https://learn.microsoft.com/en-us/windows/win32/etw/process 、Microsoft WPA CPU sampled https://learn.microsoft.com/en-us/windows-hardware/test/wpt/cpu-analysis 。
