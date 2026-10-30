@@ -184,6 +184,7 @@ jobs:
             'IROT3_EXIF6'=(Resolve-Path 'wictest/samples/fixture-irot3-exif6.heic').Path
             'IROT3_EXIF6_NOAUX'=(Resolve-Path 'wictest/samples/fixture-irot3-exif6-noaux.heic').Path
             'ICC'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_icc_4032x3024.heic')
+            'ALPHA'=(Join-Path $env:RUNNER_TEMP 'wicfast_with_alpha_4032x3024.heic')
           }
           foreach($label in @('NO_EMBEDDED','IROT3_EXIF6','IROT3_EXIF6_NOAUX','ICC')) {
             $source=$sourceByLabel[$label]
