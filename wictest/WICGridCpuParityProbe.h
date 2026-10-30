@@ -10,7 +10,6 @@
 #include <stdexcept>
 #include <cstdio>
 #include <cstring>
-#include "../wic_heic/wic_heic.h"
 
 namespace WICGridCpuParityProbe {
 inline void Need(bool ok,const char* msg){if(!ok)throw std::runtime_error(msg);}
